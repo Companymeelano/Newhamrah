@@ -1412,7 +1412,6 @@ public class MainActivity extends Activity {
         badge.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         titles.addView(appTitle, new LinearLayout.LayoutParams(-1, -2));
         titles.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
-        titles.addView(badge, new LinearLayout.LayoutParams(-1, -2));
         identity.addView(titles, new LinearLayout.LayoutParams(0, -1, 1f));
         status = text("", 1, Color.TRANSPARENT, Typeface.NORMAL);
         return identity;
@@ -9234,6 +9233,37 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
     }
 
+    private View overviewCountChip(String label, long value, int accent) {
+        LinearLayout chip = new LinearLayout(this);
+        chip.setOrientation(LinearLayout.VERTICAL);
+        chip.setGravity(Gravity.CENTER);
+        chip.setPadding(dp(6), dp(7), dp(6), dp(7));
+        chip.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 18 : 30), 16, alpha(accent, isLightTheme() ? 70 : 96)));
+        TextView v = text(formatNumber(value), 18f, accent, Typeface.BOLD);
+        v.setGravity(Gravity.CENTER);
+        v.setIncludeFontPadding(false);
+        chip.addView(v, new LinearLayout.LayoutParams(-1, -2));
+        TextView l = text(label, 10.5f, MUTED, Typeface.BOLD);
+        l.setGravity(Gravity.CENTER);
+        l.setSingleLine(true);
+        chip.addView(l, new LinearLayout.LayoutParams(-1, -2));
+        chip.setContentDescription(label + " " + formatNumber(value));
+        return chip;
+    }
+
+    private View overviewMeter(float fraction, int accent) {
+        LinearLayout track = new LinearLayout(this);
+        track.setOrientation(LinearLayout.HORIZONTAL);
+        track.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        track.setBackground(rounded(alpha(accent, isLightTheme() ? 26 : 40), 999));
+        View fill = new View(this);
+        fill.setBackground(gradient(new int[]{mix(accent, Color.WHITE, 0.25f), accent}, GradientDrawable.Orientation.RIGHT_LEFT, 999));
+        float f = Math.max(0.02f, Math.min(1f, fraction));
+        track.setWeightSum(1f);
+        track.addView(fill, new LinearLayout.LayoutParams(0, -1, f));
+        return track;
+    }
+
     private void addVisitorOverviewVisual(LinearLayout parent, double amount, long prefCount, long visits, double target, double remain) {
         if (parent == null) return;
         LinearLayout panel = new LinearLayout(this);
@@ -9251,15 +9281,33 @@ public class MainActivity extends Activity {
         right.setPadding(dp(9), 0, dp(4), 0);
         right.addView(text("نبض امروز", 13.2f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         right.addView(text(target > 0 ? ("مانده هدف: " + money(remain)) : "هدف ثبت نشده؛ عملکرد لحظه‌ای نمایش داده می‌شود.", 9.4f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        JSONArray bars = new JSONArray();
-        try {
-            bars.put(new JSONObject().put("label", "ویزیت").put("value", Math.max(0, visits)));
-            bars.put(new JSONObject().put("label", "پیش‌فاکتور").put("value", Math.max(0, prefCount)));
-            bars.put(new JSONObject().put("label", "مبلغ").put("value", Math.max(0, amount)));
-            bars.put(new JSONObject().put("label", "سبد").put("value", Math.max(0, cartTotal())));
-        } catch (Exception ignored) { }
-        BarChartView chart = new BarChartView(this, bars, GOLD_2);
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, dp(100)); cp.setMargins(0, dp(6), 0, 0); right.addView(chart, cp);
+        // Counts and money used to share one bar scale, which flattened the count bars to zero.
+        // Show the two counts as chips and a visit→pre-invoice conversion bar instead.
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.addView(overviewCountChip("ویزیت", visits, navAccent("visit")), new LinearLayout.LayoutParams(0, -2, 1f));
+        LinearLayout.LayoutParams chip2 = new LinearLayout.LayoutParams(0, -2, 1f); chip2.setMargins(dp(6), 0, 0, 0);
+        chips.addView(overviewCountChip("پیش‌فاکتور", prefCount, navAccent("cart")), chip2);
+        LinearLayout.LayoutParams chipsLp = new LinearLayout.LayoutParams(-1, -2); chipsLp.setMargins(0, dp(8), 0, 0);
+        right.addView(chips, chipsLp);
+        if (visits > 0) {
+            float conv = Math.max(0f, Math.min(1f, prefCount / (float) visits));
+            LinearLayout convRow = new LinearLayout(this);
+            convRow.setOrientation(LinearLayout.HORIZONTAL);
+            convRow.setGravity(Gravity.CENTER_VERTICAL);
+            TextView convLabel = text("نرخ تبدیل", 10.5f, MUTED, Typeface.BOLD);
+            convRow.addView(convLabel, new LinearLayout.LayoutParams(0, -2, 1f));
+            TextView convValue = text(formatNumber(Math.round(conv * 100)) + "٪", 12.5f, SUCCESS, Typeface.BOLD);
+            convValue.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+            convRow.addView(convValue, new LinearLayout.LayoutParams(-2, -2));
+            LinearLayout.LayoutParams convLp = new LinearLayout.LayoutParams(-1, -2); convLp.setMargins(0, dp(8), 0, dp(3));
+            right.addView(convRow, convLp);
+            right.addView(overviewMeter(conv, SUCCESS), new LinearLayout.LayoutParams(-1, dp(8)));
+        } else {
+            TextView none = text("هنوز ویزیتی برای امروز ثبت نشده است.", 10.5f, MUTED, Typeface.NORMAL);
+            LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(-1, -2); nlp.setMargins(0, dp(8), 0, 0);
+            right.addView(none, nlp);
+        }
         panel.addView(right, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(10), 0, 0); parent.addView(panel, lp);
     }
@@ -10083,13 +10131,13 @@ public class MainActivity extends Activity {
         c.setPadding(dp(12), dp(10), dp(12), dp(10));
         c.setBackground(visitorPanel(navAccent("showcase"), 28));
         LinearLayout head = new LinearLayout(this); head.setOrientation(LinearLayout.HORIZONTAL); head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView icon = text("🏬", 20, onColorFor(GOLD), Typeface.BOLD); icon.setGravity(Gravity.CENTER); icon.setBackground(luxuryButtonBg(GOLD, true, 16));
+        ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.ic_svg_nav_products); icon.setColorFilter(onColorFor(GOLD)); icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE); icon.setPadding(dp(12), dp(12), dp(12), dp(12)); icon.setBackground(luxuryButtonBg(GOLD, true, 16)); icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         head.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         copy.addView(text("کالا", 17.4f, GOLD_2, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + " • " + formatNumber(p2) + " قیمت ۲ • نمایش مرحله‌ای برای گوشی روان", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + " • " + formatNumber(p2) + " با قیمت ۲", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView cart = text("🛒", 18, onColorFor(navAccent("cart")), Typeface.BOLD); cart.setGravity(Gravity.CENTER); cart.setBackground(luxuryButtonBg(navAccent("cart"), true, 999)); cart.setOnClickListener(v -> showApp("cart"));
+        ImageView cart = new ImageView(this); cart.setImageResource(R.drawable.ic_svg_nav_cart); cart.setColorFilter(onColorFor(navAccent("cart"))); cart.setScaleType(ImageView.ScaleType.CENTER_INSIDE); cart.setPadding(dp(12), dp(12), dp(12), dp(12)); cart.setBackground(luxuryButtonBg(navAccent("cart"), true, 999)); cart.setContentDescription("سبد خرید، " + cartCountText() + " قلم"); cart.setClickable(true); applyTouchFeedback(cart); cart.setOnClickListener(v -> showApp("cart"));
         head.addView(cart, new LinearLayout.LayoutParams(dp(46), dp(46)));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
@@ -10099,7 +10147,7 @@ public class MainActivity extends Activity {
         search.addView(input, new LinearLayout.LayoutParams(0, dp(48), 1f));
         Button go = themedActionButton("جستجو", GOLD, true); go.setTextSize(fs(9.2f)); go.setOnClickListener(v -> loadShowcase(input.getText().toString().trim(), f));
         LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(dp(82), dp(48)); gp.setMargins(dp(6), 0, 0, 0); search.addView(go, gp);
-        Button scan = themedActionButton("کد", INFO, false); scan.setTextSize(fs(9.2f)); scan.setOnClickListener(v -> showBarcodeSearchDialog());
+        Button scan = themedActionButton("بارکد", INFO, false); scan.setTextSize(fs(9.2f)); scan.setOnClickListener(v -> showBarcodeSearchDialog());
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(58), dp(48)); sp.setMargins(dp(6), 0, 0, 0); search.addView(scan, sp);
         input.setOnEditorActionListener((v, actionId, event) -> { if (actionId == EditorInfo.IME_ACTION_SEARCH) { loadShowcase(input.getText().toString().trim(), f); return true; } return false; });
         LinearLayout.LayoutParams srp = new LinearLayout.LayoutParams(-1, -2); srp.setMargins(0, dp(10), 0, 0); c.addView(search, srp);
@@ -10115,10 +10163,9 @@ public class MainActivity extends Activity {
         hs.addView(chips, new FrameLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, -2); hp.setMargins(0, dp(9), 0, 0); c.addView(hs, hp);
 
-        LinearLayout modePanel = new LinearLayout(this); modePanel.setOrientation(LinearLayout.VERTICAL); modePanel.setPadding(dp(8), dp(7), dp(8), dp(7));
+        LinearLayout modePanel = new LinearLayout(this); modePanel.setOrientation(LinearLayout.HORIZONTAL); modePanel.setGravity(Gravity.CENTER_VERTICAL); modePanel.setPadding(dp(8), dp(5), dp(6), dp(5));
         modePanel.setBackground(roundedStroke(alpha(navAccent("showcase"), isLightTheme() ? 16 : 26), 18, alpha(navAccent("showcase"), isLightTheme() ? 72 : 86)));
-        TextView mt = text("نحوه نمایش کالاها", 10.0f, TEXT, Typeface.BOLD); mt.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); modePanel.addView(mt, new LinearLayout.LayoutParams(-1, -2));
-        TextView mh = text("اگر کارت‌ها بزرگ یا کند بود، حالت سریع/روان یا فوق‌سبک را انتخاب کنید.", 8.9f, MUTED, Typeface.NORMAL); mh.setGravity(Gravity.RIGHT); modePanel.addView(mh, new LinearLayout.LayoutParams(-1, -2));
+        TextView mt = text("نمایش", 10.0f, TEXT, Typeface.BOLD); mt.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); mt.setSingleLine(true); modePanel.addView(mt, new LinearLayout.LayoutParams(-2, -2));
         HorizontalScrollView modeScroll = new HorizontalScrollView(this); styleHorizontalScroll(modeScroll); modeScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout modes = new LinearLayout(this); modes.setOrientation(LinearLayout.HORIZONTAL); modes.setGravity(Gravity.CENTER_VERTICAL);
         addVisitorShowcaseModeChip(modes, q, f, "gallery", "سه‌بعدی");
@@ -10126,7 +10173,7 @@ public class MainActivity extends Activity {
         addVisitorShowcaseModeChip(modes, q, f, "compact", "روان");
         addVisitorShowcaseModeChip(modes, q, f, "ultra", "فوق‌سبک");
         modeScroll.addView(modes, new FrameLayout.LayoutParams(-2, -2));
-        LinearLayout.LayoutParams msp = new LinearLayout.LayoutParams(-1, -2); msp.setMargins(0, dp(7), 0, 0); modePanel.addView(modeScroll, msp);
+        LinearLayout.LayoutParams msp = new LinearLayout.LayoutParams(0, -2, 1f); msp.setMargins(dp(6), 0, 0, 0); modePanel.addView(modeScroll, msp);
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(8), 0, 0); c.addView(modePanel, mp);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(10)); content.addView(c, cp);
     }
