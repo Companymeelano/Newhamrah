@@ -8,8 +8,8 @@ android {
         applicationId 'ir.meelano.visitor'
         minSdk 24
         targetSdk 35
-        versionCode 85
-        versionName '4.4.21-persian-font-stock-status'
+        versionCode 86
+        versionName '4.5.0-design-refresh'
     }
 
     compileOptions {

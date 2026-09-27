@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 13+ themed-icon silhouette: visit pin + confirmed check, kept inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M48,22 C37.5,22 29,30.5 29,41 C29,55.5 48,76 48,76 C48,76 67,55.5 67,41 C67,30.5 58.5,22 48,22 Z M48,34 C51.9,34 55,37.1 55,41 C55,44.9 51.9,48 48,48 C44.1,48 41,44.9 41,41 C41,37.1 44.1,34 48,34 Z"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="3.5"
+        android:pathData="M69,59 A10,10 0,1 1,68.99 59 Z"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="3.5"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M64.5,69.2 L67.8,72.5 L73.6,65.6"/>
+</vector>
