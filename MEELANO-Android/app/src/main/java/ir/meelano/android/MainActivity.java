@@ -17414,8 +17414,7 @@ public class MainActivity extends Activity {
         LinearLayout about = card();
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(12), 0, 0);
         about.addView(text("درباره نسخه", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        TextView desc = text("Meelano Visit v" + appVersionName() + "
-طراحی تازه: نوار وضعیت خوانا و سازگار با اندروید ۱۵، متن‌های درشت‌تر و خواناتر، پیام‌های رنگی داخل برنامه، تم خودکار روز/شب و بازخورد لمسی هنگام افزودن به سبد.", 12, MUTED, Typeface.NORMAL);
+        TextView desc = text("Meelano Visit v" + appVersionName() + "\nطراحی تازه: نوار وضعیت خوانا و سازگار با اندروید ۱۵، متن‌های درشت‌تر و خواناتر، پیام‌های رنگی داخل برنامه، تم خودکار روز/شب و بازخورد لمسی هنگام افزودن به سبد.", 12, MUTED, Typeface.NORMAL);
         desc.setLineSpacing(dp(3), 1.05f); about.addView(desc, new LinearLayout.LayoutParams(-1, -2));
         content.addView(about, ap);
     }
@@ -17469,8 +17468,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2);
         ap.setMargins(0, dp(12), 0, 0);
         about.addView(text("درباره نسخه", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        TextView desc = text("Meelano Visit v" + appVersionName() + "
-طراحی تازه: نوار وضعیت خوانا و سازگار با اندروید ۱۵، متن‌های درشت‌تر و خواناتر، پیام‌های رنگی داخل برنامه، تم خودکار روز/شب و بازخورد لمسی هنگام افزودن به سبد.", 12, MUTED, Typeface.NORMAL);
+        TextView desc = text("Meelano Visit v" + appVersionName() + "\nطراحی تازه: نوار وضعیت خوانا و سازگار با اندروید ۱۵، متن‌های درشت‌تر و خواناتر، پیام‌های رنگی داخل برنامه، تم خودکار روز/شب و بازخورد لمسی هنگام افزودن به سبد.", 12, MUTED, Typeface.NORMAL);
         desc.setLineSpacing(dp(3), 1.05f);
         about.addView(desc, new LinearLayout.LayoutParams(-1, -2));
         content.addView(about, ap);
