@@ -82,11 +82,13 @@ jobs:
           cp src/MEELANO-Android/app/build/outputs/apk/release/*.apk "out/MEELANO-v$APP_VERSION-release.apk"
           cp src/MEELANO-Android/app/build/outputs/apk/debug/*.apk "out/MEELANO-v$APP_VERSION-debug.apk"
           for f in out/*.apk; do
-            echo "== $f"; "$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified|Signer #1 certificate (DN|SHA-256)"
+            R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23]|Signer #1 certificate (DN|SHA-256)" | tr '\n' ';')
+            echo "::notice title=apksigner $(basename "$f")::$R"
           done
           for f in apk/*-release.apk; do
             [ -f "$f" ] || continue
-            echo "== committed $f"; "$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified|Signer #1 certificate (DN|SHA-256)"
+            R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23]|Signer #1 certificate (DN|SHA-256)" | tr '\n' ';')
+            echo "::notice title=apksigner committed $(basename "$f")::$R"
           done
           if [ "$HAS_SIGNING_KEY" != "true" ]; then rm out/*-release.apk; fi
           rm -f "$SIGN_STORE_FILE"
