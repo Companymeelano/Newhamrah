@@ -5,6 +5,9 @@ on:
     branches: ['**']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -44,3 +47,23 @@ jobs:
         with:
           name: MEELANO-APK
           path: out/*.apk
+
+      - name: Commit APK to branch
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p apk
+          cp out/*.apk apk/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add apk/*.apk
+          git commit -m "Build APK v4.4.21 [skip ci]" || echo "No changes"
+          git push origin HEAD:${GITHUB_REF_NAME}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v4.4.21-build-${{ github.run_number }}
+          name: MEELANO Android v4.4.21 (build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: out/*.apk
