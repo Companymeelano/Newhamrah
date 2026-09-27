@@ -11,13 +11,17 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING_KEY: ${{ secrets.MEELANO_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Extract Android source
         run: |
           unzip -q -o MEELANO-Android-*.zip -d src
-          ls src/MEELANO-Android
+          VERSION=$(grep -oP "versionName\s+'\K[0-9.]+" src/MEELANO-Android/app/build.gradle)
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building version $VERSION"
 
       - uses: actions/setup-java@v4
         with:
@@ -32,15 +36,60 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build release + debug APK
-        working-directory: src/MEELANO-Android
-        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleRelease assembleDebug
-
-      - name: Collect APKs
+      - name: Prepare release keystore
+        env:
+          KS_B64: ${{ secrets.MEELANO_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.MEELANO_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MEELANO_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.MEELANO_KEY_PASSWORD }}
         run: |
+          KS="$RUNNER_TEMP/release.jks"
+          if [ "$HAS_SIGNING_KEY" = "true" ]; then
+            echo "$KS_B64" | base64 -d > "$KS"
+            echo "SIGN_STORE_PASS=$KS_PASS" >> "$GITHUB_ENV"
+            echo "SIGN_KEY_ALIAS=${KEY_ALIAS:-meelano}" >> "$GITHUB_ENV"
+            echo "SIGN_KEY_PASS=${KEY_PASS:-$KS_PASS}" >> "$GITHUB_ENV"
+          else
+            # No secrets yet: exercise the signing pipeline with a throwaway key.
+            # The resulting release APK is only verified, never published.
+            echo "::warning::Signing secrets are not configured; release APK will not be published."
+            keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias throwaway \
+              -keyalg RSA -keysize 2048 -validity 1 -storepass throwaway -keypass throwaway \
+              -dname "CN=throwaway"
+            echo "SIGN_STORE_PASS=throwaway" >> "$GITHUB_ENV"
+            echo "SIGN_KEY_ALIAS=throwaway" >> "$GITHUB_ENV"
+            echo "SIGN_KEY_PASS=throwaway" >> "$GITHUB_ENV"
+          fi
+          echo "SIGN_STORE_FILE=$KS" >> "$GITHUB_ENV"
+
+      - name: Build debug APK
+        working-directory: src/MEELANO-Android
+        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleDebug
+
+      - name: Build signed release APK
+        working-directory: src/MEELANO-Android
+        run: |
+          gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleRelease \
+            -Pandroid.injected.signing.store.file="$SIGN_STORE_FILE" \
+            -Pandroid.injected.signing.store.password="$SIGN_STORE_PASS" \
+            -Pandroid.injected.signing.key.alias="$SIGN_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$SIGN_KEY_PASS"
+
+      - name: Collect and verify APKs
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           mkdir -p out
-          cp src/MEELANO-Android/app/build/outputs/apk/release/*.apk out/MEELANO-v4.4.21-release.apk
-          cp src/MEELANO-Android/app/build/outputs/apk/debug/*.apk out/MEELANO-v4.4.21-debug.apk
+          cp src/MEELANO-Android/app/build/outputs/apk/release/*.apk "out/MEELANO-v$APP_VERSION-release.apk"
+          cp src/MEELANO-Android/app/build/outputs/apk/debug/*.apk "out/MEELANO-v$APP_VERSION-debug.apk"
+          for f in out/*.apk; do
+            echo "== $f"; "$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified|Signer #1 certificate (DN|SHA-256)"
+          done
+          for f in apk/*-release.apk; do
+            [ -f "$f" ] || continue
+            echo "== committed $f"; "$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified|Signer #1 certificate (DN|SHA-256)"
+          done
+          if [ "$HAS_SIGNING_KEY" != "true" ]; then rm out/*-release.apk; fi
+          rm -f "$SIGN_STORE_FILE"
           ls -la out
 
       - uses: actions/upload-artifact@v4
@@ -56,14 +105,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
           git add apk/*.apk
-          git commit -m "Build APK v4.4.21 [skip ci]" || echo "No changes"
+          git commit -m "Build APK v$APP_VERSION [skip ci]" || echo "No changes"
           git push origin HEAD:${GITHUB_REF_NAME}
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v4.4.21-build-${{ github.run_number }}
-          name: MEELANO Android v4.4.21 (build ${{ github.run_number }})
+          tag_name: v${{ env.APP_VERSION }}-build-${{ github.run_number }}
+          name: MEELANO Android v${{ env.APP_VERSION }} (build ${{ github.run_number }})
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: out/*.apk
