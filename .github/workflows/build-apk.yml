@@ -8,19 +8,31 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
       HAS_SIGNING_KEY: ${{ secrets.MEELANO_KEYSTORE_BASE64 != '' }}
+    outputs:
+      version: ${{ steps.src.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract Android source
+      - name: Locate Android source
+        id: src
         run: |
-          unzip -q -o MEELANO-Android-*.zip -d src
-          VERSION=$(grep -oP "versionName\s+'\K[0-9.]+" src/MEELANO-Android/app/build.gradle)
+          # A freshly uploaded source zip takes precedence over the folder.
+          ZIP=$(ls MEELANO-Android-*.zip 2>/dev/null | head -1 || true)
+          if [ -n "$ZIP" ]; then
+            echo "Using uploaded zip: $ZIP"; rm -rf MEELANO-Android; unzip -q -o "$ZIP"
+          fi
+          VERSION=$(grep -oP "versionName\s+'\K[0-9.]+" MEELANO-Android/app/build.gradle)
           echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION"
 
       - uses: actions/setup-java@v4
@@ -49,10 +61,9 @@ jobs:
             echo "SIGN_STORE_PASS=$KS_PASS" >> "$GITHUB_ENV"
             echo "SIGN_KEY_ALIAS=${KEY_ALIAS:-meelano}" >> "$GITHUB_ENV"
             echo "SIGN_KEY_PASS=${KEY_PASS:-$KS_PASS}" >> "$GITHUB_ENV"
+            echo "::notice title=Signing::Release APK signed with the MEELANO release key from repository secrets."
           else
-            # No secrets yet: exercise the signing pipeline with a throwaway key.
-            # The resulting release APK is only verified, never published.
-            echo "::warning::Signing secrets are not configured; release APK will not be published."
+            echo "::warning title=Signing::Signing secrets are not configured; release APK will not be published."
             keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias throwaway \
               -keyalg RSA -keysize 2048 -validity 1 -storepass throwaway -keypass throwaway \
               -dname "CN=throwaway"
@@ -63,11 +74,18 @@ jobs:
           echo "SIGN_STORE_FILE=$KS" >> "$GITHUB_ENV"
 
       - name: Build debug APK
-        working-directory: src/MEELANO-Android
-        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleDebug
+        working-directory: MEELANO-Android
+        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-debug.log"; exit ${PIPESTATUS[0]}
+
+      - name: Report compile errors
+        if: failure()
+        run: |
+          grep -E "error:|\.java:[0-9]+" "$RUNNER_TEMP/gradle-debug.log" | head -20 | while IFS= read -r line; do
+            echo "::error title=Compile::${line}"
+          done
 
       - name: Build signed release APK
-        working-directory: src/MEELANO-Android
+        working-directory: MEELANO-Android
         run: |
           gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleRelease \
             -Pandroid.injected.signing.store.file="$SIGN_STORE_FILE" \
@@ -79,16 +97,12 @@ jobs:
         run: |
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           mkdir -p out
-          cp src/MEELANO-Android/app/build/outputs/apk/release/*.apk "out/MEELANO-v$APP_VERSION-release.apk"
-          cp src/MEELANO-Android/app/build/outputs/apk/debug/*.apk "out/MEELANO-v$APP_VERSION-debug.apk"
+          cp MEELANO-Android/app/build/outputs/apk/release/*.apk "out/MEELANO-v$APP_VERSION-release.apk"
+          cp MEELANO-Android/app/build/outputs/apk/debug/*.apk "out/MEELANO-v$APP_VERSION-debug.apk"
+          cp MEELANO-Android/app/build/outputs/apk/debug/*.apk app-debug.apk
           for f in out/*.apk; do
-            R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23]|Signer #1 certificate (DN|SHA-256)" | tr '\n' ';')
+            R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23] |certificate SHA-256" | tr '\n' ';')
             echo "::notice title=apksigner $(basename "$f")::$R"
-          done
-          for f in apk/*-release.apk; do
-            [ -f "$f" ] || continue
-            R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23]|Signer #1 certificate (DN|SHA-256)" | tr '\n' ';')
-            echo "::notice title=apksigner committed $(basename "$f")::$R"
           done
           if [ "$HAS_SIGNING_KEY" != "true" ]; then rm out/*-release.apk; fi
           rm -f "$SIGN_STORE_FILE"
@@ -99,6 +113,12 @@ jobs:
           name: MEELANO-APK
           path: out/*.apk
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk-for-screenshots
+          path: app-debug.apk
+          retention-days: 3
+
       - name: Commit APK to branch
         if: github.event_name == 'push'
         run: |
@@ -108,7 +128,7 @@ jobs:
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
           git add apk/*.apk
           git commit -m "Build APK v$APP_VERSION [skip ci]" || echo "No changes"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -118,3 +138,54 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: out/*.apk
+
+  screenshots:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: debug-apk-for-screenshots
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Capture screenshots on Android 15 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/screenshots.sh shots
+
+      - name: Compress and commit screenshots
+        if: github.event_name == 'push'
+        run: |
+          pip install --quiet pillow
+          python3 - <<'PY'
+          import glob, os
+          from PIL import Image
+          os.makedirs("docs/screenshots", exist_ok=True)
+          for f in sorted(glob.glob("shots/*.png")):
+              im = Image.open(f).convert("RGB")
+              w, h = im.size
+              im = im.resize((540, int(h * 540 / w)), Image.LANCZOS)
+              out = "docs/screenshots/" + os.path.basename(f)[:-4] + ".jpg"
+              im.save(out, "JPEG", quality=82, optimize=True)
+              print(out, os.path.getsize(out))
+          PY
+          cp shots/logcat.txt docs/screenshots/logcat.txt || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots
+          git commit -m "Update design screenshots [skip ci]" || echo "No changes"
+          for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done

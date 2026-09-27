@@ -1,0 +1,6 @@
+MEELANO-Android/.gradle/
+MEELANO-Android/build/
+MEELANO-Android/app/build/
+MEELANO-Android/local.properties
+*.jks
+*.keystore
