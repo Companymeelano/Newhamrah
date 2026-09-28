@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <gradient
-        android:angle="135"
-        android:startColor="#F2FCFF"
-        android:centerColor="#18BEFF"
-        android:endColor="#007EFF" />
-</shape>
+<!-- Gold "D" launcher art (full-bleed, letter inside the adaptive-icon safe zone). -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_launcher_art"
+    android:gravity="fill"
+    android:filter="true" />

@@ -24,9 +24,9 @@ dismiss_anr () {
     sleep 2
   done
 }
-shot () {  # name page [theme]
-  local name=$1 page=$2 theme=${3:-azure_diamond}
-  adb shell am start -S -W -n "$PKG/$ACT" --es meelano_preview "$page" --es meelano_theme "$theme" >/dev/null
+shot () {  # name page [theme] [showcase-mode]
+  local name=$1 page=$2 theme=${3:-azure_diamond} mode=${4:-catalog}
+  adb shell am start -S -W -n "$PKG/$ACT" --es meelano_preview "$page" --es meelano_theme "$theme" --es meelano_showcase_mode "$mode" >/dev/null
   sleep 6
   dismiss_anr
   adb exec-out screencap -p > "$OUT/$name.png"
@@ -42,6 +42,9 @@ shot 07-more visitor_more
 shot 08-settings settings
 shot 09-home-dark visitor_dashboard noir_aurora
 shot 10-products-dark showcase noir_aurora
+shot 12-products-smooth showcase azure_diamond compact
+shot 13-products-ultra showcase azure_diamond ultra
+shot 14-products-ultra-dark showcase noir_aurora ultra
 # ---- behaviour checks (results in checks.txt) ----
 check_back () {  # page expected(exit|stay) [screenshot-name]
   adb shell am start -S -W -n "$PKG/$ACT" --es meelano_preview "$1" --es meelano_theme azure_diamond >/dev/null
