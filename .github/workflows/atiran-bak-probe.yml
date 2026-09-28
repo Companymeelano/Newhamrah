@@ -42,16 +42,21 @@ jobs:
       - name: Encrypt and commit
         if: always()
         run: |
-          set -e
           mkdir -p tools/atiran-bak-probe
+          ls -la "$RUNNER_TEMP" | grep -i probe | sed 's/^/::notice::tmp /'
           test -s "$RUNNER_TEMP/bak-probe.json" || echo '{"errors":["no output"]}' > "$RUNNER_TEMP/bak-probe.json"
-          gzip -9 -c "$RUNNER_TEMP/bak-probe.json" > "$RUNNER_TEMP/p.gz"
-          openssl rand -out "$RUNNER_TEMP/k.bin" 32
-          openssl enc -aes-256-cbc -pbkdf2 -salt -in "$RUNNER_TEMP/p.gz" -out tools/atiran-bak-probe/probe.json.gz.enc -pass file:"$RUNNER_TEMP/k.bin"
-          openssl pkeyutl -encrypt -pubin -inkey tools/atiran-probe/probe-public-key.pem -pkeyopt rsa_padding_mode:oaep -in "$RUNNER_TEMP/k.bin" -out tools/atiran-bak-probe/probe.key.enc
+          gzip -9 -c "$RUNNER_TEMP/bak-probe.json" > "$RUNNER_TEMP/p.gz"; echo "::notice::gzip rc=$?"
+          openssl rand -out "$RUNNER_TEMP/k.bin" 32; echo "::notice::rand rc=$?"
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in "$RUNNER_TEMP/p.gz" -out tools/atiran-bak-probe/probe.json.gz.enc -pass file:"$RUNNER_TEMP/k.bin"; echo "::notice::enc rc=$?"
+          openssl pkeyutl -encrypt -pubin -inkey tools/atiran-probe/probe-public-key.pem -pkeyopt rsa_padding_mode:oaep -in "$RUNNER_TEMP/k.bin" -out tools/atiran-bak-probe/probe.key.enc; echo "::notice::rsa rc=$?"
           rm -f "$RUNNER_TEMP/k.bin" "$RUNNER_TEMP/p.gz" "$RUNNER_TEMP/bak-probe.json"
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
-          git add tools/atiran-bak-probe
-          git commit -m "Atiran backup probe result (encrypted) [skip ci]" || echo "No changes"
-          for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
+          git add tools/atiran-bak-probe; echo "::notice::add rc=$?"
+          git commit -q -m "Atiran backup probe result (encrypted) [skip ci]"; echo "::notice::commit rc=$?"
+          for i in 1 2 3 4 5; do
+            git pull -q --rebase origin "${GITHUB_REF_NAME}" 2>&1 | tail -3 | sed 's/^/::notice::pull /'
+            if git push -q origin HEAD:${GITHUB_REF_NAME} 2>&1 | tail -3 | sed 's/^/::notice::push /'; then :; fi
+            git fetch -q origin "${GITHUB_REF_NAME}"; if git merge-base --is-ancestor HEAD FETCH_HEAD; then echo "::notice::pushed"; break; fi
+            sleep 8
+          done
