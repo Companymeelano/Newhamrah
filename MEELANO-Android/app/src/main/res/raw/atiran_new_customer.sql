@@ -26,7 +26,11 @@ DECLARE @code nvarchar(500);
 IF @lastCode IS NOT NULL AND LEN(@lastCode) > LEN(@s) AND TRY_CONVERT(int, RIGHT(@lastCode, LEN(@s))) = @lastShim
     SET @code = LEFT(@lastCode, LEN(@lastCode) - LEN(@s)) + @s;
 ELSE
-    SET @code = @s;
+    -- First customer of a route: route number and row number, three digits each (for example 003001).
+    SET @code = RIGHT(N'000' + CAST(@masir AS nvarchar(12)), 3) + RIGHT(N'000' + @s, 3);
+-- Never reuse a code another customer already has.
+WHILE EXISTS (SELECT 1 FROM dbo.CUSTOMERS WHERE code = @code)
+    SET @code = @code + N'1';
 INSERT INTO dbo.CUSTOMERS
     (MONAME, code, SHHES, BANKNAME, bankshobe, addre, tell1, tell2, cell, active, cred, man, peygham1, special,
      group_rdf, [date], sh_i_m, sharh, vis_rdf, user_d, defi_vis, hesab_status, maxopen_time, check_eteb, just_naghdi,
@@ -45,7 +49,7 @@ DECLARE @a int = CAST(SCOPE_IDENTITY() AS int);
 INSERT INTO dbo.cus_image (shmo, [image]) VALUES (@a, NULL);
 INSERT INTO dbo.cust_act (shmo, [date], act_bes, act_bed, act_dis, act_id, ghno, done_date, t_time, ShowInReport, sysid, isActive, UserID)
 VALUES (@a, @date, 0, 0, N'حساب قبلي', 0, 0, @date, GETDATE(), 1, 1, 1, ISNULL(@uid, 1));
-INSERT INTO dbo.sys_cus VALUES (1, @a, 1);
+INSERT INTO dbo.sys_cus (SysID, Shmo, UserID) VALUES (1, @a, ISNULL(@uid, 1));
 IF dbo.IsAccountingSystemStarted() = 1
     EXEC dbo.AssignTafsilCodeToEntity 1, @a;
 EXEC dbo.FixManCustomer @a;

@@ -366,8 +366,17 @@ public class MainActivity extends Activity {
         String showcaseMode = intent.getStringExtra("meelano_showcase_mode");
         prefs.edit().putString("visitor_showcase_mode", showcaseMode == null || showcaseMode.trim().isEmpty() ? "catalog" : showcaseMode.trim()).commit();
         if ("login".equals(page)) { showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید."); return; }
+        if ("loading".equals(page)) {
+            showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید.");
+            showLoginLoadingOverlay("سارا رحیمی/ويزيتور");
+            preloadStep("products", "ok", formatNumber(1240) + " کالا");
+            preloadStep("customers", "run", "");
+            preloadStep("dashboard", "run", "");
+            return;
+        }
         try { seedDesignPreviewData(); } catch (Exception ignored) { }
         session = new UserSession(1, 7, "سارا رحیمی", "visitor", "");
+        if ("new_customer".equals(page)) { showApp("customers"); showNewCustomerRequestDialog(); return; }
         showApp(page.trim());
     }
 
@@ -486,9 +495,19 @@ public class MainActivity extends Activity {
             session = new UserSession(1, null, "Admin");
             sessionLoginName = "Admin";
             selfTestLog("CUSTREQ approver canApprove=" + canApproveCustomerRequests());
-            String msg = approveCustomerRequest(id, name, 3, 1);
+            String msg = approveCustomerRequest(id, name, 1, 1);
             selfTestLog("CUSTREQ approve " + msg);
-            try { approveCustomerRequest(id, name, 3, 1); selfTestLog("CUSTREQ double_approve NOT_BLOCKED"); } catch (Exception again) { selfTestLog("CUSTREQ double_approve BLOCKED"); }
+            try { approveCustomerRequest(id, name, 1, 1); selfTestLog("CUSTREQ double_approve NOT_BLOCKED"); } catch (Exception again) { selfTestLog("CUSTREQ double_approve BLOCKED"); }
+            try {
+                session = visitor; sessionLoginName = visitorLogin;
+                JSONObject req2 = new JSONObject(req.toString()); req2.put("name", customerNameWithVisitorTag("آزمون خودکار دوم ميلانو", tag));
+                submitCustomerRequest(req2);
+                long id2 = 0;
+                JSONArray p2 = queryCustomerRequests(true, false);
+                for (int i = 0; i < p2.length(); i++) if (req2.optString("name").equals(p2.optJSONObject(i).optString("name"))) id2 = p2.optJSONObject(i).optLong("id");
+                session = new UserSession(1, null, "Admin"); sessionLoginName = "Admin";
+                selfTestLog("CUSTREQ empty_route " + approveCustomerRequest(id2, req2.optString("name"), 4, 1));
+            } catch (Exception e2) { selfTestLog("STEP customer_request_empty_route FAIL " + e2.getMessage()); }
             session = visitor; sessionLoginName = visitorLogin;
             JSONArray mine = queryCustomerRequests(false, true);
             JSONObject mineRow = null;
@@ -512,16 +531,16 @@ public class MainActivity extends Activity {
 
     private void seedDesignPreviewData() throws Exception {
         String[][] products = {
-                {"1001", "برنج طارم ممتاز ۱۰ کیلویی", "6260000100011", "18500000", "17900000", "42", "کیسه", "برنج و غلات"},
-                {"1002", "روغن مایع آفتابگردان ۱٫۸ لیتری", "6260000100028", "2450000", "2390000", "3", "بطری", "روغن"},
-                {"1003", "چای سیاه ممتاز ۵۰۰ گرمی", "6260000100035", "3120000", "3050000", "0", "بسته", "نوشیدنی گرم"},
-                {"1004", "رب گوجه‌فرنگی ۸۰۰ گرمی", "6260000100042", "985000", "950000", "128", "قوطی", "کنسرو"},
-                {"1005", "ماکارونی فرمی ۵۰۰ گرمی", "6260000100059", "412000", "398000", "260", "بسته", "خشکبار و حبوبات"},
-                {"1006", "پنیر سفید ایرانی ۴۰۰ گرمی", "6260000100066", "1350000", "1310000", "18", "عدد", "لبنیات"},
-                {"1007", "آب معدنی ۱٫۵ لیتری (بسته ۶ عددی)", "6260000100073", "720000", "700000", "95", "بسته", "نوشیدنی"},
-                {"1008", "مایع ظرفشویی ۱ لیتری", "6260000100080", "690000", "0", "4", "بطری", "شوینده"},
-                {"1009", "پسته اکبری ۵۰۰ گرمی", "6260000100097", "4850000", "0", "22", "بسته", "خشکبار و حبوبات"},
-                {"1010", "شکر سفید ۹۰۰ گرمی", "6260000100103", "610000", "0", "140", "بسته", "خشکبار و حبوبات"}
+                {"1001", "پسته اکبری شور ۵۰۰ گرمی", "6260000100011", "4850000", "5141000", "42", "بسته", "آجیل"},
+                {"1002", "بادام درختی ممتاز ۵۰۰ گرمی", "6260000100028", "3950000", "4187000", "3", "بسته", "آجیل"},
+                {"1003", "فندق برشته ۲۵۰ گرمی", "6260000100035", "2120000", "2247200", "0", "بسته", "آجیل"},
+                {"1004", "مغز گردو سفید ۵۰۰ گرمی", "6260000100042", "3480000", "3688800", "128", "بسته", "آجیل"},
+                {"1005", "بادام هندی برشته ۲۵۰ گرمی", "6260000100059", "2650000", "2809000", "260", "بسته", "آجیل"},
+                {"1006", "تخمه آفتابگردان شور ۵۰۰ گرمی", "6260000100066", "690000", "731400", "18", "بسته", "تخمه"},
+                {"1007", "بادام زمینی شور ۵۰۰ گرمی", "6260000100073", "720000", "763200", "95", "بسته", "آجیل"},
+                {"1008", "کشمش سبز قلمی ۱ کیلویی", "6260000100080", "1450000", "0", "4", "بسته", "خشکبار"},
+                {"1009", "خرما مضافتی بم ۶۰۰ گرمی", "6260000100097", "985000", "0", "22", "جعبه", "خشکبار"},
+                {"1010", "آجیل مخلوط چهارمغز ۵۰۰ گرمی", "6260000100103", "4250000", "0", "140", "بسته", "آجیل"}
         };
         JSONArray rows = new JSONArray();
         for (String[] p : products) {
@@ -6328,8 +6347,12 @@ public class MainActivity extends Activity {
     static String customerNameTagFor(String login, String display) {
         String l = login == null ? "" : login.trim().toLowerCase(Locale.US);
         String d = display == null ? "" : display.trim();
-        if ("latifi".equals(l) || "latifi".equalsIgnoreCase(d) || d.contains("لطيفي") || d.contains("لطیفی")) return "08";
-        if ("khodayar".equals(l) || "khodayar".equalsIgnoreCase(d) || d.contains("خدايار") || d.contains("خدایار")) return "07";
+        // The login name decides; the display name is only a fallback when the login name is unknown.
+        if ("latifi".equals(l)) return "08";
+        if ("khodayar".equals(l)) return "07";
+        if (!l.isEmpty() && !"user".equals(l)) return "";
+        if ("latifi".equalsIgnoreCase(d) || d.contains("لطيفي") || d.contains("لطیفی")) return "08";
+        if ("khodayar".equalsIgnoreCase(d) || d.contains("خدايار") || d.contains("خدایار")) return "07";
         return "";
     }
 

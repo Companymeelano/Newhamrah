@@ -45,6 +45,9 @@ shot 10-products-dark showcase noir_aurora
 shot 12-products-smooth showcase azure_diamond compact
 shot 13-products-ultra showcase azure_diamond ultra
 shot 14-products-ultra-dark showcase noir_aurora ultra
+shot 15-loading loading
+shot 16-loading-dark loading noir_aurora
+shot 17-new-customer new_customer
 # ---- behaviour checks (results in checks.txt) ----
 check_back () {  # page expected(exit|stay) [screenshot-name]
   adb shell am start -S -W -n "$PKG/$ACT" --es meelano_preview "$1" --es meelano_theme azure_diamond >/dev/null

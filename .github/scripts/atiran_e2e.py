@@ -268,6 +268,11 @@ def verify(out_path):
         prev = rows(cur, "SELECT TOP (1) code, sh_i_m FROM dbo.CUSTOMERS WHERE RDF_masir=%s AND SHMO<>%s AND sh_i_m IS NOT NULL ORDER BY sh_i_m DESC", (r.get("RDF_masir", 0), shmo))["rows"]
         out["route_previous"] = prev
         checks["atiran_code_continues_route"] = bool(r) and bool(prev) and r["sh_i_m"] == prev[0][1] + 1 and len(r["code"]) == len(prev[0][0])
+        checks["atiran_code_unique"] = bool(r) and rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS WHERE code=%s", (r["code"],))["rows"][0][0] == 1
+        er = rows(cur, "SELECT SHMO, code, sh_i_m, RDF_masir FROM dbo.CUSTOMERS WHERE RDF_masir=4")
+        out["empty_route_customer"] = er
+        checks["atiran_empty_route_code"] = len(er["rows"]) == 1 and er["rows"][0][1] == "004001" and er["rows"][0][2] == 1
+        checks["atiran_sys_cus_user_is_approver"] = rows(cur, "SELECT COUNT(*) FROM dbo.sys_cus WHERE Shmo=%s AND UserID=1 AND SysID=1", (shmo,))["rows"][0][0] == 1
         checks["atiran_cus_image_row"] = rows(cur, "SELECT COUNT(*) FROM dbo.cus_image WHERE shmo=%s", (shmo,))["rows"][0][0] == 1
         checks["atiran_cust_act_row"] = rows(cur, "SELECT COUNT(*) FROM dbo.cust_act WHERE shmo=%s", (shmo,))["rows"][0][0] >= 1
         checks["atiran_sys_cus_row"] = rows(cur, "SELECT COUNT(*) FROM dbo.sys_cus WHERE Shmo=%s", (shmo,))["rows"][0][0] == 1

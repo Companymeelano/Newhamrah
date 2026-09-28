@@ -16,46 +16,38 @@ final class MeelanoProductPhotos {
     static String keyForType(String type) {
         if (type == null) return null;
         switch (type) {
-            case "rice_bag": return "rice";
-            case "oil_bottle": return "cooking_oil";
-            case "tea_box": return "black_tea";
-            case "pasta_pack": return "pasta";
-            case "cheese": return "white_cheese";
-            case "water_bottle": return "mineral_water";
-            case "milk_carton": return "milk";
-            case "dairy_cup": return "yogurt";
+            case "nuts_bag": return "nuts";
             default: return null;
         }
     }
 
+    /**
+     * Nuts and dried fruit (آجیل و خشکبار). Specific words come first; «آجیل/مخلوط/چهارمغز» shows the
+     * mixed bowl. Products made from nuts (کره بادام زمینی، روغن گردو، شکلات فندقی…) keep the drawn picture.
+     */
     static String keyFor(String text) {
         if (text == null || text.trim().isEmpty()) return null;
         String t = norm(text);
-        if (has(t, "بیسکویت", "بیسکوییت", "بیسکوئیت", "کلوچه", "ویفر")) return "biscuit";
-        if (has(t, "تن ماهی", "تنماهی", "کنسرو ماهی", "ماهی تن")) return "canned_tuna";
-        if (has(t, "پودر لباسشویی", "پودر ماشین لباسشویی", "پودر دستی", "مایع لباسشویی", "شوینده لباس")) return "laundry_powder";
-        if (has(t, "پسته", "بادام", "بادوم", "فندق", "گردو", "آجیل", "اجیل", "تخمه")) {
-            return has(t, "کره", "روغن", "شیر", "بستنی", "شکلات") ? null : "nuts";
-        }
-        if (has(t, "عدس", "لوبیا", "نخود", "لپه", "حبوبات") || hasWord(t, "ماش")) {
-            return has(t, "کنسرو", "سبز", "فرنگی", "ماشین", "ظرفشویی", "لباسشویی") ? null : "legumes";
-        }
-        // Whole words only: «نبات» must not catch «روغن نباتی», «قند» not «قندان».
-        if (hasWord(t, "شکر", "قند", "نبات")) {
-            return has(t, "شکلات", "رژیمی") || hasWord(t, "بی قند", "بدون قند") ? null : "sugar";
-        }
-        if (has(t, "شیر کاکائو", "شیرکاکائو", "شیر موز", "شیرموز")) return "milk";
-        if (has(t, "شیرینی", "شیرین", "شیره", "شیر خشک", "شیرخشک", "شیر برنج", "بستنی", "کیک", "شکلات")) return null;
-        if (has(t, "ماست")) return "yogurt";
-        if (has(t, "پنیر")) return "white_cheese";
-        if (has(t, "شیر")) return "milk";
-        if (has(t, "آب معدنی", "اب معدنی", "آب آشامیدنی", "اب اشامیدنی")) return "mineral_water";
-        if (has(t, "مایع ظرف", "ظرفشویی", "ظرف شویی")) return has(t, "پودر", "قرص", "ماشین") ? null : "dish_soap";
-        if (has(t, "چای")) return has(t, "چای سبز", "چای ساز", "چایساز", "دمنوش", "لیوان", "قوری") ? null : "black_tea";
-        if (has(t, "برنج")) return "rice";
-        if (has(t, "ماکارونی", "ماکارانی", "پاستا")) return "pasta";
-        if (has(t, "رب")) return has(t, "انار", "آلو", "الو", "لیمو") ? null : "tomato_paste";
-        if (has(t, "روغن")) return has(t, "موتور", "ترمز", "بدن", "بچه", "ماساژ", "مو", "آرایشی", "ارایشی") ? null : "cooking_oil";
+        // Sweets and snacks that only taste of nuts or fruit (in the Atiran list: آبنبات فندقی، ویفر فندقی،
+        // تافی بادام زمینی، آدامس توت فرنگی…) keep the drawn picture.
+        if (has(t, "کره", "روغن", "بستنی", "شکلات", "کیک", "بیسکو", "آبنبات", "ابنبات", "ابنیات", "آدامس", "ادامس", "تافی",
+                "ویفر", "پاستیل", "دراژه", "اسمارتیز", "شوکو", "توت فرنگی", "توتفرنگی", "طعم", "چیپس", "بایکیت", "تابلت", "اچاچی", "آچاچی")
+                // whole words only: «کرم» is inside «کرمان», «پفک» inside «انجیر پفکی» (a kind of dried fig)
+                || hasWord(t, "شیر", "کرم", "نانی", "پفک", "آرد", "ارد")) return null;
+        if (has(t, "میوه خشک", "خشک میوه")) return "dried_fruit";
+        if (hasWord(t, "آجیل", "اجیل", "مخلوط", "چهارمغز", "چهار مغز", "شب یلدا", "نخودچی")) return "nuts";
+        if (has(t, "بادام زمینی", "بادوم زمینی", "بادامزمینی")) return "peanut";
+        if (has(t, "بادام هندی", "بادوم هندی", "بادامهندی", "کاجو", "کازو")) return "cashew";
+        if (has(t, "پسته")) return "pistachio";
+        if (has(t, "فندق")) return "hazelnut";
+        if (has(t, "گردو", "گردوی")) return "walnut";
+        if (has(t, "بادام", "بادوم")) return "almond";
+        if (has(t, "تخمه", "تخم کدو", "تخم هندوانه", "تخم آفتابگردان", "آفتابگردان", "شاهدانه")) return "seeds";
+        if (has(t, "کشمش", "مویز", "سبزه")) return "raisin";
+        if (has(t, "خرما", "رطب", "مضافتی", "پیارم", "زاهدی", "کبکاب")) return "dates";
+        if (has(t, "برگه", "انجیر", "قیسی", "قیصی", "زردآلو", "زرد آلو", "آلو بخارا", "آلوبخارا", "آلوچه", "الوچه", "برگ زرد")
+                || hasWord(t, "آلو", "الو", "توت", "توت خشک", "هلو خشک", "سیب خشک", "کیوی خشک")) return "dried_fruit";
+        if (has(t, "خشکبار")) return "nuts";
         return null;
     }
 
