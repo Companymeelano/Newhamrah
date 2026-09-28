@@ -469,6 +469,7 @@
    * Using the Android Studio vector conversion tool
    * Rasterizing the image (converting to PNG)
 
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/raw/atiran_new_customer.sql: Warning: The resource R.raw.atiran_new_customer appears to be unused [UnusedResources]
 /home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/values/colors.xml:3: Warning: The resource R.color.meelano_surface appears to be unused [UnusedResources]
     <color name="meelano_surface">#FFFFFF</color>
            ~~~~~~~~~~~~~~~~~~~~~~
@@ -788,4 +789,4 @@
    the left bitmask. Therefore, you can use gravity="start" rather than
    gravity="left|start".)
 
-1 error, 185 warnings
+1 error, 186 warnings
