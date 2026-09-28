@@ -1,0 +1,1 @@
+09-28 05:04:37.112  8876  8876 I Choreographer: Skipped 37 frames!  The application may be doing too much work on its main thread.
