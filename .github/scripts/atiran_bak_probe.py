@@ -82,6 +82,48 @@ def stage2(c, cur, q, out):
                 out["view_" + v] = {"cols": cols[:40], "rows": []}
 
 
+def stage3(c, cur, q, out):
+    """Sales invoices (store edition): tables, triggers, Atiran's own procedures, real samples, reports."""
+    q("s3_tables", "SELECT name FROM sys.tables WHERE name LIKE N'%sail%' OR name LIKE N'%fact%' OR name LIKE N'%sale%' OR name LIKE N'%kardex%' "
+                   "OR name LIKE N'%mojod%' OR name LIKE N'%anbar%' OR name LIKE N'%tasvie%' OR name LIKE N'%daryaft%' OR name LIKE N'%chek%' OR name LIKE N'%check%' "
+                   "OR name LIKE N'%sanad%' OR name LIKE N'%sys%' OR name LIKE N'%hozor%' OR name LIKE N'%attend%' ORDER BY name")
+    for t in ["sailfact", "subsailfact", "sailfact_pish", "subsailfact_pish", "cust_act", "anbars", "kardex"]:
+        q("s3_cols_" + t, "SELECT c.name, t.name, c.max_length, c.is_nullable, c.is_identity, OBJECT_DEFINITION(c.default_object_id) "
+                          "FROM sys.columns c JOIN sys.types t ON c.user_type_id=t.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.%s') ORDER BY c.column_id" % t)
+    q("s3_triggers", "SELECT OBJECT_NAME(parent_id), name, is_disabled, LEFT(OBJECT_DEFINITION(object_id), 12000) FROM sys.triggers "
+                     "WHERE OBJECT_NAME(parent_id) IN (N'sailfact', N'subsailfact', N'inventory', N'cust_act', N'sailfact_pish', N'subsailfact_pish', N'CUSTOMERS')")
+    q("s3_proc_names", "SELECT o.name, o.type FROM sys.objects o WHERE o.type IN ('P','FN','IF','TF','V') ORDER BY o.name")
+    # Every module that writes a sales invoice header, or turns a pre-invoice into an invoice.
+    q("s3_procs_sail", "SELECT o.name, o.type, LEN(m.definition), LEFT(m.definition, 30000) FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id "
+                       "WHERE (m.definition LIKE N'%INSERT%INTO%sailfact%' OR m.definition LIKE N'%insert%sailfact%' OR o.name LIKE N'%sail%' OR o.name LIKE N'%pish%' "
+                       "OR o.name LIKE N'%mojod%' OR o.name LIKE N'%kardex%' OR o.name LIKE N'%FixMan%' OR o.name LIKE N'%tasvie%' OR o.name LIKE N'%sarresid%' "
+                       "OR o.name LIKE N'%bedeh%' OR o.name LIKE N'%mande%') AND o.type IN ('P','FN','IF','TF','V','TR')")
+    q("s3_last_sail", "SELECT TOP (6) * FROM dbo.sailfact ORDER BY shfacfo DESC")
+    q("s3_sail_counts", "SELECT rdf__, active, COUNT(*), MAX(shfacfo), MIN([date]), MAX([date]) FROM dbo.sailfact GROUP BY rdf__, active")
+    try:
+        cur.execute("SELECT TOP (3) shfacfo FROM dbo.sailfact WHERE active='t' ORDER BY shfacfo DESC")
+        nums = [r[0] for r in cur.fetchall()]
+    except Exception as ex:
+        nums = []
+        out["errors"].append("last nums: %s" % str(ex)[:200])
+    out["s3_nums"] = nums
+    if nums:
+        lst = ",".join(str(int(n)) for n in nums)
+        q("s3_last_sub", "SELECT * FROM dbo.subsailfact WHERE shfacfo IN (%s) ORDER BY shfacfo, RDF" % lst)
+        q("s3_last_cust_act", "SELECT TOP (40) * FROM dbo.cust_act WHERE ghno IN (%s) OR act_id IN (%s) ORDER BY rdf_ DESC" % (lst, lst))
+    q("s3_pish_converted", "SELECT TOP (10) * FROM dbo.sailfact_pish WHERE sh_f<>0 ORDER BY shfacfo DESC")
+    q("s3_anbars", "SELECT * FROM dbo.anbars")
+    q("s3_visitors", "SELECT vis_rdf, vis_name, Username, UserID FROM dbo.visitors")
+    cur.execute("SELECT name FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.sys_users')")
+    names = [r[0] for r in cur.fetchall() if not any(k in r[0].lower() for k in ("pass", "pwd"))]
+    q("s3_sys_users", "SELECT " + ",".join("[%s]" % n for n in names) + " FROM dbo.sys_users")
+    q("s3_settings", "SELECT * FROM dbo.overal_setting")
+    q("s3_debtors_by_vis", "SELECT vis_rdf, COUNT(*), SUM(man) FROM dbo.CUSTOMERS WHERE man>0 GROUP BY vis_rdf")
+    q("s3_man_sign", "SELECT SUM(CASE WHEN man>0 THEN 1 ELSE 0 END), SUM(CASE WHEN man<0 THEN 1 ELSE 0 END), SUM(CASE WHEN man=0 THEN 1 ELSE 0 END) FROM dbo.CUSTOMERS")
+    q("s3_open_invoices", "SELECT TOP (40) shfacfo, [date], done_date, ted_rooz, shmo, vis_rdf, [all], man_gh FROM dbo.sailfact WHERE active='t' ORDER BY shfacfo DESC")
+    q("s3_server_date", "SELECT dbo.ReturnDateServer(), CAST(dbo.UDF_Gregorian_To_Persian(GETDATE()) AS nvarchar(30))")
+
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -90,6 +132,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "3":
+        stage3(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 3 done; errors:", len(out["errors"]))
+        return
     if os.environ.get("PROBE_STAGE") == "2":
         stage2(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
