@@ -21875,7 +21875,7 @@ public class MainActivity extends Activity {
         TextView mt = text(m.toString(), 11.2f, MUTED, Typeface.BOLD); mt.setGravity(Gravity.CENTER); mt.setLineSpacing(dp(3), 1f);
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(8), 0, 0); box.addView(mt, mp);
         ScrollView sc = new ScrollView(this); sc.addView(box);
-        MeelanoDialogBuilder b = new MeelanoDialogBuilder().setView(sc);
+        AlertDialog.Builder b = new MeelanoDialogBuilder().setView(sc);
         if (r.has("receiptError")) b.setPositiveButton("ثبت دوباره دریافت", (d, w) -> showApp("store_receipt")).setNegativeButton("خانه", (d, w) -> showApp("store_home"));
         else b.setPositiveButton("فاکتور جدید", (d, w) -> showApp("cart")).setNegativeButton("خانه", (d, w) -> showApp("store_home"));
         AlertDialog dlg = b.create();
