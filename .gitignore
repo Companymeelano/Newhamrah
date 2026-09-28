@@ -4,3 +4,4 @@ MEELANO-Android/app/build/
 MEELANO-Android/local.properties
 *.jks
 *.keystore
+__pycache__/

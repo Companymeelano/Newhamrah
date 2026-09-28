@@ -397,11 +397,19 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             selfTestLog("START host=" + debugDbHost + " version=" + BuildConfigSafe.versionName(this));
             String user = login.substring(0, login.indexOf(':')); String pass = login.substring(login.indexOf(':') + 1);
-            try {
-                UserSession s = authenticate(user, pass);
-                session = s; prefs.edit().putString(KEY_LAST_USER, user).apply();
-                selfTestLog("STEP login OK visitorId=" + s.visitorId + " userId=" + s.userId + " role=" + s.accessRole);
-            } catch (Throwable ex) { selfTestLog("STEP login FAIL " + ex.getMessage()); selfTestLog("DONE"); return; }
+            UserSession s = null; Throwable loginError = null;
+            for (int attempt = 1; attempt <= 8 && s == null; attempt++) {
+                try { s = authenticate(user, pass); }
+                catch (Throwable ex) {
+                    loginError = ex; selfTestLog("login attempt " + attempt + " failed: " + ex.getMessage());
+                    String m = String.valueOf(ex.getMessage());
+                    if (!(m.contains("Network") || m.contains("connect") || m.contains("I/O"))) break;
+                    try { Thread.sleep(8000); } catch (InterruptedException ignored) { }
+                }
+            }
+            if (s == null) { selfTestLog("STEP login FAIL " + (loginError == null ? "" : loginError.getMessage())); selfTestLog("DONE"); return; }
+            session = s; prefs.edit().putString(KEY_LAST_USER, user).apply();
+            selfTestLog("STEP login OK visitorId=" + s.visitorId + " userId=" + s.userId + " role=" + s.accessRole);
             selfTestStep("products", () -> queryProducts("", "all"));
             selfTestStep("customers", () -> queryCustomers("", "all"));
             selfTestStep("cart_customers", () -> queryCartCustomers(""));
