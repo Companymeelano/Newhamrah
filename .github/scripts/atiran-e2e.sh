@@ -7,6 +7,7 @@ OUT=${1:-e2e}
 mkdir -p "$OUT"
 adb shell settings put global hide_error_dialogs 1 || true
 adb install -r -g app-debug.apk
+adb install -r -g app-store-debug.apk || echo "store apk install failed"
 echo "waiting for emulator network…"
 for i in $(seq 1 60); do
   if adb shell "toybox nc -z -w 2 10.0.2.2 1433" >/dev/null 2>&1 || adb shell "ping -c 1 -W 2 10.0.2.2" >/dev/null 2>&1; then echo "network up after $((i*3))s"; break; fi
@@ -27,3 +28,18 @@ adb exec-out screencap -p > "$OUT/e2e-screen.png" || true
 adb logcat -d | grep -E "MEELANO|AndroidRuntime|FATAL|jtds" > "$OUT/logcat.txt" || true
 grep -c "STEP" "$OUT/selftest.txt" | sed 's/^/self-test steps logged: /'
 grep -c " FAIL" "$OUT/selftest.txt" | sed 's/^/failed steps: /'
+
+# Store edition (ir.meelano.store.debug): staff login, visitor rejected, reports, final invoice, GPS attendance.
+SPKG=ir.meelano.store.debug
+adb logcat -c
+adb shell am force-stop "$PKG" || true
+adb shell am start -S -W -n "$SPKG/$ACT" --es meelano_test_db 10.0.2.2 --es meelano_selftest "mahmodi:${E2E_PASS}" --es meelano_selftest_reject "latifi:${E2E_PASS}" --es meelano_selftest_customer 412 --es meelano_selftest_items "667:2,621:1"
+for i in $(seq 1 200); do
+  sleep 4
+  adb logcat -d -s MEELANO_SELFTEST:I > "$OUT/store-selftest.txt" 2>/dev/null
+  if grep -q "MEELANO_SELFTEST.*DONE" "$OUT/store-selftest.txt"; then echo "store self-test finished after $((i*4))s"; break; fi
+done
+sleep 2
+adb exec-out screencap -p > "$OUT/e2e-store-screen.png" || true
+adb logcat -d | grep -E "MEELANO|AndroidRuntime|FATAL|jtds" > "$OUT/store-logcat.txt" || true
+grep -c " FAIL" "$OUT/store-selftest.txt" | sed 's/^/store failed steps: /'

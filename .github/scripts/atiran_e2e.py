@@ -116,7 +116,15 @@ def restore(out_path):
     c.close()
     c = connect("Atiran2")
     cur = c.cursor()
-    cur.execute("UPDATE dbo.visitors SET Password=%s WHERE Username='latifi'", (os.environ["E2E_PASS"],))
+    cur.execute("UPDATE dbo.visitors SET Password=%s WHERE Username IN ('latifi','mahmodi','nazari')", (os.environ["E2E_PASS"],))
+    out["before_store"] = {
+        "stock": rows(cur, "SELECT shka, mojkavah, mojkajoz, mohvah FROM dbo.inventory WHERE shka IN (667, 621) ORDER BY shka"),
+        "man412": rows(cur, "SELECT man FROM dbo.CUSTOMERS WHERE SHMO=412")["rows"][0][0],
+        "max_shfacfo": rows(cur, "SELECT ISNULL(MAX(shfacfo),0) FROM dbo.sailfact")["rows"][0][0],
+        "debtors": rows(cur, "SELECT COUNT(*), SUM(man) FROM dbo.CUSTOMERS WHERE man > 0")["rows"][0],
+        "customers": rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS")["rows"][0][0],
+        "counter": safe_rows(cur, out, "SELECT * FROM dbo.InvoiceNumberCounter"),
+    }
     out["before_pish"] = rows(cur, "SELECT shfacfo, rdf__, active, USER__, [date], shmo, vis_rdf, [all], Stamp FROM dbo.sailfact_pish ORDER BY shfacfo, rdf__")
     out["before_meelano"] = safe_rows(cur, out, "SELECT id, status, native_prefactor_table, native_prefactor_no, system_convert_note FROM dbo.meelano_prefactors ORDER BY id")
     out["db"] = rows(cur, "SELECT DB_NAME(), DATABASEPROPERTYEX(DB_NAME(),'Collation'), compatibility_level, (SELECT COUNT(*) FROM sys.tables) FROM sys.databases WHERE name=DB_NAME()")
@@ -287,10 +295,104 @@ def verify(out_path):
         out["new_customer_in_views"] = views
     except Exception as ex:
         out["errors"].append("customer checks: %s" % str(ex)[:300])
+    try:
+        verify_store(cur, out, checks)
+    except Exception as ex:
+        out["errors"].append("store checks: %s" % str(ex)[:300])
     json.dump(out, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, default=str)
     for k, v in checks.items():
         print(("PASS " if v else "FAIL ") + k)
     print("failed read steps:", len(failed_steps), "| errors:", len(out["errors"]))
+
+
+def verify_store(cur, out, checks):
+    """Store edition (v5.3.0): final sales invoice written through Atiran's AddInvoice / subsailtemp /
+    FactorConfirmation path, only store staff may log in, reports match the database, GPS attendance."""
+    st = []
+    try:
+        for line in open("e2e/store-selftest.txt", encoding="utf-8", errors="replace"):
+            if "MEELANO_SELFTEST" in line:
+                st.append(line.split("MEELANO_SELFTEST", 1)[1].lstrip(": ").strip())
+    except Exception as ex:
+        out["errors"].append("store selftest log: %s" % ex)
+    out["store_selftest"] = st
+    joined = "\n".join(st)
+    before = {}
+    try:
+        before = json.load(open(os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "restore.json"), encoding="utf-8")).get("before_store", {})
+    except Exception as ex:
+        out["errors"].append("restore.json: %s" % ex)
+    out["store_before"] = before
+    checks["store_login_mahmodi"] = "STEP login OK" in joined
+    checks["store_rejects_visitor_latifi"] = "STEP store_reject_visitor OK" in joined
+    checks["store_finished"] = any(s == "DONE" for s in st)
+    out["store_failed_steps"] = [s for s in st if s.startswith("STEP") and " FAIL" in s]
+    checks["store_no_failed_steps"] = bool(st) and not out["store_failed_steps"]
+    m = re.search(r"STORE staff key=(\w+) vis=(\d+) uid=(\d+)", joined)
+    checks["store_staff_is_mahmodi_vis3_user6"] = bool(m) and m.group(1) == "mahmodi" and m.group(2) == "3" and m.group(3) == "6"
+    d = re.search(r"STORE data today=\S+ debtors=(\d+) overdue=(\d+) overdueSum=(-?\d+) customersTotal=(-?\d+) debt=(-?\d+)", joined)
+    if d and before.get("debtors"):
+        checks["store_debtors_match_db"] = int(d.group(1)) == int(before["debtors"][0]) and abs(int(d.group(5)) - float(before["debtors"][1])) < 2
+        checks["store_customers_total_match_db"] = int(d.group(4)) == int(before.get("customers", -1))
+        checks["store_overdue_found"] = int(d.group(2)) > 0 and 0 < int(d.group(3)) <= float(before["debtors"][1]) + 1
+    g = re.search(r"STORE groups (.*)", joined)
+    if g and before.get("debtors"):
+        total = sum(int(x.rsplit("/", 1)[1]) for x in g.group(1).split(";") if "/" in x)
+        checks["store_debt_groups_add_up"] = abs(total - float(before["debtors"][1])) < 10
+
+    inv = [s for s in st if s.startswith("STORE INVOICE1 ")]
+    inv2 = [s for s in st if s.startswith("STORE INVOICE2 ")]
+    r1 = json.loads(inv[0].split(" ", 2)[2]) if inv else {}
+    r2 = json.loads(inv2[0].split(" ", 2)[2]) if inv2 else {}
+    out["store_invoice_results"] = [r1, r2]
+    no = int(r1.get("no", 0) or 0)
+    checks["store_invoice_number_returned"] = no > 0
+    checks["store_resend_returns_same_invoice"] = no > 0 and int(r2.get("no", 0) or 0) == no and bool(r2.get("duplicate"))
+    hdr = rows(cur, "SELECT * FROM dbo.sailfact WHERE UniqueID LIKE 'MEELANO-STORE-%' ORDER BY shfacfo")
+    out["store_headers"] = hdr
+    checks["store_exactly_one_invoice"] = len(hdr["rows"]) == 1
+    h = dict(zip(hdr["cols"], hdr["rows"][0])) if hdr["rows"] else {}
+    checks["store_invoice_is_final_status1"] = str(h.get("Status")) in ("1", "True")
+    checks["store_invoice_customer_412"] = h.get("shmo") == 412
+    checks["store_invoice_user_mahmodi"] = h.get("userid") == 6 and h.get("vis_rdf") == 3
+    checks["store_invoice_new_number"] = bool(h) and int(h.get("shfacfo", 0)) > int(before.get("max_shfacfo", 0) or 0) and int(h.get("shfacfo", 0)) == no
+    lines = rows(cur, "SELECT d.RDF, d.SHKA, d.TEDVAH, d.TEDJOZ, d.VAHPRICE, d.JOZPRICE, d.LINESUM, d.rdf_anbar, d.active FROM dbo.subsailfact d WHERE d.shfacfo=%s ORDER BY d.RDF", (no,))
+    out["store_lines"] = lines
+    checks["store_two_lines_in_subsailfact"] = len(lines["rows"]) == 2 and sorted(int(r[1]) for r in lines["rows"]) == [621, 667]
+    out["store_ka_act"] = safe_rows(cur, out, "SELECT * FROM dbo.ka_act WHERE shfacfo=%s" % no)
+    ka = out["store_ka_act"]
+    checks["store_stock_movements_ka_act"] = bool(ka.get("rows")) and len(ka["rows"]) >= 2
+    after_stock = rows(cur, "SELECT shka, mojkavah, mojkajoz, mohvah FROM dbo.inventory WHERE shka IN (667, 621) ORDER BY shka")
+    out["store_stock_after"] = after_stock
+    try:
+        b = {int(r[0]): float(r[1] or 0) * max(1, float(r[3] or 1)) + float(r[2] or 0) for r in before["stock"]["rows"]}
+        a = {int(r[0]): float(r[1] or 0) * max(1, float(r[3] or 1)) + float(r[2] or 0) for r in after_stock["rows"]}
+        out["store_stock_pieces"] = {"before": b, "after": a}
+        checks["store_stock_decreased_667_by_2"] = abs((b[667] - a[667]) - 2) < 0.01
+        checks["store_stock_decreased_621_by_1"] = abs((b[621] - a[621]) - 1) < 0.01
+    except Exception as ex:
+        out["errors"].append("stock compare: %s" % ex)
+    man_after = rows(cur, "SELECT man FROM dbo.CUSTOMERS WHERE SHMO=412")["rows"][0][0]
+    out["store_man412"] = {"before": before.get("man412"), "after": man_after, "invoice_all": h.get("all")}
+    try:
+        checks["store_customer_debt_increased_by_invoice"] = abs(float(man_after) - float(before.get("man412")) - float(h.get("all"))) < 1
+    except Exception:
+        checks["store_customer_debt_increased_by_invoice"] = False
+    out["store_cust_act"] = safe_rows(cur, out, "SELECT TOP (5) * FROM dbo.cust_act WHERE shmo=412 ORDER BY 1 DESC")
+    out["store_confirmation"] = safe_rows(cur, out, "SELECT * FROM dbo.FactorConfirmation WHERE Shfacfo=%s" % no)
+    checks["store_factor_confirmation_row"] = len(out["store_confirmation"].get("rows", [])) == 1
+    out["store_counter_after"] = safe_rows(cur, out, "SELECT * FROM dbo.InvoiceNumberCounter")
+    # Same shape as an invoice written by the Atiran program itself (816, by nazari).
+    ref = rows(cur, "SELECT * FROM dbo.sailfact WHERE shfacfo=816")
+    if ref["rows"] and h:
+        r816 = dict(zip(ref["cols"], ref["rows"][0]))
+        out["store_vs_816"] = {k: {"atiran": r816.get(k), "meelano": h.get(k)} for k in r816 if str(r816.get(k)).strip() != str(h.get(k)).strip()}
+    att = safe_rows(cur, out, "SELECT username, event_type, lat, lng, distance_m, accuracy_m FROM dbo.meelano_attendance WHERE username='mahmodi' ORDER BY id")
+    out["store_attendance"] = att
+    ar = att.get("rows", [])
+    checks["store_attendance_in_and_out_saved"] = [r[1] for r in ar] == ["in", "out"]
+    checks["store_attendance_inside_radius"] = bool(ar) and all(r[4] is not None and float(r[4]) <= 120 for r in ar)
+    checks["store_attendance_far_rejected"] = "STEP store_att_far OK" in joined and "STEP store_att_inaccurate OK" in joined and "STEP store_att_dup OK" in joined
 
 
 if __name__ == "__main__":

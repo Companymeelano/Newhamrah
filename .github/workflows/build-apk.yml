@@ -97,9 +97,12 @@ jobs:
         run: |
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           mkdir -p out
-          cp MEELANO-Android/app/build/outputs/apk/release/*.apk "out/MEELANO-v$APP_VERSION-release.apk"
-          cp MEELANO-Android/app/build/outputs/apk/debug/*.apk "out/MEELANO-v$APP_VERSION-debug.apk"
-          cp MEELANO-Android/app/build/outputs/apk/debug/*.apk app-debug.apk
+          cp MEELANO-Android/app/build/outputs/apk/visitor/release/*.apk "out/MEELANO-v$APP_VERSION-release.apk"
+          cp MEELANO-Android/app/build/outputs/apk/visitor/debug/*.apk "out/MEELANO-v$APP_VERSION-debug.apk"
+          cp MEELANO-Android/app/build/outputs/apk/store/release/*.apk "out/MEELANO-Store-v$APP_VERSION-release.apk"
+          cp MEELANO-Android/app/build/outputs/apk/store/debug/*.apk "out/MEELANO-Store-v$APP_VERSION-debug.apk"
+          cp MEELANO-Android/app/build/outputs/apk/visitor/debug/*.apk app-debug.apk
+          cp MEELANO-Android/app/build/outputs/apk/store/debug/*.apk app-store-debug.apk
           for f in out/*.apk; do
             R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23] |certificate SHA-256" | tr '\n' ';')
             echo "::notice title=apksigner $(basename "$f")::$R"
@@ -116,7 +119,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: debug-apk-for-screenshots
-          path: app-debug.apk
+          path: |
+            app-debug.apk
+            app-store-debug.apk
           retention-days: 3
 
       - name: Commit APK to branch
@@ -128,10 +133,12 @@ jobs:
           CODE=$(grep -oP "versionCode\s+\K[0-9]+" MEELANO-Android/app/build.gradle)
           printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-v%s-debug.apk"}\n' \
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest.json
-          cat apk/latest.json
+          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Store-v%s-debug.apk"}\n' \
+            "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-store.json
+          cat apk/latest.json apk/latest-store.json
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
-          git add apk/*.apk apk/latest.json
+          git add apk/*.apk apk/latest.json apk/latest-store.json
           git commit -m "Build APK v$APP_VERSION [skip ci]" || echo "No changes"
           for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
 
@@ -166,11 +173,11 @@ jobs:
       - name: javac warnings (-Xlint:all)
         working-directory: MEELANO-Android
         run: |
-          gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g -Pmeelano.analysis compileDebugJavaWithJavac --rerun-tasks 2>&1 | tee "$RUNNER_TEMP/javac.log" || true
+          gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g -Pmeelano.analysis compileVisitorDebugJavaWithJavac --rerun-tasks 2>&1 | tee "$RUNNER_TEMP/javac.log" || true
 
       - name: Android Lint
         working-directory: MEELANO-Android
-        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g lintDebug || true
+        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g lintVisitorDebug || true
 
       - name: PMD (error-prone + multithreading + performance)
         run: |

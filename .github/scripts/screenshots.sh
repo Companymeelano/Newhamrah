@@ -63,4 +63,19 @@ check_back () {  # page expected(exit|stay) [screenshot-name]
 }
 check_back visitor_dashboard exit
 check_back showcase stay 11-back-from-products
+# ---- store edition («میلانو فروشگاه») ----
+if [ -f app-store-debug.apk ]; then
+  adb install -r -g app-store-debug.apk
+  PKG=ir.meelano.store.debug
+  shot 20-store-login login emerald_silk
+  shot 21-store-home store_home emerald_silk
+  shot 22-store-debtors store_reports:debtors emerald_silk
+  shot 23-store-overdue store_reports:overdue emerald_silk
+  shot 24-store-sales store_reports:sales emerald_silk
+  shot 25-store-products store_reports:products emerald_silk
+  shot 26-store-attendance attendance emerald_silk
+  shot 27-store-invoice-done store_invoice_done emerald_silk
+  shot 28-store-home-dark store_home noir_aurora
+  shot 29-store-more visitor_more emerald_silk
+fi
 adb logcat -d -t 400 | grep -E "AndroidRuntime|FATAL|MainActivity" | tail -40 > "$OUT/logcat.txt" || true
