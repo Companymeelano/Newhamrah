@@ -10613,7 +10613,7 @@ public class MainActivity extends Activity {
         head.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         copy.addView(text("کالا", 17.4f, tc(GOLD_2), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + (visitorCartItems != null && visitorCartItems.length() > 0 ? " • " + formatNumber(visitorCartItems.length()) + " قلم در سبد" : ""), 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + (cartHasItems() ? " • سبد: " + cartCountSummary() : ""), 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         ImageView cart = new ImageView(this); cart.setImageResource(R.drawable.mi_shopping_cart); cart.setColorFilter(onColorFor(navAccent("cart"))); cart.setScaleType(ImageView.ScaleType.CENTER_INSIDE); cart.setPadding(dp(12), dp(12), dp(12), dp(12)); cart.setBackground(luxuryButtonBg(navAccent("cart"), true, 999)); cart.setContentDescription("سبد خرید، " + cartCountText() + " قلم"); cart.setClickable(true); applyTouchFeedback(cart); cart.setOnClickListener(v -> showApp("cart"));
         head.addView(cart, new LinearLayout.LayoutParams(dp(46), dp(46)));
@@ -11259,8 +11259,8 @@ public class MainActivity extends Activity {
 
         LinearLayout priceRow = new LinearLayout(this);
         priceRow.setOrientation(LinearLayout.HORIZONTAL);
-        priceRow.addView(showcaseMetric("قیمت ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", WARNING, true), showcaseCellLp(1f, 58));
-        priceRow.addView(showcaseMetric("قیمت ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 58));
+        priceRow.addView(showcaseMetric("قیمت ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", navAccent("cart"), true), showcaseCellLp(1f, 58));
+        priceRow.addView(showcaseMetric("قیمت ۱", moneyOrDash(r, "قیمت_فروش"), navAccent("cart"), true), showcaseCellLp(1f, 58));
         priceRow.addView(showcaseMetric("موجودی", stockWithUnit(r), inStock ? SUCCESS : DANGER, false), showcaseCellLp(1f, 58));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(9), 0, 0); c.addView(priceRow, prp);
         String p2q = "";
@@ -11330,8 +11330,8 @@ public class MainActivity extends Activity {
         pricePanel.setBackground(unifiedInnerBg(price2Ok ? GOLD_2 : navAccent("showcase"), 22));
         pricePanel.addView(text("🏷  قیمت‌های کالا (ریال)", 14.0f, tc(GOLD_2), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout priceRow = new LinearLayout(this); priceRow.setOrientation(LinearLayout.HORIZONTAL);
-        priceRow.addView(showcaseMetric("قیمت ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD, true), showcaseCellLp(1f, 74));
-        priceRow.addView(showcaseMetric("قیمت ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 74));
+        priceRow.addView(showcaseMetric("قیمت ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", navAccent("cart"), true), showcaseCellLp(1f, 74));
+        priceRow.addView(showcaseMetric("قیمت ۱", moneyOrDash(r, "قیمت_فروش"), navAccent("cart"), true), showcaseCellLp(1f, 74));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(8), 0, 0); pricePanel.addView(priceRow, prp);
         TextView profit = text("قیمت ۲ = قیمت ۱ + ۶٪  •  موجودی: " + stockWithUnit(r), 10.0f, tc(GOLD_2), Typeface.BOLD); profit.setGravity(Gravity.CENTER); profit.setPadding(dp(8), dp(7), dp(8), dp(7)); profit.setBackground(roundedStroke(alpha(GOLD, 24), 999, alpha(GOLD, 72)));
         LinearLayout.LayoutParams pfp = new LinearLayout.LayoutParams(-1, -2); pfp.setMargins(0, dp(8), 0, 0); pricePanel.addView(profit, pfp);
@@ -11449,10 +11449,10 @@ public class MainActivity extends Activity {
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout priceRow = new LinearLayout(this); priceRow.setOrientation(LinearLayout.HORIZONTAL);
-        priceRow.addView(showcaseMetric("قیمت فروش ۱", moneyOrDash(r, "قیمت_فروش"), GOLD, true), showcaseCellLp(1f, 64));
-        priceRow.addView(showcaseMetric("قیمت فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", WARNING, true), showcaseCellLp(1.12f, 64));
+        priceRow.addView(showcaseMetric("قیمت فروش ۱", moneyOrDash(r, "قیمت_فروش"), navAccent("cart"), true), showcaseCellLp(1f, 64));
+        priceRow.addView(showcaseMetric("قیمت فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", navAccent("cart"), true), showcaseCellLp(1.12f, 64));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(11), 0, 0); c.addView(priceRow, prp);
-        TextView price2Ribbon = text(price2Ok ? "قیمت فروش ۲ برای افزودن مستقیم آماده است" : "قیمت فروش ۲ برای این کالا ثبت نشده است", 9.6f, tc(price2Ok ? WARNING : MUTED), Typeface.BOLD);
+        TextView price2Ribbon = text(price2Ok ? "قیمت فروش ۲ برای افزودن مستقیم آماده است" : "قیمت فروش ۲ برای این کالا ثبت نشده است", 9.6f, tc(price2Ok ? navAccent("cart") : MUTED), Typeface.BOLD);
         price2Ribbon.setGravity(Gravity.CENTER);
         price2Ribbon.setPadding(dp(8), dp(5), dp(8), dp(5));
         price2Ribbon.setBackground(roundedStroke(alpha(price2Ok ? WARNING : MUTED, isLightTheme() ? 16 : 28), 14, alpha(price2Ok ? WARNING : MUTED, 60)));
@@ -11598,8 +11598,8 @@ public class MainActivity extends Activity {
 
         boolean price2Ok = hasPositiveNumber(r, "قیمت_فروش۲");
         LinearLayout prices = new LinearLayout(this); prices.setOrientation(LinearLayout.HORIZONTAL);
-        prices.addView(showcaseMetric("قیمت فروش ۱", moneyOrDash(r, "قیمت_فروش"), accent, true), showcaseCellLp(1f, 66));
-        prices.addView(showcaseMetric("قیمت فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD_2, true), showcaseCellLp(1.1f, 66));
+        prices.addView(showcaseMetric("قیمت فروش ۱", moneyOrDash(r, "قیمت_فروش"), navAccent("cart"), true), showcaseCellLp(1f, 66));
+        prices.addView(showcaseMetric("قیمت فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", navAccent("cart"), true), showcaseCellLp(1.1f, 66));
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, -2); pp.setMargins(0, dp(12), 0, 0); box.addView(prices, pp);
         String p2quality = price2QualityText(r);
         TextView p2Status = text(price2Ok ? (p2quality.isEmpty() ? "این کالا با قیمت فروش ۲ آماده افزودن به سبد است." : p2quality) : "برای این کالا قیمت فروش ۲ ثبت نشده یا مقدار آن صفر است.", 10.0f, tc(price2Ok ? GOLD_2 : MUTED), Typeface.BOLD);
