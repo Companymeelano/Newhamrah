@@ -332,6 +332,7 @@ public class MainActivity extends Activity {
         initNotificationChannel();
         buildFrame();
         MeelanoA11y.install(getWindow().getDecorView());
+        registerNetworkReturnListener();
         showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید.");
         maybeStartDesignPreview(getIntent());
         maybeStartDbSelfTest(getIntent());
@@ -10004,6 +10005,8 @@ public class MainActivity extends Activity {
         addVisitorVisitTile(r2, "ثبت نتیجه", "یادداشت بازدید اختیاری", "✓", navAccent("visitor_more"), () -> { if (visitorCartCustomer != null) showVisitResultDialog(visitorCartCustomer); else showNotice("اول مشتری را انتخاب کن.", false); });
         LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(-1, -2); r2p.setMargins(0, dp(7), 0, 0); grid.addView(r2, r2p);
         LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(-1, -2); gp.setMargins(0, 0, 0, dp(12)); content.addView(grid, gp);
+        addTodayRouteCard();
+        maybeAskVisitLocationPermission();
     }
 
     private void addVisitorVisitTile(LinearLayout parent, String title, String sub, String glyph, int accent, final Runnable action) {
@@ -10029,6 +10032,8 @@ public class MainActivity extends Activity {
                 new VisitorToolSpec("گزارش‌ها", "امروز/هفته/ماه", "↗", navAccent("visitor_reports"), () -> showApp("visitor_reports"), canOpenPage("visitor_reports")),
                 new VisitorToolSpec("پیش‌فاکتورهای من", "لیست و وضعیت", "▤", navAccent("cart"), () -> loadMyPrefactors(), canUsePermission("prefactor_list")),
                 new VisitorToolSpec("پایان روز", "جمع‌بندی اختیاری", "◎", navAccent("visitor_more"), () -> showEndOfDayReportDialog(), canUsePermission("day_report")),
+                new VisitorToolSpec("گزارش PDF", "امروز • اشتراک", "⎙", navAccent("visitor_reports"), () -> generateDailyReportPdf(), canUsePermission("day_report") || canOpenPage("visitor_reports")),
+                new VisitorToolSpec("مسیر امروز", "روی نقشه", "⌖", navAccent("visit"), () -> openTodayRouteMap(), true),
                 new VisitorToolSpec("صف آفلاین", formatNumber(offlineQueue().length()) + " مورد", "⇅", offlineQueue().length() > 0 ? DANGER : navAccent("visitor_more"), () -> trySendOfflineQueue(), canUsePermission("offline_queue"))
         });
         addVisitorMoreGroup("مشتری و کالا", "ابزارهای فروش سریع", new VisitorToolSpec[]{
@@ -12844,6 +12849,8 @@ public class MainActivity extends Activity {
                 JSONObject v = visits.optJSONObject(i);
                 if (v != null && v.optString("createdLocal", "").startsWith(today)) visitedToday.add(v.optString("customerCode", ""));
             }
+            JSONArray log = todayVisitLog();
+            for (int i = 0; i < log.length(); i++) { JSONObject v = log.optJSONObject(i); if (v != null) visitedToday.add(v.optString("code", "")); }
             String current = visitorCartCustomer == null ? "" : visitorCartCustomer.optString("code", "");
             JSONObject best = null; String bestKey = null;
             for (int i = 0; i < rows.length(); i++) {
@@ -13148,6 +13155,7 @@ public class MainActivity extends Activity {
         lockHandler.removeCallbacks(lockTick);
         lockHandler.postDelayed(lockTick, 60_000L);
         maybeCheckForAppUpdate(false);
+        autoSendOfflineQueue();
     }
 
     @Override
@@ -13425,16 +13433,71 @@ public class MainActivity extends Activity {
         showNotice("اتصال کامل نشد؛ پیش‌فاکتور در صف ارسال آفلاین ذخیره شد.", true);
     }
 
+    private final Object offlineQueueLock = new Object();
+    private volatile boolean offlineAutoSending = false;
+
+    /**
+     * Sends queued pre-invoices one by one and removes each one right after it is saved, so a
+     * connection drop half-way never sends the same pre-invoice twice. Runs on the DB thread.
+     */
+    private int sendOfflineQueueItems() throws Exception {
+        int ok = 0;
+        while (true) {
+            JSONObject snap;
+            synchronized (offlineQueueLock) {
+                JSONArray q = offlineQueue();
+                if (q.length() == 0) break;
+                snap = q.optJSONObject(0);
+                if (snap == null) { writeOfflineQueue(withoutFirst(q)); continue; }
+            }
+            insertPrefactorSnapshot(snap, snap.optString("status", "sent"));
+            synchronized (offlineQueueLock) { writeOfflineQueue(withoutFirst(offlineQueue())); }
+            ok++;
+        }
+        return ok;
+    }
+
+    private JSONArray withoutFirst(JSONArray a) {
+        JSONArray out = new JSONArray();
+        for (int i = 1; a != null && i < a.length(); i++) out.put(a.opt(i));
+        return out;
+    }
+
+    /** Called when the internet comes back (and on resume): quietly sends the offline queue. */
+    private void autoSendOfflineQueue() {
+        if (session == null || designPreview || offlineAutoSending || offlineQueue().length() == 0) return;
+        if (!canUsePermission("offline_queue")) return;
+        offlineAutoSending = true;
+        runDb(() -> String.valueOf(sendOfflineQueueItems()), new DbCallback() {
+            @Override public void ok(String body) {
+                offlineAutoSending = false;
+                int n = 0; try { n = Integer.parseInt(body); } catch (Exception ignored) { }
+                if (n > 0) showNotice(faDigits(String.valueOf(n)) + " پیش‌فاکتور ذخیره‌شده خودکار ارسال شد.", true);
+                if ("cart".equals(activePage)) renderCartPage();
+            }
+            @Override public void fail(Exception e) { offlineAutoSending = false; }
+        });
+    }
+
+    private void registerNetworkReturnListener() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null || Build.VERSION.SDK_INT < 24) return;
+            cm.registerDefaultNetworkCallback(new android.net.ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(android.net.Network network) {
+                    // Give the connection a few seconds to settle before talking to the server.
+                    lockHandler.postDelayed(() -> autoSendOfflineQueue(), 4000L);
+                }
+            });
+        } catch (Exception ignored) { }
+    }
+
     private void trySendOfflineQueue() {
         if (!canUsePermission("offline_queue")) { showNotice("این گزینه برای این حساب نمایش داده نمی‌شود.", false); return; }
         JSONArray q = offlineQueue();
         if (q.length() == 0) { showNotice("صف ارسال آفلاین خالی است.", false); return; }
-        runDb(() -> {
-            int ok = 0;
-            for (int i = 0; i < q.length(); i++) { JSONObject snap = q.optJSONObject(i); if (snap == null) continue; insertPrefactorSnapshot(snap, snap.optString("status", "sent")); ok++; }
-            return "ارسال شد: " + formatNumber(ok);
-        }, new DbCallback() {
-            @Override public void ok(String body) { writeOfflineQueue(new JSONArray()); showNotice(body, true); if ("cart".equals(activePage)) renderCartPage(); }
+        runDb(() -> "ارسال شد: " + formatNumber(sendOfflineQueueItems()), new DbCallback() {
+            @Override public void ok(String body) { showNotice(body, true); if ("cart".equals(activePage)) renderCartPage(); }
             @Override public void fail(Exception e) { showPageError("ارسال صف آفلاین", e, () -> renderCartPage()); }
         });
     }
@@ -14516,6 +14579,7 @@ public class MainActivity extends Activity {
                     "IF COL_LENGTH('dbo.meelano_prefactor_items','line_note') IS NULL ALTER TABLE dbo.meelano_prefactor_items ADD line_note nvarchar(700) NULL"
             }) st.execute(sql);
             st.execute("IF OBJECT_ID(N'dbo.meelano_visit_results',N'U') IS NULL CREATE TABLE dbo.meelano_visit_results (id bigint IDENTITY(1,1) PRIMARY KEY, visitor_username nvarchar(160) NULL, visitor_id nvarchar(80) NULL, customer_code nvarchar(100) NULL, customer_name nvarchar(250) NULL, result nvarchar(120) NULL, notes nvarchar(700) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME())");
+            try { st.execute("IF COL_LENGTH('dbo.meelano_visit_results','lat') IS NULL ALTER TABLE dbo.meelano_visit_results ADD lat float NULL, lng float NULL"); } catch (Exception ignored) { }
             st.execute("IF OBJECT_ID(N'dbo.meelano_day_reports',N'U') IS NULL CREATE TABLE dbo.meelano_day_reports (id bigint IDENTITY(1,1) PRIMARY KEY, visitor_username nvarchar(160) NULL, visitor_id nvarchar(80) NULL, report_text nvarchar(max) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME())");
             try { st.execute("IF OBJECT_ID(N'dbo.meelano_prefactors_ready_for_invoice',N'V') IS NOT NULL DROP VIEW dbo.meelano_prefactors_ready_for_invoice"); } catch (Exception ignored) { }
             try { st.execute("CREATE VIEW dbo.meelano_prefactors_ready_for_invoice AS SELECT p.id,p.client_uuid,p.visitor_username,p.visitor_id,p.customer_code,p.customer_name,p.grand_total,p.status,p.created_at,p.ready_for_invoice,p.invoice_status,COUNT(i.id) AS item_count,ISNULL(SUM(i.amount),0) AS items_amount FROM dbo.meelano_prefactors p LEFT JOIN dbo.meelano_prefactor_items i ON i.prefactor_id=p.id WHERE ISNULL(p.ready_for_invoice,0)=1 AND ISNULL(p.invoice_status,N'')<>N'invoiced' GROUP BY p.id,p.client_uuid,p.visitor_username,p.visitor_id,p.customer_code,p.customer_name,p.grand_total,p.status,p.created_at,p.ready_for_invoice,p.invoice_status"); } catch (Exception ignored) { }
@@ -14703,7 +14767,95 @@ public class MainActivity extends Activity {
         AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",null).setPositiveButton("ساخت PDF",null).create(); dlg.setOnShowListener(x->{ styleMeelanoDialog(dlg,navAccent("cart")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null) ok.setOnClickListener(v->{ generatePrefactorPdf(d,"Meelano-Prefactor-"+d.optLong("id")+".pdf"); sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(d), null); }); }); dlg.show();
     }
 
-    private void generateCurrentCartPdfAndShare(boolean shareOnly){ JSONObject snap=currentCartSnapshot(finalCartStatus()); generatePrefactorPdf(snap,"Meelano-Prefactor-Draft-v3.42.pdf"); sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(snap), null); }
+    private void generateCurrentCartPdfAndShare(boolean shareOnly){
+        JSONObject snap=currentCartSnapshot(finalCartStatus());
+        String name = "Meelano-Prefactor-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date()) + ".pdf";
+        generatePrefactorPdf(snap, name);
+        File dir = getExternalFilesDir(null); if (dir == null) dir = getFilesDir();
+        File pdf = new File(dir, name);
+        if (!sharePdfCopy(pdf, "پیش‌فاکتور Meelano")) sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(snap), null);
+    }
+
+    /** Copies a PDF into the share folder and opens the share sheet (WhatsApp, Telegram, …). */
+    private boolean sharePdfCopy(File src, String title) {
+        try {
+            if (src == null || !src.isFile()) return false;
+            File dst = new File(MeelanoShareProvider.shareDir(this), src.getName());
+            if (!src.getCanonicalPath().equals(dst.getCanonicalPath())) {
+                try (java.io.FileInputStream in = new java.io.FileInputStream(src); FileOutputStream out = new FileOutputStream(dst)) {
+                    byte[] buf = new byte[8192]; int n; while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+            }
+            MeelanoShareProvider.share(this, dst, "application/pdf", title);
+            return true;
+        } catch (Exception ex) { return false; }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Daily report PDF (one tap): summary, today's pre-invoices and visits; shareable.
+    // ---------------------------------------------------------------------------------------------
+    private void generateDailyReportPdf() {
+        if (designPreview) { buildAndShareDailyReport(new JSONArray(), false); return; }
+        showNotice("در حال ساخت گزارش روزانه…", false);
+        runDb(() -> {
+            try (Connection c = openConnection()) {
+                ensurePrefactorTables(c);
+                List<Object> params = new ArrayList<>();
+                String where = prefactorScopeWhere("p", params);
+                String sql = "SELECT TOP (120) CONVERT(varchar(5), p.created_at, 108), p.customer_name, ISNULL(p.grand_total,p.total_amount), p.status FROM dbo.meelano_prefactors p" +
+                        (where.isEmpty() ? " WHERE " : where + " AND ") + "CONVERT(date,p.created_at)=CONVERT(date,SYSDATETIME()) AND ISNULL(p.status,N'')<>N'draft' ORDER BY p.created_at";
+                JSONArray arr = new JSONArray();
+                try (PreparedStatement ps = c.prepareStatement(sql)) {
+                    setParams(ps, params);
+                    try (ResultSet r = ps.executeQuery()) {
+                        while (r.next()) { JSONObject o = new JSONObject(); o.put("time", stringOr(r.getString(1), "")); o.put("customer", stringOr(r.getString(2), "")); o.put("amount", r.getDouble(3)); o.put("status", stringOr(r.getString(4), "")); arr.put(o); }
+                    }
+                }
+                return arr.toString();
+            }
+        }, new DbCallback() {
+            @Override public void ok(String body) { try { buildAndShareDailyReport(new JSONArray(body), true); } catch (Exception e) { buildAndShareDailyReport(new JSONArray(), false); } }
+            @Override public void fail(Exception e) { buildAndShareDailyReport(new JSONArray(), false); }
+        });
+    }
+
+    private void buildAndShareDailyReport(JSONArray prefactors, boolean online) {
+        try {
+            MeelanoDailyReportPdf.Data d = new MeelanoDailyReportPdf.Data();
+            d.visitor = session == null ? "" : session.userName;
+            d.date = faDigits(todayDateText());
+            d.developer = DEVELOPER_NAME;
+            d.appVersion = appVersionName();
+            double sum = 0;
+            for (int i = 0; i < prefactors.length(); i++) {
+                JSONObject o = prefactors.optJSONObject(i); if (o == null) continue;
+                sum += o.optDouble("amount", 0);
+                d.prefactors.add(new String[]{faDigits(o.optString("time", "")), o.optString("customer", ""), money(o.optDouble("amount", 0)), prefactorStatusFa(o.optString("status", ""))});
+            }
+            JSONArray visits = todayVisitLog();
+            for (int i = 0; i < visits.length(); i++) {
+                JSONObject o = visits.optJSONObject(i); if (o == null) continue;
+                String t = o.optString("time", ""); int sp = t.indexOf(' ');
+                d.visits.add(new String[]{faDigits(sp > 0 && t.length() >= sp + 6 ? t.substring(sp + 1, sp + 6) : ""), o.optString("name", ""), o.optString("result", "")});
+            }
+            JSONObject dash = null;
+            try { dash = new JSONObject(visitorDashboardCacheJson == null || visitorDashboardCacheJson.isEmpty() ? "{}" : visitorDashboardCacheJson); } catch (Exception ignored) { }
+            JSONObject score = dash == null ? null : dash.optJSONObject("dailyScore");
+            if (!online && score != null) { sum = score.optDouble("prefactorAmount", 0); }
+            int preCount = online ? prefactors.length() : (score == null ? 0 : score.optInt("prefactors", 0));
+            long visitCount = Math.max(visits.length(), (score == null ? 0 : score.optLong("visits", 0)) + localVisitsTodayCount());
+            d.summary.add(new String[]{"پیش‌فاکتور", faDigits(String.valueOf(preCount))});
+            d.summary.add(new String[]{"مبلغ", money(sum)});
+            d.summary.add(new String[]{"ویزیت", faDigits(String.valueOf(visitCount))});
+            JSONObject goal = firstObject(dash == null ? null : dash.optJSONArray("goals"));
+            if (goal != null && goal.optDouble("target", 0) > 0) d.summary.add(new String[]{"هدف روز", faDigits(String.valueOf(Math.round(goal.optDouble("done", 0) * 100 / goal.optDouble("target", 1)))) + "٪"});
+            if (!online) d.note = "اتصال به سرور برقرار نشد؛ جدول پیش‌فاکتورها از اطلاعات روی گوشی است.";
+            String fileName = "Meelano-Daily-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date()) + ".pdf";
+            File out = new File(MeelanoShareProvider.shareDir(this), fileName);
+            MeelanoDailyReportPdf.write(this, d, MEELANO_REGULAR, MEELANO_BOLD, out);
+            MeelanoShareProvider.share(this, out, "application/pdf", "گزارش روزانه " + d.visitor);
+        } catch (Exception ex) { showNotice("ساخت گزارش PDF ممکن نشد: " + shortError(ex), true); }
+    }
 
     private String prefactorShareText(JSONObject d){
         StringBuilder b=new StringBuilder(); b.append("پیش‌فاکتور MEELANO\n"); b.append("مشتری: ").append(d.optString("customerName","")).append('\n'); b.append("مبلغ نهایی: ").append(money(d.optDouble("grandTotal",0))).append('\n'); JSONArray items=d.optJSONArray("items"); for(int i=0;items!=null&&i<items.length();i++){ JSONObject it=items.optJSONObject(i); if(it!=null)b.append("- ").append(it.optString("name","")).append(" × ").append(formatNumber(it.optDouble("qty",0))).append(" = ").append(money(cartItemNet(it))).append('\n'); } b.append("توضیحات: ").append(d.optString("notes","")); return b.toString();
@@ -14736,7 +14888,129 @@ public class MainActivity extends Activity {
     private int localVisitsTodayCount() { int c=0; String today=todayDateText(); JSONArray a=localVisitResults(); for(int i=0;i<a.length();i++){ JSONObject o=a.optJSONObject(i); if(o!=null && o.optString("createdLocal","").startsWith(today)) c++; } return c; }
 
     private void saveVisitResult(JSONObject customer,String result,String note){
-        runDb(() -> { try(Connection c=openConnection()){ ensurePrefactorTables(c); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_visit_results(visitor_username,visitor_id,customer_code,customer_name,result,notes,created_at) VALUES(?,?,?,?,?,?,SYSDATETIME())")){ ps.setString(1,currentAccountName()); ps.setString(2,currentVisitorScopeId()==null?"":String.valueOf(currentVisitorScopeId())); ps.setString(3,customer.optString("code","")); ps.setString(4,customer.optString("name","")); ps.setString(5,result); ps.setString(6,note); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("نتیجه بازدید ثبت شد.", false); } @Override public void fail(Exception e){ saveLocalVisitResult(customer,result,note); showNotice("نتیجه به‌صورت محلی نگهداری شد.", true); }});
+        final double[] loc = lastKnownLatLng();
+        appendVisitLog(customer, result, loc);
+        runDb(() -> { try(Connection c=openConnection()){ ensurePrefactorTables(c);
+            boolean hasLoc = false;
+            try (PreparedStatement chk = c.prepareStatement("SELECT CASE WHEN COL_LENGTH('dbo.meelano_visit_results','lat') IS NULL THEN 0 ELSE 1 END"); ResultSet rr = chk.executeQuery()) { hasLoc = rr.next() && rr.getInt(1) == 1; }
+            String sql = hasLoc
+                    ? "INSERT INTO dbo.meelano_visit_results(visitor_username,visitor_id,customer_code,customer_name,result,notes,created_at,lat,lng) VALUES(?,?,?,?,?,?,SYSDATETIME(),?,?)"
+                    : "INSERT INTO dbo.meelano_visit_results(visitor_username,visitor_id,customer_code,customer_name,result,notes,created_at) VALUES(?,?,?,?,?,?,SYSDATETIME())";
+            try(PreparedStatement ps=c.prepareStatement(sql)){ ps.setString(1,currentAccountName()); ps.setString(2,currentVisitorScopeId()==null?"":String.valueOf(currentVisitorScopeId())); ps.setString(3,customer.optString("code","")); ps.setString(4,customer.optString("name","")); ps.setString(5,result); ps.setString(6,note);
+                if (hasLoc) { if (loc == null) { ps.setNull(7, java.sql.Types.FLOAT); ps.setNull(8, java.sql.Types.FLOAT); } else { ps.setDouble(7, loc[0]); ps.setDouble(8, loc[1]); } }
+                ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("نتیجه بازدید ثبت شد.", false); } @Override public void fail(Exception e){ saveLocalVisitResult(customer,result,note); showNotice("نتیجه به‌صورت محلی نگهداری شد.", true); }});
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Visit location + today's route. Every visit is logged on the phone (with location when the
+    // visitor allowed it); the route opens in the phone's map app.
+    // ---------------------------------------------------------------------------------------------
+    private static final String KEY_VISIT_LOG = "visit_log_local";
+    private static final String KEY_LOCATION_ASKED = "visit_location_asked";
+
+    private boolean hasLocationPermission() {
+        return Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Asks once (on the visit page) for location, so visits can be placed on the route map. */
+    private void maybeAskVisitLocationPermission() {
+        if (designPreview || prefs == null || hasLocationPermission() || prefs.getBoolean(KEY_LOCATION_ASKED, false) || Build.VERSION.SDK_INT < 23) return;
+        prefs.edit().putBoolean(KEY_LOCATION_ASKED, true).apply();
+        AlertDialog dlg = new MeelanoDialogBuilder()
+                .setTitle("ثبت محل ویزیت")
+                .setMessage("برای نمایش مسیر روزانه روی نقشه، محل هر ویزیت ثبت شود؟ موقعیت فقط هنگام ثبت ویزیت خوانده می‌شود.")
+                .setNegativeButton("نه", null)
+                .setPositiveButton("بله", (d, w) -> requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION}, 9221))
+                .create();
+        dlg.setOnShowListener(d -> styleMeelanoDialog(dlg, navAccent("visit")));
+        dlg.show();
+    }
+
+    /** Newest last-known position from GPS / network / passive providers; null when unknown. */
+    @SuppressWarnings("MissingPermission")
+    private double[] lastKnownLatLng() {
+        if (!hasLocationPermission()) return null;
+        try {
+            android.location.LocationManager lm = (android.location.LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            if (lm == null) return null;
+            android.location.Location best = null;
+            for (String p : new String[]{android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER, android.location.LocationManager.PASSIVE_PROVIDER}) {
+                try {
+                    android.location.Location l = lm.getLastKnownLocation(p);
+                    if (l != null && (best == null || l.getTime() > best.getTime())) best = l;
+                } catch (Exception ignored) { }
+            }
+            // Older than 30 minutes is not "here" any more.
+            if (best == null || System.currentTimeMillis() - best.getTime() > 30L * 60 * 1000) return null;
+            return new double[]{best.getLatitude(), best.getLongitude()};
+        } catch (Exception ignored) { return null; }
+    }
+
+    private JSONArray visitLog() {
+        try { return new JSONArray(prefs == null ? "[]" : prefs.getString(KEY_VISIT_LOG, "[]")); } catch (Exception ignored) { return new JSONArray(); }
+    }
+
+    private void appendVisitLog(JSONObject customer, String result, double[] loc) {
+        try {
+            JSONArray a = visitLog();
+            JSONObject o = new JSONObject();
+            o.put("code", customer == null ? "" : customer.optString("code", ""));
+            o.put("name", customer == null ? "" : customer.optString("name", ""));
+            o.put("result", stringOr(result, ""));
+            o.put("time", nowText());
+            if (loc != null) { o.put("lat", loc[0]); o.put("lng", loc[1]); }
+            a.put(o);
+            JSONArray lim = new JSONArray();
+            for (int i = Math.max(0, a.length() - 200); i < a.length(); i++) lim.put(a.optJSONObject(i));
+            prefs.edit().putString(KEY_VISIT_LOG, lim.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    private JSONArray todayVisitLog() {
+        JSONArray out = new JSONArray(); String today = todayDateText(); JSONArray a = visitLog();
+        for (int i = 0; i < a.length(); i++) { JSONObject o = a.optJSONObject(i); if (o != null && o.optString("time", "").startsWith(today)) out.put(o); }
+        return out;
+    }
+
+    /** Opens today's visits in order as a route in the map app (Google Maps directions URL). */
+    private void openTodayRouteMap() {
+        JSONArray today = todayVisitLog();
+        StringBuilder path = new StringBuilder();
+        int points = 0;
+        for (int i = 0; i < today.length(); i++) {
+            JSONObject o = today.optJSONObject(i);
+            if (o == null || !o.has("lat")) continue;
+            path.append('/').append(String.format(java.util.Locale.US, "%.6f,%.6f", o.optDouble("lat"), o.optDouble("lng")));
+            points++;
+        }
+        if (points == 0) {
+            showNotice(hasLocationPermission() ? "امروز هنوز ویزیتی با موقعیت ثبت نشده است." : "برای مسیر روزانه، اجازه موقعیت مکانی را در تنظیمات گوشی بدهید.", true);
+            return;
+        }
+        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir" + path))); }
+        catch (Exception ex) { showNotice("برنامه نقشه پیدا نشد.", false); }
+    }
+
+    /** Visit page card: today's visits in time order + «مسیر امروز روی نقشه». */
+    private void addTodayRouteCard() {
+        JSONArray today = todayVisitLog();
+        int accent = navAccent("visit");
+        LinearLayout c = card(); c.setBackground(themedSectionBg("visit", 26));
+        c.addView(visitorSectionTitle("مسیر امروز", "⌖", accent), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text(today.length() == 0 ? "هنوز ویزیتی ثبت نشده است." : faDigits(String.valueOf(today.length())) + " ویزیت ثبت شده است.", 10.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        for (int i = Math.max(0, today.length() - 6); i < today.length(); i++) {
+            JSONObject o = today.optJSONObject(i); if (o == null) continue;
+            String t = o.optString("time", ""); int sp = t.indexOf(' ');
+            String hm = sp > 0 && t.length() >= sp + 6 ? t.substring(sp + 1, sp + 6) : "";
+            TextView row = text(faDigits(hm) + "  •  " + o.optString("name", "مشتری") + (o.optString("result", "").isEmpty() ? "" : "  •  " + o.optString("result", "")) + (o.has("lat") ? "  📍" : ""), 11f, TEXT, Typeface.BOLD);
+            row.setSingleLine(true); row.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(5), 0, 0); c.addView(row, rp);
+        }
+        Button map = themedActionButton("مسیر امروز روی نقشه", accent, false);
+        map.setOnClickListener(v -> openTodayRouteMap());
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(48)); mp.setMargins(0, dp(9), 0, 0); c.addView(map, mp);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12)); content.addView(c, lp);
     }
 
     private void showEndOfDayReportDialog(){

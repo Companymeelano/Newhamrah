@@ -21,6 +21,13 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
+        <!-- Read-only sharing of generated PDFs (cacheDir/share) with chat and e-mail apps. -->
+        <provider
+            android:name=".MeelanoShareProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <receiver
             android:name=".MeelanoWidgetProvider"
             android:exported="true">
