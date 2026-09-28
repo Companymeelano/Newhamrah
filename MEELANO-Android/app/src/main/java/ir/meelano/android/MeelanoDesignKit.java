@@ -16,7 +16,7 @@ final class MeelanoDesignKit {
         if ("command".equals(key)) return "⌘";
         if ("assistant".equals(key)) return "✦";
         if ("chat".equals(key)) return "✉";
-        if ("personnel".equals(key)) return "ID";
+        if ("personnel".equals(key)) return "🪪";
         if ("attendance".equals(key)) return "⏱";
         if ("taxpayers".equals(key)) return "٪";
         if ("cameras".equals(key)) return "▣";

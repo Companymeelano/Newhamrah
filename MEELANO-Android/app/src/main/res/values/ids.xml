@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View tag used by MeelanoIcons to remember which label text has already been scanned for glyphs. -->
+    <item name="meelano_icon_scan" type="id"/>
+</resources>

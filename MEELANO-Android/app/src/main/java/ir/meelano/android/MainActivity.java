@@ -29,6 +29,7 @@ import android.graphics.LinearGradient;
 import android.graphics.RadialGradient;
 import android.graphics.Shader;
 import android.graphics.pdf.PdfDocument;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.biometrics.BiometricPrompt;
 import android.os.Build;
@@ -51,6 +52,8 @@ import android.text.TextUtils;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -237,6 +240,8 @@ public class MainActivity extends Activity {
     private TextView connectionIndicator;
     private LinearLayout content;
     private LinearLayout navStrip;
+    private boolean dockHiddenByKeyboard = false;
+    private boolean iconHookInstalled = false;
     private int motionSerial = 0;
     private String activePage = "login";
     private UserSession session;
@@ -465,10 +470,12 @@ public class MainActivity extends Activity {
         return INFO;
     }
 
-    private void showNotice(CharSequence message, boolean longDuration) {
+    private void showNotice(CharSequence message, boolean longDuration) { showNotice(message, longDuration, null, null); }
+
+    private void showNotice(CharSequence message, boolean longDuration, String actionLabel, Runnable action) {
         final String msg = message == null ? "" : message.toString().trim();
         if (msg.isEmpty()) return;
-        if (Looper.myLooper() != Looper.getMainLooper()) { runOnUiThread(() -> showNotice(msg, longDuration)); return; }
+        if (Looper.myLooper() != Looper.getMainLooper()) { runOnUiThread(() -> showNotice(msg, longDuration, actionLabel, action)); return; }
         ViewGroup host = null;
         try { host = (ViewGroup) findViewById(android.R.id.content); } catch (Exception ignored) { }
         if (host == null || isFinishing() || !host.isAttachedToWindow() || !hasWindowFocus()) {
@@ -500,6 +507,17 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(0, -2, 1f);
         blp.setMargins(dp(10), 0, 0, 0);
         pill.addView(body, blp);
+        TextView actionView = null;
+        if (actionLabel != null && action != null) {
+            actionView = text(actionLabel, 13f, tc(GOLD), Typeface.BOLD);
+            actionView.setGravity(Gravity.CENTER);
+            actionView.setPadding(dp(12), 0, dp(12), 0);
+            actionView.setMinHeight(dp(44));
+            actionView.setBackground(rounded(alpha(GOLD, isLightTheme() ? 26 : 46), 12));
+            LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-2, dp(44));
+            alp.setMargins(dp(8), 0, 0, 0);
+            pill.addView(actionView, alp);
+        }
         boolean dockVisible = session != null && navStrip != null && navStrip.isShown();
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         lp.setMargins(dp(18), 0, dp(18), systemInsetBottom + (dockVisible ? dp(VISITOR_EDITION ? 122 : 112) : dp(24)));
@@ -514,13 +532,14 @@ public class MainActivity extends Activity {
             }).start();
         };
         pill.setOnClickListener(v -> dismiss.run());
+        if (actionView != null) actionView.setOnClickListener(v -> { dismiss.run(); try { action.run(); } catch (Exception ignored) { } });
         if (motionAllowed()) {
             pill.setAlpha(0f);
             pill.setTranslationY(dp(18));
             pill.animate().alpha(1f).translationY(0f).setDuration(210).start();
         }
         pill.announceForAccessibility(msg);
-        pill.postDelayed(dismiss, longDuration ? 4200 : 2600);
+        pill.postDelayed(dismiss, actionView != null ? 6000 : (longDuration ? 4200 : 2600));
     }
 
     private void haptic(View v, boolean confirm) {
@@ -950,13 +969,21 @@ public class MainActivity extends Activity {
     private void installWindowInsets(LinearLayout root, LinearLayout headerWrap, int headerBaseHeight) {
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             int top, bottom, left, right;
+            boolean imeVisible;
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
                 android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
                 top = bars.top; bottom = Math.max(bars.bottom, ime.bottom); left = bars.left; right = bars.right;
+                imeVisible = ime.bottom > bars.bottom;
             } else {
                 top = insets.getSystemWindowInsetTop(); bottom = insets.getSystemWindowInsetBottom();
                 left = insets.getSystemWindowInsetLeft(); right = insets.getSystemWindowInsetRight();
+                imeVisible = bottom > dp(160);
+            }
+            // B9: while the keyboard is open the dock is hidden so search results get the whole screen.
+            if (navStrip != null) {
+                if (imeVisible && navStrip.getVisibility() == View.VISIBLE) { navStrip.setVisibility(View.GONE); dockHiddenByKeyboard = true; }
+                else if (!imeVisible && dockHiddenByKeyboard) { navStrip.setVisibility(View.VISIBLE); dockHiddenByKeyboard = false; }
             }
             systemInsetTop = top;
             systemInsetBottom = bottom;
@@ -1041,18 +1068,7 @@ public class MainActivity extends Activity {
 
     private int themeAccent(String key) {
         String k = key == null ? "" : key.toLowerCase(Locale.US);
-        if (k.contains("debt") || k.contains("danger") || k.contains("risk") || k.contains("مطالب")) return DANGER;
-        if (k.contains("warning") || k.contains("check") || k.contains("چک")) return WARNING;
-        if (k.contains("success") || k.contains("customer") || k.contains("مشتری")) return SUCCESS;
-        if (k.contains("tax") || k.contains("مودیان") || k.contains("مالیات")) return mix(GOLD, INFO, 0.24f);
-        if (k.contains("camera") || k.contains("دوربین") || k.contains("dvr")) return mix(INFO, SUCCESS, 0.28f);
-        if (k.contains("alarm") || k.contains("دزدگیر") || k.contains("امنیت")) return mix(DANGER, GOLD, 0.32f);
-        if (k.contains("attendance") || k.contains("حضور")) return mix(GOLD, SUCCESS, 0.32f);
-        if (k.contains("chat") || k.contains("گفتگو")) return mix(GOLD_2, INFO, 0.62f);
-        if (k.contains("personnel") || k.contains("پرسنل")) return mix(SUCCESS, INFO, 0.38f);
-        if (k.contains("report") || k.contains("گزارش")) return INFO;
-        if (k.contains("product") || k.contains("کالا")) return VISITOR_EDITION ? mix(GOLD, INFO, 0.18f) : mix(WARNING, GOLD, 0.28f);
-        if (k.contains("theme") || k.contains("تم")) return GOLD_2;
+        if (k.contains("danger") || k.contains("خطا") || k.contains("حذف") || k.contains("دزدگیر")) return DANGER;
         return GOLD;
     }
 
@@ -1066,19 +1082,9 @@ public class MainActivity extends Activity {
         return d;
     }
 
+    /** Flat icon/badge container: solid colour (primary) or soft tint (secondary). No gradients, strokes or glow. */
     private GradientDrawable luxuryButtonBg(int accent, boolean primary, float radius) {
-        GradientDrawable d;
-        int harmonic = mix(accent, GOLD_2, isLightTheme() ? 0.10f : 0.16f);
-        if (primary) {
-            d = gradient(new int[]{mix(harmonic, Color.WHITE, isLightTheme() ? 0.24f : 0.16f), harmonic, mix(harmonic, GOLD, 0.22f), mix(harmonic, Color.BLACK, isLightTheme() ? 0.10f : 0.24f)}, GradientDrawable.Orientation.LEFT_RIGHT, radius);
-            d.setStroke(dp(1), alpha(mix(harmonic, Color.WHITE, 0.42f), 148));
-        } else {
-            int base = isLightTheme() ? mix(SURFACE, harmonic, 0.035f) : mix(SURFACE_2, harmonic, 0.12f);
-            int shade = isLightTheme() ? mix(SURFACE_2, harmonic, 0.08f) : mix(SURFACE, harmonic, 0.10f);
-            d = gradient(new int[]{alpha(base, 248), alpha(shade, 244), alpha(mix(NAVY, harmonic, isLightTheme() ? 0.02f : 0.08f), 236)}, GradientDrawable.Orientation.TL_BR, radius);
-            d.setStroke(dp(1), alpha(mix(harmonic, Color.WHITE, 0.28f), isLightTheme() ? 92 : 82));
-        }
-        return d;
+        return rounded(primary ? accent : alpha(accent, isLightTheme() ? 30 : 52), Math.min(radius, 999));
     }
 
     private void applyTouchFeedback(View v) {
@@ -1132,9 +1138,10 @@ public class MainActivity extends Activity {
         TextView chip = text(label, 9.6f, filled ? onColorFor(accent) : accent, Typeface.BOLD);
         chip.setGravity(Gravity.CENTER);
         chip.setSingleLine(true);
-        chip.setPadding(dp(8), dp(4), dp(8), dp(4));
-        chip.setBackground(filled ? luxuryButtonBg(accent, true, 999) : roundedStroke(alpha(accent, isLightTheme() ? 18 : 28), 999, alpha(accent, 86)));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) chip.setElevation(dp(filled ? 3 : 1));
+        chip.setPadding(dp(10), dp(5), dp(10), dp(5));
+        chip.setTextColor(filled ? onColorFor(accent) : tc(accent));
+        chip.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_RTL);
+        chip.setBackground(rounded(filled ? accent : alpha(accent, isLightTheme() ? 26 : 44), 999));
         return chip;
     }
 
@@ -1148,11 +1155,51 @@ public class MainActivity extends Activity {
                 Button neu = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
                 if (pos != null) { pos.setTextColor(tc(accent)); pos.setAllCaps(false); pos.setTypeface(MEELANO_BOLD); applyTouchFeedback(pos); }
                 if (neg != null) { neg.setTextColor(MUTED); neg.setAllCaps(false); applyTouchFeedback(neg); }
-                if (neu != null) { neu.setTextColor(tc(INFO)); neu.setAllCaps(false); applyTouchFeedback(neu); }
+                if (neu != null) { neu.setTextColor(tc(accent)); neu.setAllCaps(false); neu.setTypeface(MEELANO_BOLD); applyTouchFeedback(neu); }
+                if (neg != null) neg.setTypeface(MEELANO_BOLD);
             } catch (Exception ignored) { }
+            dialogChrome(dialog);
         };
         dialog.setOnShowListener(d -> styler.run());
         if (dialog.isShowing()) styler.run();
+    }
+
+    /** Builder used for every dialog so that all of them share the Meelano look (B5/B6). */
+    private final class MeelanoDialogBuilder extends AlertDialog.Builder {
+        MeelanoDialogBuilder() { super(MainActivity.this); }
+        @Override public AlertDialog create() {
+            AlertDialog d = super.create();
+            styleMeelanoDialog(d, currentPageAccent());
+            return d;
+        }
+    }
+
+    /** Theme-aware title/message/list colours, app font and SVG icons inside a dialog window. */
+    private void dialogChrome(AlertDialog dialog) {
+        if (dialog == null || dialog.getWindow() == null) return;
+        try {
+            View decor = dialog.getWindow().getDecorView();
+            int titleId = getResources().getIdentifier("alertTitle", "id", "android");
+            TextView title = titleId != 0 ? decor.findViewById(titleId) : null;
+            if (title != null) { title.setTextColor(TEXT); title.setTypeface(MEELANO_BOLD); title.setTextSize(fs(16)); title.setGravity(Gravity.START); title.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_RTL); }
+            TextView msg = decor.findViewById(android.R.id.message);
+            if (msg != null) { msg.setTextColor(TEXT); msg.setTypeface(MEELANO_REGULAR); msg.setLineSpacing(dp(3), 1f); msg.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_RTL); }
+            if (decor.getTag(R.id.meelano_icon_scan) == null) {
+                decor.setTag(R.id.meelano_icon_scan, Boolean.TRUE);
+                decor.getViewTreeObserver().addOnGlobalLayoutListener(() -> { tintDialogListRows(decor); MeelanoIcons.iconizeTree(decor); });
+            }
+            tintDialogListRows(decor);
+            MeelanoIcons.iconizeTree(decor);
+        } catch (Exception ignored) { }
+    }
+
+    private void tintDialogListRows(View v) {
+        if (v instanceof TextView && !(v instanceof Button) && !(v instanceof EditText)) {
+            int id = v.getId();
+            if (id == android.R.id.text1 || id == android.R.id.message) { TextView t = (TextView) v; if (t.getCurrentTextColor() != TEXT) { t.setTextColor(TEXT); t.setTypeface(MEELANO_REGULAR); } }
+            return;
+        }
+        if (v instanceof ViewGroup) { ViewGroup g = (ViewGroup) v; for (int i = 0; i < g.getChildCount(); i++) tintDialogListRows(g.getChildAt(i)); }
     }
 
     private GradientDrawable rounded(int color, float radius) {
@@ -1409,13 +1456,14 @@ public class MainActivity extends Activity {
         tools.setGravity(Gravity.CENTER_VERTICAL);
         tools.setPadding(dp(2), 0, dp(2), 0);
         if (!VISITOR_EDITION) {
-            addHeaderTool(tools, "⌕", "جستجوی سراسری", INFO, v -> showGlobalSearchDialog());
-            addHeaderTool(tools, "♛", "مدیریت دسترسی کاربران", mix(INFO, GOLD, 0.34f), v -> { if (session == null) showLogin("ابتدا وارد شوید."); else showApp("management"); });
+            addHeaderTool(tools, "⌕", "جستجوی سراسری", GOLD, v -> showGlobalSearchDialog());
+            addHeaderTool(tools, "♛", "مدیریت دسترسی کاربران", GOLD, v -> { if (session == null) showLogin("ابتدا وارد شوید."); else showApp("management"); });
         }
-        addHeaderTool(tools, "✺", "انتخاب تم", GOLD_2, v -> showThemeChooser());
-        addHeaderTool(tools, "⚙", "تنظیمات", SUCCESS, v -> { if (session == null) showLogin("ابتدا وارد شوید."); else showApp("settings"); });
-        addHeaderTool(tools, "⎋", "خروج", DANGER, v -> { if (session == null) showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید."); else showLogin("از حساب خارج شدید. برای ورود مجدد اطلاعات Meelano را وارد کنید."); });
+        addHeaderTool(tools, "✺", "انتخاب تم", GOLD, v -> showThemeChooser());
+        headerSettingsTool = addHeaderTool(tools, "⚙", "تنظیمات", GOLD, v -> { if (session == null) showLogin("ابتدا وارد شوید."); else showApp("settings"); });
+        headerLogoutTool = addHeaderTool(tools, "⎋", "خروج", DANGER, v -> { if (session == null) showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید."); else showLogin("از حساب خارج شدید. برای ورود مجدد اطلاعات Meelano را وارد کنید."); });
         header.addView(tools, new LinearLayout.LayoutParams(-2, dp(VISITOR_EDITION ? 58 : 56)));
+        refreshHeaderTools();
         headerWrap.addView(header, new LinearLayout.LayoutParams(-1, dp(VISITOR_EDITION ? 68 : 64)));
         setConnectionStatus(session == null ? "idle" : "connected");
 
@@ -1428,6 +1476,12 @@ public class MainActivity extends Activity {
         setContentView(root);
         applySystemBarStyle();
         installWindowInsets(root, headerWrap, headerBaseHeight);
+        // Draw every glyph/emoji label as an SVG-derived vector icon (see MeelanoIcons).
+        if (!iconHookInstalled) {
+            iconHookInstalled = true;
+            final View iconRoot = getWindow().getDecorView();
+            iconRoot.getViewTreeObserver().addOnGlobalLayoutListener(() -> MeelanoIcons.iconizeTree(iconRoot));
+        }
     }
 
     private LinearLayout visitorHeaderIdentity() {
@@ -1477,7 +1531,16 @@ public class MainActivity extends Activity {
         return identity;
     }
 
-    private void addHeaderTool(LinearLayout parent, String glyph, String label, int accent, View.OnClickListener listener) {
+    private View headerSettingsTool, headerLogoutTool;
+
+    /** B7: settings and logout only make sense with an active session. */
+    private void refreshHeaderTools() {
+        int vis = session == null ? View.GONE : View.VISIBLE;
+        if (headerSettingsTool != null) headerSettingsTool.setVisibility(vis);
+        if (headerLogoutTool != null) headerLogoutTool.setVisibility(vis);
+    }
+
+    private View addHeaderTool(LinearLayout parent, String glyph, String label, int accent, View.OnClickListener listener) {
         FrameLayout hit = new FrameLayout(this);
         hit.setContentDescription(label);
         hit.setClickable(true);
@@ -1486,7 +1549,7 @@ public class MainActivity extends Activity {
         hit.setMinimumHeight(dp(48));
         hit.setPadding(dp(4), dp(4), dp(4), dp(4));
         hit.setOnClickListener(listener);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) hit.setElevation(dp(8));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) hit.setElevation(0);
         applyTouchFeedback(hit);
 
         TextView b = new TextView(this);
@@ -1494,14 +1557,11 @@ public class MainActivity extends Activity {
         b.setTextSize(fs(glyph != null && glyph.length() > 1 ? 12.0f : 16.4f));
         b.setGravity(Gravity.CENTER);
         b.setSingleLine(true);
-        b.setTextColor(onColorFor(accent));
+        // Unified header tool: tonal circle + monochrome SVG icon in the brand colour (danger only for logout).
+        b.setTextColor(tc(accent));
         b.setTypeface(MEELANO_BOLD);
-        b.setPadding(0, 0, 0, dp(1));
-        b.setShadowLayer(dp(2), 0, dp(1), alpha(Color.BLACK, isLightTheme() ? 60 : 150));
-        int baseAccent = mix(accent, GOLD_2, isLightTheme() ? 0.12f : 0.20f);
-        GradientDrawable bg = gradient(new int[]{mix(baseAccent, Color.WHITE, isLightTheme() ? 0.34f : 0.18f), baseAccent, mix(baseAccent, HEADER_START, 0.40f)}, GradientDrawable.Orientation.TL_BR, 999);
-        bg.setStroke(dp(1), alpha(mix(baseAccent, Color.WHITE, 0.45f), 155));
-        b.setBackground(bg);
+        b.setPadding(0, 0, 0, 0);
+        b.setBackground(rounded(alpha(accent, isLightTheme() ? 26 : 46), 999));
         b.setContentDescription(label);
         b.setDuplicateParentStateEnabled(true);
         hit.addView(b, new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER));
@@ -1509,6 +1569,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(50));
         lp.setMargins(0, 0, 0, 0);
         parent.addView(hit, lp);
+        return hit;
     }
 
     private LinearLayout.LayoutParams headerButtonLp(boolean margin) {
@@ -1600,7 +1661,7 @@ public class MainActivity extends Activity {
         box.addView(hint, new LinearLayout.LayoutParams(-1, -2));
         ScrollView themeScroll = new ScrollView(this);
         themeScroll.addView(box, new ScrollView.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new MeelanoDialogBuilder()
                 .setTitle(VISITOR_EDITION ? "تم‌های Meelano Visit" : "تم‌های Meelano")
                 .setView(themeScroll)
                 .setNegativeButton("بستن", null)
@@ -1686,52 +1747,67 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Design system — buttons (v4.6): one shape (14dp corners), one height (≥ 48dp), no text
+    // shadows, no gradients. Primary = solid brand colour, secondary = tonal brand tint.
+    // Only destructive actions (حذف / خروج / لغو) use the danger colour.
+    // ---------------------------------------------------------------------------------------
+    private static final float BUTTON_RADIUS = 14f;
+
+    private boolean isDestructiveLabel(String label) {
+        String t = label == null ? "" : label;
+        return t.contains("حذف") || t.contains("خروج") || t.contains("پاک کردن") || t.contains("لغو سفارش") || t.contains("خالی کردن");
+    }
+
+    /** Maps any legacy per-page accent to the unified palette: brand for everything, danger for destructive actions. */
+    private int buttonTone(int accent, String label) {
+        if (accent == DANGER || isDestructiveLabel(label)) return DANGER;
+        return GOLD;
+    }
+
+    private android.graphics.drawable.Drawable meelanoButtonBg(int tone, boolean primary) {
+        GradientDrawable shape = rounded(primary ? tone : alpha(tone, isLightTheme() ? 30 : 52), BUTTON_RADIUS);
+        int ripple = primary ? alpha(onColorFor(tone), 70) : alpha(tone, 70);
+        GradientDrawable mask = rounded(Color.WHITE, BUTTON_RADIUS);
+        return new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(ripple), shape, mask);
+    }
+
+    private void styleMeelanoButton(Button b, String label, int accent, boolean primary, float textSp) {
+        int tone = buttonTone(accent, label);
+        b.setAllCaps(false);
+        b.setTextColor(primary ? onColorFor(tone) : tc(tone));
+        b.setTextSize(fs(textSp));
+        b.setTypeface(MEELANO_BOLD);
+        b.setMinHeight(dp(48));
+        b.setMinimumHeight(dp(48));
+        b.setPadding(dp(12), 0, dp(12), 0);
+        b.setShadowLayer(0, 0, 0, Color.TRANSPARENT);
+        b.setBackground(meelanoButtonBg(tone, primary));
+        b.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_RTL);
+        b.setGravity(Gravity.CENTER);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { b.setStateListAnimator(null); b.setElevation(0); b.setLetterSpacing(0f); }
+        applyTouchFeedback(b);
+    }
+
     private Button primaryButton(String label) {
         Button b = new Button(this);
         b.setText(label);
-        b.setAllCaps(false);
-        int accent = themeAccent(label);
-        b.setTextColor(onColorFor(accent));
-        b.setTextSize(fs(compactUi() ? 12.4f : 13.3f));
-        b.setTypeface(MEELANO_BOLD);
-        b.setMinHeight(dp(44));
-        b.setPadding(dp(10), 0, dp(10), dp(1));
-        b.setShadowLayer(dp(2), 0, dp(1), alpha(Color.BLACK, isLightTheme() ? 80 : 150));
-        b.setBackground(luxuryButtonBg(accent, true, 18));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { b.setElevation(dp(5)); b.setLetterSpacing(0.01f); }
-        applyTouchFeedback(b);
+        styleMeelanoButton(b, label, GOLD, true, compactUi() ? 12.4f : 13.2f);
         return b;
     }
 
     private Button secondaryButton(String label) {
         Button b = new Button(this);
         b.setText(label);
-        b.setAllCaps(false);
-        int accent = themeAccent(label);
-        b.setTextColor(TEXT);
-        b.setTextSize(fs(compactUi() ? 12.0f : 12.8f));
-        b.setTypeface(MEELANO_BOLD);
-        b.setMinHeight(dp(42));
-        b.setPadding(dp(10), 0, dp(10), dp(1));
-        b.setBackground(luxuryButtonBg(accent, false, 17));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { b.setElevation(dp(2)); b.setLetterSpacing(0.005f); }
-        applyTouchFeedback(b);
+        styleMeelanoButton(b, label, GOLD, false, compactUi() ? 12.0f : 12.8f);
         return b;
     }
 
     private Button themedActionButton(String label, int accent, boolean primary) {
         Button b = new Button(this);
         b.setText(label);
-        b.setAllCaps(false);
-        b.setTextColor(primary ? onColorFor(accent) : TEXT);
-        b.setTextSize(fs(compactUi() ? 10.7f : 11.6f));
-        b.setTypeface(MEELANO_BOLD);
-        b.setMinHeight(dp(44));
-        b.setPadding(dp(9), 0, dp(9), dp(1));
-        b.setShadowLayer(dp(primary ? 3 : 1), 0, dp(1), alpha(Color.BLACK, isLightTheme() ? 80 : 150));
-        b.setBackground(luxuryButtonBg(accent, primary, primary ? 999 : 19));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { b.setElevation(dp(primary ? 7 : 3)); b.setLetterSpacing(0.01f); }
-        applyTouchFeedback(b);
+        styleMeelanoButton(b, label, accent, primary, compactUi() ? 11.2f : 12.0f);
+        b.setPadding(dp(10), 0, dp(10), 0);
         return b;
     }
 
@@ -1801,13 +1877,112 @@ public class MainActivity extends Activity {
         e.setTextSize(fs(14));
         e.setSelectAllOnFocus(true);
         e.setPadding(dp(14), 0, dp(14), 0);
-        e.setBackground(roundedStroke(SURFACE_2, 16, BORDER));
+        e.setBackground(roundedStroke(SURFACE_2, 14, BORDER));
         e.setInputType(password ? (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD) : InputType.TYPE_CLASS_TEXT);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            e.setTextDirection(View.TEXT_DIRECTION_LTR);
-        }
-        e.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        // setInputType() switches password fields to monospace; restore the app font afterwards (B4).
+        e.setTypeface(MEELANO_REGULAR);
+        // Persian text flows right-to-left, Latin text (user names, server addresses) left-to-right.
+        e.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG_RTL);
+        e.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        e.setMinHeight(dp(48));
+        if (password) attachPasswordToggle(e);
         return e;
+    }
+
+    /** Eye icon on the left edge of a password field that shows/hides the password. */
+    private void attachPasswordToggle(EditText e) {
+        final boolean[] visible = {false};
+        final Runnable paint = () -> {
+            Drawable eye = tintedIcon(visible[0] ? R.drawable.mi_visibility_off : R.drawable.mi_visibility, MUTED, dp(22));
+            e.setCompoundDrawables(eye, null, null, null);
+            e.setCompoundDrawablePadding(dp(8));
+            e.setContentDescription(visible[0] ? "پنهان کردن رمز" : "نمایش رمز");
+        };
+        paint.run();
+        e.setOnTouchListener((v, ev) -> {
+            if (ev.getAction() != MotionEvent.ACTION_UP) return false;
+            Drawable d = e.getCompoundDrawables()[0];
+            if (d == null) return false;
+            if (ev.getX() > e.getPaddingLeft() + d.getBounds().width() + dp(12)) return false;
+            visible[0] = !visible[0];
+            int sel = e.getSelectionEnd();
+            e.setInputType(InputType.TYPE_CLASS_TEXT | (visible[0] ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD));
+            e.setTypeface(MEELANO_REGULAR);
+            paint.run();
+            try { e.setSelection(Math.max(0, Math.min(sel < 0 ? e.length() : sel, e.length()))); } catch (Exception ignored) { }
+            return true;
+        });
+    }
+
+    private Drawable tintedIcon(int resId, int color, int sizePx) {
+        try {
+            Drawable d = getResources().getDrawable(resId, getTheme()).mutate();
+            d.setTint(color);
+            d.setBounds(0, 0, sizePx, sizePx);
+            return d;
+        } catch (Exception ignored) { return null; }
+    }
+
+    /** Number without exponent or trailing ".0" (18500000 instead of 1.85E7). */
+    private String plainNumber(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) return "0";
+        try { return java.math.BigDecimal.valueOf(v).stripTrailingZeros().toPlainString(); } catch (Exception e) { return String.valueOf(v); }
+    }
+
+    /** Numeric field that shows Persian digits grouped by thousands while typing and keeps the decimal part (B1). */
+    private EditText numberInput(String hint, double value, boolean allowDecimal) {
+        EditText e = input(hint, "", false);
+        e.setKeyListener(android.text.method.DigitsKeyListener.getInstance("0123456789۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩.,٫٬"));
+        e.setRawInputType(InputType.TYPE_CLASS_NUMBER | (allowDecimal ? InputType.TYPE_NUMBER_FLAG_DECIMAL : 0));
+        e.setTypeface(MEELANO_REGULAR);
+        e.setTextDirection(View.TEXT_DIRECTION_RTL);
+        e.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        e.addTextChangedListener(new TextWatcher() {
+            boolean busy = false;
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) {
+                if (busy) return;
+                String out = groupedDigits(s.toString(), allowDecimal);
+                if (out.equals(s.toString())) return;
+                busy = true;
+                try { s.replace(0, s.length(), out); } catch (Exception ignored) { }
+                busy = false;
+            }
+        });
+        e.setText(value == 0 && hint != null && hint.contains("تخفیف") ? "" : plainNumber(value));
+        return e;
+    }
+
+    private String groupedDigits(String raw, boolean allowDecimal) {
+        String n = normalizeDigits(raw == null ? "" : raw).replace('\u066B', '.').replace('\u066C', ',');
+        int dot = allowDecimal ? n.indexOf('.') : -1;
+        String intPart = dot >= 0 ? n.substring(0, dot) : n;
+        String frac = dot >= 0 ? n.substring(dot + 1) : "";
+        StringBuilder digits = new StringBuilder();
+        for (int i = 0; i < intPart.length(); i++) { char ch = intPart.charAt(i); if (ch >= '0' && ch <= '9') digits.append(ch); }
+        StringBuilder fd = new StringBuilder();
+        for (int i = 0; i < frac.length(); i++) { char ch = frac.charAt(i); if (ch >= '0' && ch <= '9') fd.append(ch); }
+        String d = digits.toString().replaceFirst("^0+(?=\\d)", "");
+        StringBuilder g = new StringBuilder();
+        for (int i = 0; i < d.length(); i++) {
+            if (i > 0 && (d.length() - i) % 3 == 0) g.append('\u066C');
+            g.append((char) ('\u06F0' + (d.charAt(i) - '0')));
+        }
+        if (dot >= 0) {
+            if (g.length() == 0) g.append('\u06F0');
+            g.append('\u066B');
+            for (int i = 0; i < fd.length(); i++) g.append((char) ('\u06F0' + (fd.charAt(i) - '0')));
+        }
+        return g.toString();
+    }
+
+    /** Adds a small caption above a form field so the field keeps its meaning after it is filled (B1). */
+    private void addLabeledField(LinearLayout box, String label, View field, int heightDp) {
+        TextView cap = text(label, 10.4f, MUTED, Typeface.BOLD);
+        cap.setPadding(dp(4), dp(9), dp(4), dp(3));
+        box.addView(cap, new LinearLayout.LayoutParams(-1, -2));
+        box.addView(field, new LinearLayout.LayoutParams(-1, heightDp > 0 ? dp(heightDp) : -2));
     }
 
     private LinearLayout card() {
@@ -2016,6 +2191,7 @@ public class MainActivity extends Activity {
         cartAutosaveRestoreChecked = false;
         if (visitorCartItems != null) resetCartState();
         setConnectionStatus("idle");
+        refreshHeaderTools();
         subtitle.setText(VISITOR_EDITION ? "ورود مستقیم ویزیتور" : "ورود با حساب Meelano");
         stage.removeAllViews();
 
@@ -2105,14 +2281,14 @@ public class MainActivity extends Activity {
 
         TextView userLabel = text("نام کاربری Meelano", 12, MUTED, Typeface.BOLD);
         loginCard.addView(userLabel, new LinearLayout.LayoutParams(-1, -2));
-        EditText username = input("username", prefs.getString(KEY_LAST_USER, ""), false);
+        EditText username = input("نام کاربری", prefs.getString(KEY_LAST_USER, ""), false);
         LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-1, dp(54));
         up.setMargins(0, dp(6), 0, dp(12));
         loginCard.addView(username, up);
 
         TextView passLabel = text("رمز عبور Meelano", 12, MUTED, Typeface.BOLD);
         loginCard.addView(passLabel, new LinearLayout.LayoutParams(-1, -2));
-        EditText password = input("password", "", true);
+        EditText password = input("رمز عبور", "", true);
         password.setImeOptions(EditorInfo.IME_ACTION_DONE);
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, dp(54));
         pp.setMargins(0, dp(6), 0, dp(16));
@@ -2258,10 +2434,10 @@ public class MainActivity extends Activity {
         actions.addView(later, weightedButtonLp());
         actions.addView(setup, weightedButtonLp());
         box.addView(actions, new LinearLayout.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(box).create();
+        AlertDialog dialog = new MeelanoDialogBuilder().setView(box).create();
         later.setOnClickListener(v -> dialog.dismiss());
         setup.setOnClickListener(v -> { dialog.dismiss(); showSetQuickPinDialog(); });
-        dialog.setOnShowListener(d -> { if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 0), 30, alpha(INFO, 0))); });
+        dialog.setOnShowListener(d -> { dialogChrome(dialog); if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 0), 30, alpha(INFO, 0))); });
         dialog.show();
     }
 
@@ -2298,12 +2474,13 @@ public class MainActivity extends Activity {
         EditText pin = input("PIN چهار تا شش رقمی", "", true);
         pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         box.addView(pin, new LinearLayout.LayoutParams(-1, dp(54)));
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new MeelanoDialogBuilder()
                 .setView(box)
                 .setNegativeButton("بستن", null)
                 .setPositiveButton("ذخیره", null)
                 .create();
         dialog.setOnShowListener(d -> {
+            dialogChrome(dialog);
             if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 245), 28, alpha(SUCCESS, 90)));
             Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
             if (positive != null) {
@@ -2324,7 +2501,7 @@ public class MainActivity extends Activity {
     private void showQuickPinDialog() {
         EditText pin = input("PIN", "", true);
         pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        new AlertDialog.Builder(this)
+        new MeelanoDialogBuilder()
                 .setTitle("ورود سریع با PIN")
                 .setView(pin)
                 .setNegativeButton("بستن", null)
@@ -2396,12 +2573,13 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2);
         bp.setMargins(0, dp(8), 0, 0);
         box.addView(body, bp);
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new MeelanoDialogBuilder()
                 .setView(box)
                 .setNegativeButton("بستن", null)
                 .setPositiveButton("تلاش مجدد", (d, w) -> retry.run())
                 .create();
         dialog.setOnShowListener(d -> {
+            dialogChrome(dialog);
             if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 248), 28, alpha(DANGER, 75)));
             Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
             if (positive != null) positive.setTextColor(tc(GOLD));
@@ -2414,6 +2592,7 @@ public class MainActivity extends Activity {
             showLogin("ابتدا وارد شوید.");
             return;
         }
+        refreshHeaderTools();
         String targetPage = (page == null || page.trim().isEmpty()) ? "dashboard" : page.trim();
         if (VISITOR_EDITION && "dashboard".equals(targetPage)) targetPage = "visitor_dashboard";
         if (!canOpenPage(targetPage)) {
@@ -2538,15 +2717,11 @@ public class MainActivity extends Activity {
             bar.setTextDirection(View.TEXT_DIRECTION_RTL);
         }
         bar.setPadding(dp(7 * dockScale), dp(7 * dockScale), dp(7 * dockScale), dp(6 * dockScale));
-        int dockAccent = mix(accent, GOLD_2, isLightTheme() ? 0.10f : 0.16f);
-        GradientDrawable bg = gradient(new int[]{
-                alpha(mix(SURFACE, dockAccent, isLightTheme() ? 0.035f : 0.09f), 250),
-                alpha(mix(SURFACE_2, dockAccent, isLightTheme() ? 0.075f : 0.14f), 248),
-                alpha(mix(NAVY, dockAccent, isLightTheme() ? 0.015f : 0.08f), 250)
-        }, GradientDrawable.Orientation.TOP_BOTTOM, 30);
-        bg.setStroke(dp(1), alpha(mix(dockAccent, Color.WHITE, isLightTheme() ? 0.38f : 0.20f), isLightTheme() ? 132 : 96));
+        // Flat, calm dock: one surface colour, a hairline border and a single brand colour for the active tab.
+        GradientDrawable bg = rounded(alpha(SURFACE, 252), 26);
+        bg.setStroke(dp(1), BORDER);
         bar.setBackground(bg);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) bar.setElevation(dp(15));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) bar.setElevation(dp(8));
         String[][] items = new String[][]{
                 {"visitor_dashboard", "خانه", "⌂"},
                 {"visit", "ویزیت", "✦"},
@@ -2560,7 +2735,7 @@ public class MainActivity extends Activity {
         dock.addView(bar, bp);
 
         TextView glow = text(" ", 1, Color.TRANSPARENT, Typeface.NORMAL);
-        glow.setBackground(gradient(new int[]{alpha(mix(accent, GOLD_2, 0.35f), 75), alpha(Color.TRANSPARENT, 0)}, GradientDrawable.Orientation.TOP_BOTTOM, 999));
+        glow.setVisibility(View.GONE);
         FrameLayout.LayoutParams gp = new FrameLayout.LayoutParams(dp(104 * dockScale), dp(22 * dockScale), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         dock.addView(glow, gp);
         navStrip.addView(dock, new LinearLayout.LayoutParams(-1, dp(112 * dockScale)));
@@ -2572,24 +2747,35 @@ public class MainActivity extends Activity {
         try { buildNav(); } catch (Exception ignored) { }
     }
 
-    private int visitorDockIconResource(String key) {
-        if ("visitor_dashboard".equals(key)) return R.drawable.ic_svg_nav_home;
-        if ("visit".equals(key)) return R.drawable.ic_svg_nav_visit;
-        if ("showcase".equals(key)) return R.drawable.ic_svg_nav_products;
-        if ("cart".equals(key)) return R.drawable.ic_svg_nav_cart;
-        if ("visitor_more".equals(key)) return R.drawable.ic_svg_nav_more;
+    private int visitorDockIconResource(String key) { return visitorDockIconResource(key, false); }
+
+    /** Monochrome SVG icons for the dock: outlined when idle, filled when the page is active. */
+    private int visitorDockIconResource(String key, boolean active) {
+        if ("visitor_dashboard".equals(key)) return active ? R.drawable.mi_home_fill : R.drawable.mi_home;
+        if ("visit".equals(key)) return active ? R.drawable.mi_storefront_fill : R.drawable.mi_storefront;
+        if ("showcase".equals(key)) return active ? R.drawable.mi_inventory_2_fill : R.drawable.mi_inventory_2;
+        if ("cart".equals(key)) return active ? R.drawable.mi_shopping_cart_fill : R.drawable.mi_shopping_cart;
+        if ("visitor_more".equals(key)) return R.drawable.mi_apps;
         return 0;
+    }
+
+    /** Which dock tab represents a page. Sub-pages (settings, reports, chat …) belong to «بیشتر» (B8). */
+    private String dockKeyFor(String page) {
+        if (page == null) return "visitor_dashboard";
+        if ("visitor_dashboard".equals(page) || "visit".equals(page) || "showcase".equals(page) || "cart".equals(page) || "visitor_more".equals(page)) return page;
+        if ("login".equals(page)) return "";
+        return "visitor_more";
     }
 
     private void addVisitorDockItem(LinearLayout parent, String key, String label, String icon) {
         if (!canOpenPage(key)) return;
         boolean center = false;
-        boolean active = key.equals(activePage) || ("visitor_dashboard".equals(key) && ("settings".equals(activePage) || "health".equals(activePage)));
-        int accent = navAccent(key);
+        boolean active = key.equals(dockKeyFor(activePage));
+        int accent = GOLD;
         float dockScale = visitorDockScale();
         int bubbleSize = dp(48f * dockScale);
-        int wrapW = dp(52f * dockScale);
-        int wrapH = dp(52f * dockScale);
+        int wrapW = dp(64f * dockScale);
+        int wrapH = dp(42f * dockScale);
         int itemH = dp(76f * dockScale);
         LinearLayout item = new LinearLayout(this);
         item.setOrientation(LinearLayout.VERTICAL);
@@ -2603,42 +2789,36 @@ public class MainActivity extends Activity {
         FrameLayout iconWrap = new FrameLayout(this);
         iconWrap.setClipChildren(false);
         iconWrap.setClipToPadding(false);
-        int bubbleAccent = active ? mix(accent, GOLD_2, 0.08f) : mix(accent, SURFACE_2, isLightTheme() ? 0.72f : 0.58f);
-        int iconRes = visitorDockIconResource(key);
+        int iconRes = visitorDockIconResource(key, active);
         View bubbleView;
-        int iconColor = active ? onColorFor(bubbleAccent) : alpha(TEXT, 225);
+        int iconColor = active ? tc(accent) : MUTED;
         if (iconRes != 0) {
             ImageView iv = new ImageView(this);
             iv.setImageResource(iconRes);
             iv.setColorFilter(iconColor);
-            iv.setScaleType(ImageView.ScaleType.CENTER);
-            iv.setPadding(dp(11 * dockScale), dp(11 * dockScale), dp(11 * dockScale), dp(11 * dockScale));
+            iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            iv.setPadding(dp(14 * dockScale), dp(5 * dockScale), dp(14 * dockScale), dp(5 * dockScale));
             bubbleView = iv;
         } else {
             TextView tv = text(icon, 16.4f * dockScale, iconColor, Typeface.BOLD);
             tv.setGravity(Gravity.CENTER);
-            tv.setShadowLayer(dp(3), 0, dp(1), alpha(Color.BLACK, isLightTheme() ? 88 : 160));
             bubbleView = tv;
         }
-        GradientDrawable circle = gradient(new int[]{
-                active ? mix(bubbleAccent, Color.WHITE, isLightTheme() ? 0.24f : 0.14f) : mix(SURFACE_2, bubbleAccent, isLightTheme() ? 0.08f : 0.16f),
-                active ? bubbleAccent : mix(SURFACE, bubbleAccent, isLightTheme() ? 0.04f : 0.10f)
-        }, GradientDrawable.Orientation.TL_BR, 20);
-        circle.setStroke(dp(active ? 3 : 1), active ? alpha(mix(bubbleAccent, Color.WHITE, 0.34f), 200) : alpha(mix(bubbleAccent, Color.WHITE, 0.18f), 76));
-        bubbleView.setBackground(circle);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) bubbleView.setElevation(dp(active ? 10 : 4));
-        iconWrap.addView(bubbleView, new FrameLayout.LayoutParams(bubbleSize, bubbleSize, Gravity.CENTER));
+        // Material-style active indicator: a soft pill behind the icon, no gradients or shadows.
+        if (active) bubbleView.setBackground(rounded(alpha(accent, isLightTheme() ? 40 : 64), 999));
+        iconWrap.addView(bubbleView, new FrameLayout.LayoutParams(dp(60f * dockScale), dp(34f * dockScale), Gravity.CENTER));
         if ("cart".equals(key) && cartHasItems()) {
-            TextView badge = text(cartCountText(), 9.4f, onColorFor(navAccent("cart")), Typeface.BOLD);
+            TextView badge = text(cartCountText(), 9.0f, onColorFor(GOLD), Typeface.BOLD);
             badge.setGravity(Gravity.CENTER);
             badge.setSingleLine(true);
             badge.setPadding(dp(4), 0, dp(4), dp(1));
-            int cartAccent = navAccent("cart");
-            badge.setBackground(gradient(new int[]{mix(cartAccent, Color.WHITE, 0.34f), mix(cartAccent, GOLD_2, 0.28f), cartAccent}, GradientDrawable.Orientation.TOP_BOTTOM, 999));
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) badge.setElevation(dp(16));
-            FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, dp(21 * dockScale), Gravity.TOP | Gravity.RIGHT);
-            badge.setMinWidth(dp(22 * dockScale));
-            bp.setMargins(0, -dp(2 * dockScale), -dp(3 * dockScale), 0);
+            GradientDrawable badgeBg = rounded(GOLD, 999);
+            badgeBg.setStroke(dp(2), SURFACE);
+            badge.setBackground(badgeBg);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) badge.setElevation(dp(2));
+            FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, dp(20 * dockScale), Gravity.TOP | Gravity.RIGHT);
+            badge.setMinWidth(dp(20 * dockScale));
+            bp.setMargins(0, 0, dp(6 * dockScale), 0);
             iconWrap.addView(badge, bp);
             if (cartBadgeBounce && motionAllowed()) {
                 badge.setScaleX(1.5f); badge.setScaleY(1.5f);
@@ -2647,7 +2827,7 @@ public class MainActivity extends Activity {
         }
         item.addView(iconWrap, new LinearLayout.LayoutParams(wrapW, wrapH));
         String dockLabel = label;
-        TextView title = text(dockLabel, (active ? 9.3f : 8.8f) * dockScale, tc(active ? mix(accent, GOLD_2, 0.18f) : alpha(TEXT, 205)), Typeface.BOLD);
+        TextView title = text(dockLabel, 9.0f * dockScale, active ? tc(accent) : MUTED, active ? Typeface.BOLD : Typeface.NORMAL);
         title.setGravity(Gravity.CENTER);
         title.setSingleLine(true);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2);
@@ -2711,23 +2891,12 @@ public class MainActivity extends Activity {
         parent.addView(tab, lp);
     }
 
+    /**
+     * Unified palette (v4.6): every page uses the single brand colour of the active theme.
+     * Semantic colours (SUCCESS / WARNING / DANGER) are reserved for data states, not decoration.
+     */
     private int navAccent(String key) {
-        if ("command".equals(key)) return INFO;
-        if ("assistant".equals(key)) return mix(GOLD_2, INFO, 0.45f);
-        if ("customers".equals(key)) return VISITOR_EDITION ? mix(INFO, SUCCESS, 0.38f) : SUCCESS;
-        if ("products".equals(key)) return VISITOR_EDITION ? mix(GOLD, INFO, 0.18f) : mix(WARNING, GOLD, 0.28f);
-        if ("reports".equals(key) || "visitor_reports".equals(key)) return INFO;
-        if ("chat".equals(key)) return mix(GOLD_2, INFO, 0.52f);
-        if ("personnel".equals(key)) return mix(SUCCESS, INFO, 0.32f);
-        if ("attendance".equals(key)) return mix(GOLD, SUCCESS, 0.28f);
-        if ("visitor_dashboard".equals(key)) return mix(GOLD, SUCCESS, 0.26f);
-        if ("visit".equals(key)) return mix(GOLD_2, SUCCESS, 0.28f);
-        if ("visitor_more".equals(key)) return mix(INFO, GOLD_2, 0.32f);
-        if ("showcase".equals(key)) return VISITOR_EDITION ? mix(GOLD, INFO, 0.12f) : mix(GOLD, INFO, 0.22f);
-        if ("cart".equals(key)) return VISITOR_EDITION ? mix(GOLD, SUCCESS, 0.24f) : mix(GOLD_2, SUCCESS, 0.34f);
-        if ("taxpayers".equals(key)) return mix(GOLD, INFO, 0.28f);
-        if ("cameras".equals(key)) return mix(INFO, SUCCESS, 0.30f);
-        if ("alarm".equals(key)) return mix(DANGER, GOLD, 0.30f);
+        if ("alarm".equals(key)) return DANGER;
         return GOLD;
     }
 
@@ -2985,7 +3154,7 @@ public class MainActivity extends Activity {
         EditText q = input("نام مشتری، شماره چک، کد کالا یا فاکتور…", "", false);
         q.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) q.setTextDirection(View.TEXT_DIRECTION_RTL);
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new MeelanoDialogBuilder()
                 .setTitle("جستجوی هوشمند سراسری")
                 .setView(q)
                 .setNegativeButton("بستن", null)
@@ -3172,7 +3341,7 @@ public class MainActivity extends Activity {
         LinearLayout copy = new LinearLayout(this);
         copy.setOrientation(LinearLayout.VERTICAL);
         copy.setPadding(dp(11), 0, dp(8), 0);
-        TextView badge = text("VISIT MODE • فقط فروش میدانی", 9.2f, onColorFor(accent), Typeface.BOLD);
+        TextView badge = text("حالت ویزیت • فقط فروش میدانی", 9.2f, onColorFor(accent), Typeface.BOLD);
         badge.setGravity(Gravity.CENTER);
         badge.setSingleLine(true);
         badge.setPadding(dp(8), dp(3), dp(8), dp(3));
@@ -4039,16 +4208,13 @@ public class MainActivity extends Activity {
         b.setTextSize(fs(16f));
         b.setGravity(Gravity.CENTER);
         b.setTypeface(MEELANO_BOLD);
-        b.setTextColor(Color.WHITE);
-        b.setShadowLayer(dp(3), 0, dp(1), alpha(Color.BLACK, 150));
-        GradientDrawable bg = gradient(new int[]{mix(accent, Color.WHITE, 0.25f), accent, mix(accent, NAVY, 0.26f)}, GradientDrawable.Orientation.TL_BR, 999);
-        bg.setStroke(dp(1), alpha(Color.WHITE, 130));
-        b.setBackground(bg);
+        b.setTextColor(tc(GOLD));
+        b.setBackground(rounded(alpha(GOLD, isLightTheme() ? 30 : 52), 999));
         b.setClickable(true);
         b.setFocusable(true);
         b.setContentDescription(description);
         b.setOnClickListener(listener);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) b.setElevation(dp(6));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) b.setElevation(0);
         return b;
     }
 
@@ -4133,10 +4299,9 @@ public class MainActivity extends Activity {
 
     private String timeGreetingIcon() {
         int h = currentHourOfDay();
-        if (h >= 5 && h < 11) return "☀";
-        if (h >= 11 && h < 15) return "◉";
-        if (h >= 15 && h < 20) return "◐";
-        return "☾";
+        if (h >= 5 && h < 15) return "☀";
+        if (h >= 15 && h < 20) return "🌅";
+        return "🌙";
     }
 
     private int timeGreetingAccent() {
@@ -4311,8 +4476,8 @@ public class MainActivity extends Activity {
         JSONObject purchaseBlock = today.optJSONObject("purchases");
         try { if (salesBlock != null && (salesBlock.optJSONArray("items") == null || salesBlock.optJSONArray("items").length() == 0)) salesBlock.put("items", today.optJSONArray("todayItems")); } catch (Exception ignored) { }
         try { if (purchaseBlock != null && (purchaseBlock.optJSONArray("items") == null || purchaseBlock.optJSONArray("items").length() == 0)) purchaseBlock.put("items", today.optJSONArray("purchaseItems")); } catch (Exception ignored) { }
-        addDailyFinanceDashboardBlock("sales", "فروش روز", "انتخاب تاریخ، مشاهده منحنی و ورود به فاکتورها/دریافتی‌ها", ir.meelano.android.R.drawable.icon_sales, salesBlock, GOLD);
-        addDailyFinanceDashboardBlock("purchase", "خرید روز", "انتخاب تاریخ، مشاهده منحنی و ورود به اسناد/پرداختی‌ها", ir.meelano.android.R.drawable.icon_products, purchaseBlock, INFO);
+        addDailyFinanceDashboardBlock("sales", "فروش روز", "انتخاب تاریخ، مشاهده منحنی و ورود به فاکتورها/دریافتی‌ها", R.drawable.mi_receipt_long, salesBlock, GOLD);
+        addDailyFinanceDashboardBlock("purchase", "خرید روز", "انتخاب تاریخ، مشاهده منحنی و ورود به اسناد/پرداختی‌ها", R.drawable.mi_inventory_2, purchaseBlock, INFO);
         addCheckDashboardSection("چک‌های دریافتی", "تفکیک صندوق، بانک، خرج‌شده، استرداد و سایر دسته‌ها", true, today.optJSONObject("getChecks"), SUCCESS);
         addCheckDashboardSection("چک‌های پرداختی", "تفکیک پاس‌شده، در راه، سفید/استفاده‌نشده و سایر دسته‌ها", false, today.optJSONObject("putChecks"), WARNING);
         addDashboardBankTable(today.optJSONArray("banks"));
@@ -4572,7 +4737,8 @@ public class MainActivity extends Activity {
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
         ImageView icon = new ImageView(this);
-        icon.setImageResource(ir.meelano.android.R.drawable.icon_checks);
+        icon.setImageResource(R.drawable.mi_account_balance_wallet);
+        icon.setColorFilter(tc(accent));
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         icon.setPadding(dp(5), dp(5), dp(5), dp(5));
         icon.setBackground(roundedStroke(alpha(accent, 42), 16, alpha(accent, 100)));
@@ -4635,9 +4801,9 @@ public class MainActivity extends Activity {
     }
 
     private void addDashboardInsightTable(JSONObject today) {
-        addSmartCustomerSignalSection("مشتریان بدهکار", "۵ مشتری اول برای پیگیری سریع", today.optJSONArray("topDebtors"), "party", "amount", DANGER, ir.meelano.android.R.drawable.icon_customers);
-        addSmartCustomerSignalSection("تسویه‌های گذشته", "سررسید، ویزیتور و مبلغ معوق بدون شلوغی", today.optJSONArray("overdueInvoices"), "party", "amount", WARNING, ir.meelano.android.R.drawable.icon_sales);
-        addSmartCustomerSignalSection("مشتریان بدون خرید", "۵ مشتری اول که خرید ثبت‌شده ندارند", today.optJSONArray("inactiveCustomers"), "party", "hint", INFO, ir.meelano.android.R.drawable.icon_visitors);
+        addSmartCustomerSignalSection("مشتریان بدهکار", "۵ مشتری اول برای پیگیری سریع", today.optJSONArray("topDebtors"), "party", "amount", DANGER, R.drawable.mi_group);
+        addSmartCustomerSignalSection("تسویه‌های گذشته", "سررسید، ویزیتور و مبلغ معوق بدون شلوغی", today.optJSONArray("overdueInvoices"), "party", "amount", WARNING, R.drawable.mi_receipt_long);
+        addSmartCustomerSignalSection("مشتریان بدون خرید", "۵ مشتری اول که خرید ثبت‌شده ندارند", today.optJSONArray("inactiveCustomers"), "party", "hint", INFO, R.drawable.mi_storefront);
     }
 
     private void addSmartCustomerSignalSection(String title, String sub, JSONArray rows, String labelKey, String valueKey, int accent, int iconRes) {
@@ -4649,6 +4815,8 @@ public class MainActivity extends Activity {
         head.setGravity(Gravity.CENTER_VERTICAL);
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
+        icon.setColorFilter(tc(accent));
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         icon.setPadding(dp(5), dp(5), dp(5), dp(5));
         icon.setBackground(roundedStroke(alpha(accent, 42), 16, alpha(accent, 90)));
         head.addView(icon, new LinearLayout.LayoutParams(dp(46), dp(46)));
@@ -4688,7 +4856,7 @@ public class MainActivity extends Activity {
         LinearLayout c = card();
         c.setBackground(gradient(new int[]{alpha(accent, 34), SURFACE}, GradientDrawable.Orientation.LEFT_RIGHT, 22));
         LinearLayout head = new LinearLayout(this); head.setOrientation(LinearLayout.HORIZONTAL); head.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView icon = new ImageView(this); icon.setImageResource(iconRes); icon.setPadding(dp(5), dp(5), dp(5), dp(5)); icon.setBackground(roundedStroke(alpha(accent, 42), 16, alpha(accent, 90)));
+        ImageView icon = new ImageView(this); icon.setImageResource(iconRes); icon.setColorFilter(tc(accent)); icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE); icon.setPadding(dp(5), dp(5), dp(5), dp(5)); icon.setBackground(roundedStroke(alpha(accent, 42), 16, alpha(accent, 90)));
         head.addView(icon, new LinearLayout.LayoutParams(dp(46), dp(46)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(10), 0);
         copy.addView(text(title, 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
@@ -4893,7 +5061,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(48)); bp.setMargins(0, 0, 0, dp(12)); content.addView(back, bp);
         JSONObject block = new JSONObject();
         try { block.put("date", r.optString("date")); block.put("metrics", r.optJSONArray("metrics")); block.put("chart", r.optJSONArray("chart")); block.put("items", r.optJSONArray("items")); } catch (Exception ignored) { }
-        addDailyFinanceDashboardBlock(type, type.equals("sales") ? "فروش روز" : "خرید روز", "نمای جزئیات تاریخ انتخابی و دسترسی سریع به لیست‌ها", type.equals("sales") ? ir.meelano.android.R.drawable.icon_sales : ir.meelano.android.R.drawable.icon_products, block, accent);
+        addDailyFinanceDashboardBlock(type, type.equals("sales") ? "فروش روز" : "خرید روز", "نمای جزئیات تاریخ انتخابی و دسترسی سریع به لیست‌ها", type.equals("sales") ? R.drawable.mi_receipt_long : R.drawable.mi_inventory_2, block, accent);
     }
 
     private void showDashboardDailyList(String type, String date, String kind) {
@@ -5444,16 +5612,16 @@ public class MainActivity extends Activity {
 
     private int kpiIconResource(String title, int index) {
         String t = title == null ? "" : title;
-        if (t.contains("مشتری")) return ir.meelano.android.R.drawable.icon_customers;
-        if (t.contains("کالا")) return ir.meelano.android.R.drawable.icon_products;
-        if (t.contains("فروش") || t.contains("فاکتور")) return ir.meelano.android.R.drawable.icon_sales;
-        if (t.contains("چک")) return ir.meelano.android.R.drawable.icon_checks;
-        if (t.contains("ویزیت")) return ir.meelano.android.R.drawable.icon_visitors;
-        if (t.contains("هدف")) return ir.meelano.android.R.drawable.icon_goals;
-        if (index == 1) return ir.meelano.android.R.drawable.icon_products;
-        if (index == 2) return ir.meelano.android.R.drawable.icon_sales;
-        if (index == 4) return ir.meelano.android.R.drawable.icon_checks;
-        return ir.meelano.android.R.drawable.icon_dashboard;
+        if (t.contains("مشتری")) return R.drawable.mi_group;
+        if (t.contains("کالا")) return R.drawable.mi_inventory_2;
+        if (t.contains("فروش") || t.contains("فاکتور")) return R.drawable.mi_receipt_long;
+        if (t.contains("چک")) return R.drawable.mi_account_balance_wallet;
+        if (t.contains("ویزیت")) return R.drawable.mi_storefront;
+        if (t.contains("هدف")) return R.drawable.mi_track_changes;
+        if (index == 1) return R.drawable.mi_inventory_2;
+        if (index == 2) return R.drawable.mi_receipt_long;
+        if (index == 4) return R.drawable.mi_account_balance_wallet;
+        return R.drawable.mi_bar_chart;
     }
 
     private String kpiGlyph(String title, int index) {
@@ -5518,6 +5686,7 @@ public class MainActivity extends Activity {
             c.setBackground(gradient(new int[]{SURFACE, SURFACE_2}, GradientDrawable.Orientation.TOP_BOTTOM, 20));
             ImageView icon = new ImageView(this);
             icon.setImageResource(kpiIconResource(titleText, i));
+            icon.setColorFilter(tc(GOLD));
             icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
             icon.setPadding(0, 0, 0, dp(2));
             TextView title = text(titleText, 11.5f, MUTED, Typeface.NORMAL);
@@ -6495,7 +6664,7 @@ public class MainActivity extends Activity {
     private void showChatScheduleDialog() {
         EditText minutes = input("دقیقه تا ارسال", "15", false);
         minutes.setInputType(InputType.TYPE_CLASS_NUMBER);
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new MeelanoDialogBuilder()
                 .setTitle("زمان ارسال پیام بعدی")
                 .setView(minutes)
                 .setNegativeButton("لغو زمان‌بندی", (d, w) -> { if (prefs != null) prefs.edit().putInt("chat_schedule_delay", 0).apply(); showNotice("زمان‌بندی غیرفعال شد.", false); loadChatRoom(); })
@@ -6518,13 +6687,13 @@ public class MainActivity extends Activity {
 
     private void showChatMemberAdminDialog(boolean kickMode) {
         EditText user = input("نام کاربری", "", false);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(kickMode ? "اخراج یا بازگردانی کاربر" : "اعطای دسترسی").setView(user).setNegativeButton("بستن", null).setNeutralButton(kickMode ? "بازگردانی" : "کارمند", (d,w) -> chatMemberUpdate(user.getText().toString(), kickMode ? "restore" : "user")).setPositiveButton(kickMode ? "اخراج" : "مدیر", (d,w) -> chatMemberUpdate(user.getText().toString(), kickMode ? "kick" : "admin")).create();
+        AlertDialog dialog = new MeelanoDialogBuilder().setTitle(kickMode ? "اخراج یا بازگردانی کاربر" : "اعطای دسترسی").setView(user).setNegativeButton("بستن", null).setNeutralButton(kickMode ? "بازگردانی" : "کارمند", (d,w) -> chatMemberUpdate(user.getText().toString(), kickMode ? "restore" : "user")).setPositiveButton(kickMode ? "اخراج" : "مدیر", (d,w) -> chatMemberUpdate(user.getText().toString(), kickMode ? "kick" : "admin")).create();
         styleMeelanoDialog(dialog, navAccent("chat")); dialog.show();
     }
 
     private void showChatMuteDialog() {
         EditText user = input("نام کاربری برای سکوت ۲ ساعت", "", false);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("سکوت کاربر").setView(user).setNegativeButton("بستن", null).setPositiveButton("اعمال", (d,w) -> chatMemberUpdate(user.getText().toString(), "mute")).create();
+        AlertDialog dialog = new MeelanoDialogBuilder().setTitle("سکوت کاربر").setView(user).setNegativeButton("بستن", null).setPositiveButton("اعمال", (d,w) -> chatMemberUpdate(user.getText().toString(), "mute")).create();
         styleMeelanoDialog(dialog, navAccent("chat")); dialog.show();
     }
 
@@ -7313,7 +7482,7 @@ public class MainActivity extends Activity {
         EditText end=input("پایان مجاز مثل 18:00", prefs==null?"":prefs.getString("attendance_end_hint","18:00"), false);
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1,dp(50)); ip.setMargins(0,dp(8),0,0);
         box.addView(start,ip); box.addView(end,new LinearLayout.LayoutParams(-1,dp(50)));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("تنظیم ساعت حضور").setView(box).setNegativeButton("حذف محدودیت",(d,w)->setAttendanceHours("","",true)).setPositiveButton("ثبت",(d,w)->setAttendanceHours(start.getText().toString(),end.getText().toString(),false)).create();
+        AlertDialog dialog = new MeelanoDialogBuilder().setTitle("تنظیم ساعت حضور").setView(box).setNegativeButton("حذف محدودیت",(d,w)->setAttendanceHours("","",true)).setPositiveButton("ثبت",(d,w)->setAttendanceHours(start.getText().toString(),end.getText().toString(),false)).create();
         styleMeelanoDialog(dialog, navAccent("attendance")); dialog.show();
     }
 
@@ -7459,19 +7628,19 @@ public class MainActivity extends Activity {
         box.addView(text("نوع، تاریخ و توضیح کوتاه را کامل وارد کنید تا مدیر سریع‌تر تصمیم بگیرد.",10.2f,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2));
         final String[] type={"مرخصی استحقاقی"};
         Button typeBtn=secondaryButton(withIcon("☘", type[0]));
-        typeBtn.setOnClickListener(v->{ String[] items={"مرخصی استحقاقی","مرخصی استعلاجی","مرخصی ساعتی","ماموریت","سایر"}; AlertDialog d=new AlertDialog.Builder(this).setItems(items,(di,which)->{type[0]=items[which]; typeBtn.setText(withIcon("☘", type[0]));}).create(); styleMeelanoDialog(d, navAccent("attendance")); d.show(); });
+        typeBtn.setOnClickListener(v->{ String[] items={"مرخصی استحقاقی","مرخصی استعلاجی","مرخصی ساعتی","ماموریت","سایر"}; AlertDialog d=new MeelanoDialogBuilder().setItems(items,(di,which)->{type[0]=items[which]; typeBtn.setText(withIcon("☘", type[0]));}).create(); styleMeelanoDialog(d, navAccent("attendance")); d.show(); });
         Button start=secondaryButton(withIcon("◷", todayDateText())); Button end=secondaryButton(withIcon("◷", todayDateText()));
         start.setOnClickListener(v->showDatePickForButton(start)); end.setOnClickListener(v->showDatePickForButton(end));
         EditText hours=input("ساعت/مدت", "", false); EditText reason=input("توضیح درخواست", "", false); reason.setMinLines(2);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1,dp(46)); lp.setMargins(0,dp(8),0,0);
         box.addView(typeBtn,lp); box.addView(start,new LinearLayout.LayoutParams(-1,dp(46))); box.addView(end,new LinearLayout.LayoutParams(-1,dp(46))); box.addView(hours,new LinearLayout.LayoutParams(-1,dp(46))); box.addView(reason,new LinearLayout.LayoutParams(-1,dp(76)));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("درخواست مرخصی").setView(box).setNegativeButton("بستن",null).setPositiveButton("ارسال",(d,w)->submitLeaveRequest(type[0],start.getText().toString().replace("◷","").trim(),end.getText().toString().replace("◷","").trim(),hours.getText().toString(),reason.getText().toString())).create();
+        AlertDialog dialog = new MeelanoDialogBuilder().setTitle("درخواست مرخصی").setView(box).setNegativeButton("بستن",null).setPositiveButton("ارسال",(d,w)->submitLeaveRequest(type[0],start.getText().toString().replace("◷","").trim(),end.getText().toString().replace("◷","").trim(),hours.getText().toString(),reason.getText().toString())).create();
         styleMeelanoDialog(dialog, navAccent("attendance")); dialog.show();
     }
 
     private void showDatePickForButton(Button b){
         Calendar cal=Calendar.getInstance(new Locale("fa","IR")); DatePicker picker=new DatePicker(this); picker.init(cal.get(Calendar.YEAR),cal.get(Calendar.MONTH),cal.get(Calendar.DAY_OF_MONTH),(v,y,m,d)->{});
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("انتخاب تاریخ").setView(picker).setNegativeButton("بستن",null).setPositiveButton("ثبت",(d,w)->b.setText(withIcon("◷", String.format(Locale.US,"%04d/%02d/%02d",picker.getYear(),picker.getMonth()+1,picker.getDayOfMonth())))).create();
+        AlertDialog dialog = new MeelanoDialogBuilder().setTitle("انتخاب تاریخ").setView(picker).setNegativeButton("بستن",null).setPositiveButton("ثبت",(d,w)->b.setText(withIcon("◷", String.format(Locale.US,"%04d/%02d/%02d",picker.getYear(),picker.getMonth()+1,picker.getDayOfMonth())))).create();
         styleMeelanoDialog(dialog, navAccent("attendance")); dialog.show();
     }
 
@@ -7706,7 +7875,7 @@ public class MainActivity extends Activity {
         EditText auth = input("کلید احراز / Token" + (prefSecret(KEY_TAX_AUTH_KEY).isEmpty()?"":" • ذخیره‌شده"), "", true);
         EditText pk = input("کلید خصوصی/امضای دیجیتال" + (prefSecret(KEY_TAX_PRIVATE_KEY).isEmpty()?"":" • ذخیره‌شده"), "", true);
         for (EditText e : new EditText[]{base,mem,eco,client,auth,pk}) { LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1, dp(48)); ep.setMargins(0, dp(8), 0, 0); box.addView(e, ep); }
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
         dlg.setOnShowListener(di -> { styleMeelanoDialog(dlg, navAccent("taxpayers")); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> { SharedPreferences.Editor ed=prefs.edit(); ed.putString(KEY_TAX_BASE_URL, base.getText().toString().trim()); ed.putString(KEY_TAX_MEMORY_ID, mem.getText().toString().trim()); ed.putString(KEY_TAX_ECONOMIC_ID, eco.getText().toString().trim()); ed.putString(KEY_TAX_CLIENT_ID, client.getText().toString().trim()); if(auth.getText()!=null && auth.getText().toString().trim().length()>0) putSecret(ed, KEY_TAX_AUTH_KEY, auth.getText().toString()); if(pk.getText()!=null && pk.getText().toString().trim().length()>0) putSecret(ed, KEY_TAX_PRIVATE_KEY, pk.getText().toString()); ed.apply(); dlg.dismiss(); showNotice("تنظیمات مودیان ذخیره شد.", false); loadTaxpayers(); }); });
         dlg.show();
     }
@@ -7753,7 +7922,7 @@ public class MainActivity extends Activity {
     private void showTaxKeyList(String title, String prefKey) {
         Set<String> set = prefSetCopy(prefKey); LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(12),dp(10),dp(12),dp(6)); box.addView(text(title,16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2));
         TextView body=text(set.isEmpty()?"موردی ثبت نشده است.":join(new ArrayList<>(set), "\n"),10.5f,MUTED,Typeface.NORMAL); body.setLineSpacing(dp(2),1.05f); box.addView(body,new LinearLayout.LayoutParams(-1,-2));
-        AlertDialog dlg=new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن",null).setPositiveButton("پاک کردن لیست",(d,w)->{ savePrefSet(prefKey,new HashSet<String>()); loadTaxpayers(); }).create(); styleMeelanoDialog(dlg, navAccent("taxpayers")); dlg.show();
+        AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",null).setPositiveButton("پاک کردن لیست",(d,w)->{ savePrefSet(prefKey,new HashSet<String>()); loadTaxpayers(); }).create(); styleMeelanoDialog(dlg, navAccent("taxpayers")); dlg.show();
     }
 
     private String httpRequest(String target, String method, String body, String bearer, int timeoutMs) throws Exception {
@@ -7840,7 +8009,7 @@ public class MainActivity extends Activity {
         dahua.setOnClickListener(v -> { servicePort.setText("37777"); streamPort.setText("554"); tpl.setText(defaultCameraLiveTemplate()); replay.setText(defaultCameraReplayTemplate()); p2p.setChecked(true); });
         row.addView(dahua, weightedButtonLp());
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2); rlp.setMargins(0, dp(8), 0, 0); box.addView(row, rlp);
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
         dlg.setOnShowListener(di -> { styleMeelanoDialog(dlg, navAccent("cameras")); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> {
             SharedPreferences.Editor ed = prefs.edit();
             ed.putString(KEY_CAMERA_HOST, host.getText().toString().trim());
@@ -7928,7 +8097,7 @@ public class MainActivity extends Activity {
     }
     private String urlPart(String v){ try{return URLEncoder.encode(v==null?"":v,"UTF-8");}catch(Exception ignored){return v==null?"":v;} }
 
-    private void showCameraPlayer(int ch, boolean replay){ String url=cameraUrl(ch,replay); if(prefString(KEY_CAMERA_HOST,"").trim().isEmpty()){showNotice("ابتدا تنظیمات DVR را ثبت کنید.", false);return;} LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(8),dp(8),dp(8),dp(4)); box.addView(text((replay?"بازپخش ":"پخش زنده ")+"دوربین "+formatNumber(ch),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); VideoView video=new VideoView(this); MediaController mc=new MediaController(this); mc.setAnchorView(video); video.setMediaController(mc); video.setVideoURI(Uri.parse(url)); FrameLayout wrap=new FrameLayout(this); wrap.setBackgroundColor(Color.BLACK); wrap.addView(video,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER)); LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(-1,dp(280)); vp.setMargins(0,dp(8),0,dp(8)); box.addView(wrap,vp); LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); Button play=primaryButton("شروع پخش"); Button zoom=secondaryButton("زوم ×۱.۳"); Button external=secondaryButton("پلیر خارجی"); final float[] scale={1f}; play.setOnClickListener(v->{ try{video.start();}catch(Exception ex){showNotice("پخش شروع نشد: "+shortError(ex), true);} }); zoom.setOnClickListener(v->{ scale[0]=scale[0]<1.6f?scale[0]+0.3f:1f; video.setScaleX(scale[0]); video.setScaleY(scale[0]); zoom.setText("زوم ×"+String.format(Locale.US,"%.1f",scale[0])); }); external.setOnClickListener(v->openExternalStream(url)); row.addView(play,weightedButtonLp()); row.addView(zoom,weightedButtonLp()); row.addView(external,weightedButtonLp()); box.addView(row,new LinearLayout.LayoutParams(-1,-2)); AlertDialog dlg=new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن",(d,w)->{try{video.stopPlayback();}catch(Exception ignored){}}).create(); styleMeelanoDialog(dlg,navAccent("cameras")); dlg.setOnShowListener(d-> { try{ video.start(); }catch(Exception ignored){} }); dlg.show(); }
+    private void showCameraPlayer(int ch, boolean replay){ String url=cameraUrl(ch,replay); if(prefString(KEY_CAMERA_HOST,"").trim().isEmpty()){showNotice("ابتدا تنظیمات DVR را ثبت کنید.", false);return;} LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(8),dp(8),dp(8),dp(4)); box.addView(text((replay?"بازپخش ":"پخش زنده ")+"دوربین "+formatNumber(ch),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); VideoView video=new VideoView(this); MediaController mc=new MediaController(this); mc.setAnchorView(video); video.setMediaController(mc); video.setVideoURI(Uri.parse(url)); FrameLayout wrap=new FrameLayout(this); wrap.setBackgroundColor(Color.BLACK); wrap.addView(video,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER)); LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(-1,dp(280)); vp.setMargins(0,dp(8),0,dp(8)); box.addView(wrap,vp); LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); Button play=primaryButton("شروع پخش"); Button zoom=secondaryButton("زوم ×۱.۳"); Button external=secondaryButton("پلیر خارجی"); final float[] scale={1f}; play.setOnClickListener(v->{ try{video.start();}catch(Exception ex){showNotice("پخش شروع نشد: "+shortError(ex), true);} }); zoom.setOnClickListener(v->{ scale[0]=scale[0]<1.6f?scale[0]+0.3f:1f; video.setScaleX(scale[0]); video.setScaleY(scale[0]); zoom.setText("زوم ×"+String.format(Locale.US,"%.1f",scale[0])); }); external.setOnClickListener(v->openExternalStream(url)); row.addView(play,weightedButtonLp()); row.addView(zoom,weightedButtonLp()); row.addView(external,weightedButtonLp()); box.addView(row,new LinearLayout.LayoutParams(-1,-2)); AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",(d,w)->{try{video.stopPlayback();}catch(Exception ignored){}}).create(); styleMeelanoDialog(dlg,navAccent("cameras")); dlg.setOnShowListener(d-> { try{ video.start(); }catch(Exception ignored){} }); dlg.show(); }
 
 
     private void openExternalStream(String url){ try{ Intent i=new Intent(Intent.ACTION_VIEW, Uri.parse(url)); i.setDataAndType(Uri.parse(url), "video/*"); startActivity(Intent.createChooser(i,"باز کردن تصویر دوربین")); }catch(Exception ex){ showNotice("پلیر سازگار پیدا نشد.", true); } }
@@ -7943,7 +8112,7 @@ public class MainActivity extends Activity {
 
     private void addAlarmDeviceCard(int index){ boolean active=index==alarmActiveDevice; int accent=active?navAccent("alarm"):INFO; LinearLayout c=card(); c.setBackground(roundedStroke(alpha(accent,active?28:14),22,alpha(accent,active?95:55))); c.addView(text("دزدگیر "+formatNumber(index)+" • "+alarmString(index,"model",index==1?"Z4":"Extra G1"),15.5f,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); c.addView(text("IP: "+stringOr(alarmString(index,"host",""),"ثبت نشده")+" • Port: "+alarmString(index,"port","80")+" • مسیرها قابل تنظیم هستند",10.4f,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2)); LinearLayout row1=new LinearLayout(this); row1.setOrientation(LinearLayout.HORIZONTAL); Button set=secondaryButton(withIcon("⚙","تعریف/تنظیم")); Button test=secondaryButton(withIcon("⌁","تست")); set.setTextSize(fs(8.7f)); test.setTextSize(fs(8.7f)); set.setOnClickListener(v->showAlarmSettingsDialog(index)); test.setOnClickListener(v->sendAlarmCommand(index,"status")); row1.addView(set,weightedButtonLp()); row1.addView(test,weightedButtonLp()); LinearLayout.LayoutParams r1=new LinearLayout.LayoutParams(-1,-2); r1.setMargins(0,dp(9),0,0); c.addView(row1,r1); LinearLayout row2=new LinearLayout(this); row2.setOrientation(LinearLayout.HORIZONTAL); Button arm=primaryButton(withIcon("⌁","فعال")); Button home=secondaryButton(withIcon("◐","نیمه")); Button off=secondaryButton(withIcon("○","غیرفعال")); arm.setTextSize(fs(8.4f)); home.setTextSize(fs(8.4f)); off.setTextSize(fs(8.4f)); arm.setOnClickListener(v->sendAlarmCommand(index,"arm")); home.setOnClickListener(v->sendAlarmCommand(index,"home")); off.setOnClickListener(v->sendAlarmCommand(index,"disarm")); row2.addView(arm,weightedButtonLp()); row2.addView(home,weightedButtonLp()); row2.addView(off,weightedButtonLp()); LinearLayout.LayoutParams r2=new LinearLayout.LayoutParams(-1,-2); r2.setMargins(0,dp(8),0,0); c.addView(row2,r2); LinearLayout row3=new LinearLayout(this); row3.setOrientation(LinearLayout.HORIZONTAL); Button panic=secondaryButton(withIcon("!","آژیر/هشدار")); Button sirenOff=secondaryButton(withIcon("×","قطع آژیر")); panic.setTextSize(fs(8.4f)); sirenOff.setTextSize(fs(8.4f)); panic.setOnClickListener(v->sendAlarmCommand(index,"panic")); sirenOff.setOnClickListener(v->sendAlarmCommand(index,"sirenOff")); row3.addView(panic,weightedButtonLp()); row3.addView(sirenOff,weightedButtonLp()); LinearLayout.LayoutParams r3=new LinearLayout.LayoutParams(-1,-2); r3.setMargins(0,dp(8),0,0); c.addView(row3,r3); LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2); lp.setMargins(0,0,0,dp(12)); content.addView(c,lp); }
 
-    private void showAlarmSettingsDialog(int index){ LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10),dp(8),dp(10),dp(4)); box.addView(text("تعریف دزدگیر "+formatNumber(index),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); EditText model=input("مدل: Z4 یا Extra G1",alarmString(index,"model",index==1?"Z4":"Extra G1"),false); EditText host=input("IP یا دامنه دستگاه",alarmString(index,"host",""),false); EditText port=input("Port",alarmString(index,"port","80"),false); EditText user=input("نام کاربری",alarmString(index,"user",""),false); EditText pass=input("کلمه عبور"+(alarmSecret(index,"pass").isEmpty()?"":" • ذخیره‌شده"),"",true); EditText token=input("Token/کلید"+(alarmSecret(index,"token").isEmpty()?"":" • ذخیره‌شده"),"",true); EditText arm=input("مسیر فعال‌سازی",alarmString(index,"arm","/arm"),false); EditText dis=input("مسیر غیرفعال",alarmString(index,"disarm","/disarm"),false); EditText home=input("مسیر نیمه‌فعال",alarmString(index,"home","/home"),false); EditText status=input("مسیر وضعیت",alarmString(index,"status","/status"),false); EditText panic=input("مسیر آژیر/هشدار",alarmString(index,"panic","/panic"),false); EditText sirenOff=input("مسیر قطع آژیر",alarmString(index,"sirenOff","/siren-off"),false); for(EditText e:new EditText[]{model,host,port,user,pass,token,arm,dis,home,status,panic,sirenOff}){ LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1,dp(48)); ep.setMargins(0,dp(7),0,0); box.addView(e,ep);} AlertDialog dlg=new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن",null).setPositiveButton("ذخیره",null).create(); dlg.setOnShowListener(di->{ styleMeelanoDialog(dlg,navAccent("alarm")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null)ok.setOnClickListener(v->{ SharedPreferences.Editor ed=prefs.edit(); ed.putString(alarmKey(index,"model"),model.getText().toString().trim()); ed.putString(alarmKey(index,"host"),host.getText().toString().trim()); ed.putString(alarmKey(index,"port"),port.getText().toString().trim()); ed.putString(alarmKey(index,"user"),user.getText().toString().trim()); ed.putString(alarmKey(index,"arm"),arm.getText().toString().trim()); ed.putString(alarmKey(index,"disarm"),dis.getText().toString().trim()); ed.putString(alarmKey(index,"home"),home.getText().toString().trim()); ed.putString(alarmKey(index,"status"),status.getText().toString().trim()); ed.putString(alarmKey(index,"panic"),panic.getText().toString().trim()); ed.putString(alarmKey(index,"sirenOff"),sirenOff.getText().toString().trim()); if(pass.getText()!=null&&pass.getText().toString().trim().length()>0)putSecret(ed,alarmKey(index,"pass"),pass.getText().toString()); if(token.getText()!=null&&token.getText().toString().trim().length()>0)putSecret(ed,alarmKey(index,"token"),token.getText().toString()); ed.apply(); dlg.dismiss(); renderAlarmPage(); }); }); dlg.show(); }
+    private void showAlarmSettingsDialog(int index){ LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10),dp(8),dp(10),dp(4)); box.addView(text("تعریف دزدگیر "+formatNumber(index),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); EditText model=input("مدل: Z4 یا Extra G1",alarmString(index,"model",index==1?"Z4":"Extra G1"),false); EditText host=input("IP یا دامنه دستگاه",alarmString(index,"host",""),false); EditText port=input("Port",alarmString(index,"port","80"),false); EditText user=input("نام کاربری",alarmString(index,"user",""),false); EditText pass=input("کلمه عبور"+(alarmSecret(index,"pass").isEmpty()?"":" • ذخیره‌شده"),"",true); EditText token=input("Token/کلید"+(alarmSecret(index,"token").isEmpty()?"":" • ذخیره‌شده"),"",true); EditText arm=input("مسیر فعال‌سازی",alarmString(index,"arm","/arm"),false); EditText dis=input("مسیر غیرفعال",alarmString(index,"disarm","/disarm"),false); EditText home=input("مسیر نیمه‌فعال",alarmString(index,"home","/home"),false); EditText status=input("مسیر وضعیت",alarmString(index,"status","/status"),false); EditText panic=input("مسیر آژیر/هشدار",alarmString(index,"panic","/panic"),false); EditText sirenOff=input("مسیر قطع آژیر",alarmString(index,"sirenOff","/siren-off"),false); for(EditText e:new EditText[]{model,host,port,user,pass,token,arm,dis,home,status,panic,sirenOff}){ LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1,dp(48)); ep.setMargins(0,dp(7),0,0); box.addView(e,ep);} AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",null).setPositiveButton("ذخیره",null).create(); dlg.setOnShowListener(di->{ styleMeelanoDialog(dlg,navAccent("alarm")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null)ok.setOnClickListener(v->{ SharedPreferences.Editor ed=prefs.edit(); ed.putString(alarmKey(index,"model"),model.getText().toString().trim()); ed.putString(alarmKey(index,"host"),host.getText().toString().trim()); ed.putString(alarmKey(index,"port"),port.getText().toString().trim()); ed.putString(alarmKey(index,"user"),user.getText().toString().trim()); ed.putString(alarmKey(index,"arm"),arm.getText().toString().trim()); ed.putString(alarmKey(index,"disarm"),dis.getText().toString().trim()); ed.putString(alarmKey(index,"home"),home.getText().toString().trim()); ed.putString(alarmKey(index,"status"),status.getText().toString().trim()); ed.putString(alarmKey(index,"panic"),panic.getText().toString().trim()); ed.putString(alarmKey(index,"sirenOff"),sirenOff.getText().toString().trim()); if(pass.getText()!=null&&pass.getText().toString().trim().length()>0)putSecret(ed,alarmKey(index,"pass"),pass.getText().toString()); if(token.getText()!=null&&token.getText().toString().trim().length()>0)putSecret(ed,alarmKey(index,"token"),token.getText().toString()); ed.apply(); dlg.dismiss(); renderAlarmPage(); }); }); dlg.show(); }
 
     private void sendAlarmCommand(int index,String cmd){ String host=alarmString(index,"host","").trim(); if(host.isEmpty()){showNotice("ابتدا دستگاه "+index+" را تعریف کنید.", false);return;} String path=alarmString(index,cmd,"/"+cmd); String url="http://"+host+":"+alarmString(index,"port","80")+(path.startsWith("/")?path:"/"+path); String token=alarmSecret(index,"token"); runNetworkJob("alarm",()->httpRequestWithBasic(url,"GET",null,token,alarmString(index,"user",""),alarmSecret(index,"pass"),10000),new NetworkCallback(){@Override public void ok(String b){String msg="دزدگیر "+index+" • "+alarmCommandFa(cmd)+" موفق • "+nowText(); prefs.edit().putString(KEY_ALARM_LOG,msg).apply(); showNotice(msg, true); renderAlarmPage();}@Override public void fail(Exception e){String msg="دزدگیر "+index+" ناموفق: "+shortError(e); prefs.edit().putString(KEY_ALARM_LOG,msg).apply(); showPageError("دزدگیر",e,()->renderAlarmPage());}}); }
 
@@ -8668,11 +8837,11 @@ public class MainActivity extends Activity {
 
     private void showCustomerMessageDialog(JSONObject r) {
         String[] labels = {"پیام وصول محترمانه", "پیام فروش مجدد", "یادآوری چک/تعهد"};
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new MeelanoDialogBuilder()
                 .setTitle("میلو چه پیامی بدهد؟")
                 .setItems(labels, (d, which) -> {
                     String body = buildCustomerMessage(r, which);
-                    AlertDialog inner = new AlertDialog.Builder(this)
+                    AlertDialog inner = new MeelanoDialogBuilder()
                             .setTitle(labels[which])
                             .setMessage(body)
                             .setNegativeButton("بستن", null)
@@ -8762,7 +8931,7 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams weightedButtonLp() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), 1f);
         lp.setMargins(dp(3), 0, dp(3), 0);
         return lp;
     }
@@ -8808,7 +8977,7 @@ public class MainActivity extends Activity {
                 + "کد ملی: " + r.optString("ملی", "-") + "\n"
                 + "کد ویزیتور: " + r.optString("کد_ویزیتور", "-") + "\n\n"
                 + "نشانی: " + r.optString("نشانی", "-");
-        new AlertDialog.Builder(this).setTitle(r.optString("نام", "Customer 360")).setMessage(message).setPositiveButton("بستن", null).show();
+        new MeelanoDialogBuilder().setTitle(r.optString("نام", "مشتری")).setMessage(message).setPositiveButton("بستن", null).show();
     }
 
     private void backFromCustomerDetail(String backTarget) {
@@ -8845,19 +9014,34 @@ public class MainActivity extends Activity {
 
     private void showCustomerDetail(JSONObject customer, String filter) {
         String code = customer.optString("کد", "");
-        String name = customer.optString("نام", "Customer 360");
+        String name = customer.optString("نام", "مشتری");
         content.removeAllViews();
         addHero("گردش حساب مشتری", name + " • کد " + code);
         String backTarget = customer.optString("_back", "customers");
         addCustomerBackBar(backTarget, name);
         addCustomerLedgerFilters(customer, filter);
         addLoading(content, "در حال دریافت ریز گردش حساب مشتری…");
+        final String cacheKey = "ledger_cache_" + code + "_" + filter;
         runDb(() -> queryCustomerLedger(code, filter), new DbCallback() {
             @Override public void ok(String body) {
-                try { renderCustomerLedger(customer, new JSONArray(body), filter); }
+                try {
+                    renderCustomerLedger(customer, new JSONArray(body), filter);
+                    try { if (prefs != null && body != null && body.length() < 200000) prefs.edit().putString(cacheKey, body).putString(cacheKey + "_at", nowText()).apply(); } catch (Exception ignored) { }
+                }
                 catch (Exception e) { showPageError("گردش مشتری", e, () -> showCustomerDetail(customer, filter)); }
             }
-            @Override public void fail(Exception e) { showPageError("گردش مشتری", e, () -> showCustomerDetail(customer, filter)); }
+            @Override public void fail(Exception e) {
+                // B15: without a connection, show the last saved ledger for this customer instead of only an error.
+                String cached = prefs == null ? null : prefs.getString(cacheKey, null);
+                if (cached != null) {
+                    try {
+                        renderCustomerLedger(customer, new JSONArray(cached), filter);
+                        showNotice("اتصال برقرار نشد؛ آخرین اطلاعات ذخیره‌شده (" + prefs.getString(cacheKey + "_at", "") + ") نمایش داده شد.", true);
+                        return;
+                    } catch (Exception ignored) { }
+                }
+                showPageError("گردش مشتری", e, () -> showCustomerDetail(customer, filter));
+            }
         });
     }
 
@@ -8876,9 +9060,9 @@ public class MainActivity extends Activity {
 
     private void renderCustomerLedger(JSONObject customer, JSONArray rows, String filter) {
         content.removeAllViews();
-        addHero("گردش حساب مشتری", customer.optString("نام", "Customer 360") + " • مانده " + money(customer.opt("مانده")));
+        addHero("گردش حساب مشتری", customer.optString("نام", "مشتری") + " • مانده " + money(customer.opt("مانده")));
         String backTarget = customer.optString("_back", "customers");
-        addCustomerBackBar(backTarget, customer.optString("نام", "Customer 360"));
+        addCustomerBackBar(backTarget, customer.optString("نام", "مشتری"));
         addCustomerLedgerFilters(customer, filter);
         addCustomer360Summary(customer);
         addCustomerFollowupNotebook(customer);
@@ -8965,7 +9149,7 @@ public class MainActivity extends Activity {
             picker.setSpinnersShown(true);
             picker.init(y, m, d, null);
             LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, -2); pp.setMargins(0, dp(10), 0, 0); box.addView(picker, pp);
-            AlertDialog dlg = new AlertDialog.Builder(this)
+            AlertDialog dlg = new MeelanoDialogBuilder()
                     .setView(box)
                     .setNegativeButton("بستن", null)
                     .setPositiveButton("انتخاب", (di, w) -> {
@@ -8973,7 +9157,7 @@ public class MainActivity extends Activity {
                         if (target != null) target.setText("انتخاب تاریخ یادآوری: " + value);
                     })
                     .create();
-            dlg.setOnShowListener(di -> { if (dlg.getWindow() != null) dlg.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 250), 28, alpha(GOLD, 85))); });
+            dlg.setOnShowListener(di -> { dialogChrome(dlg); if (dlg.getWindow() != null) dlg.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 250), 28, alpha(GOLD, 85))); });
             dlg.show();
         } catch (Exception ex) { showNotice("باز کردن تقویم ممکن نشد.", false); }
     }
@@ -9703,7 +9887,7 @@ public class MainActivity extends Activity {
         hero.addView(top, new LinearLayout.LayoutParams(-1, -2));
         TextView title = text("آتیران ویزیتور", 29, tc(GOLD_2), Typeface.BOLD); title.setGravity(Gravity.CENTER); title.setShadowLayer(dp(5), 0, dp(2), alpha(Color.BLACK, 180));
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(16), 0, 0); hero.addView(title, tp);
-        TextView sub = text("ATIRAN • INTELLIGENT SALES EXPERIENCE", 12.5f, tc(GOLD), Typeface.BOLD); sub.setGravity(Gravity.CENTER); sub.setLetterSpacing(0.08f);
+        TextView sub = text("آتیران • تجربه فروش هوشمند", 12.5f, tc(GOLD), Typeface.BOLD); sub.setGravity(Gravity.CENTER); sub.setLetterSpacing(0.08f);
         hero.addView(sub, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout kpi = new LinearLayout(this); kpi.setOrientation(LinearLayout.HORIZONTAL); kpi.setPadding(dp(5), dp(8), dp(5), dp(8));
         kpi.setBackground(unifiedInnerBg(GOLD_2, 23));
@@ -9945,7 +10129,7 @@ public class MainActivity extends Activity {
             b.setOnClickListener(v -> { AlertDialog d = (AlertDialog) box.getTag(); if (d != null) d.dismiss(); showApp(a[1]); });
             LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(44)); bp.setMargins(0, dp(7), 0, 0); box.addView(b, bp);
         }
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create();
         box.setTag(dlg); dlg.setOnShowListener(d -> styleMeelanoDialog(dlg, GOLD)); dlg.show();
     }
 
@@ -10282,13 +10466,13 @@ public class MainActivity extends Activity {
         c.setPadding(dp(12), dp(10), dp(12), dp(10));
         c.setBackground(visitorPanel(navAccent("showcase"), 28));
         LinearLayout head = new LinearLayout(this); head.setOrientation(LinearLayout.HORIZONTAL); head.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.ic_svg_nav_products); icon.setColorFilter(onColorFor(GOLD)); icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE); icon.setPadding(dp(12), dp(12), dp(12), dp(12)); icon.setBackground(luxuryButtonBg(GOLD, true, 16)); icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.mi_inventory_2); icon.setColorFilter(onColorFor(GOLD)); icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE); icon.setPadding(dp(12), dp(12), dp(12), dp(12)); icon.setBackground(luxuryButtonBg(GOLD, true, 16)); icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         head.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         copy.addView(text("کالا", 17.4f, tc(GOLD_2), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + " • " + formatNumber(p2) + " با قیمت ۲", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        ImageView cart = new ImageView(this); cart.setImageResource(R.drawable.ic_svg_nav_cart); cart.setColorFilter(onColorFor(navAccent("cart"))); cart.setScaleType(ImageView.ScaleType.CENTER_INSIDE); cart.setPadding(dp(12), dp(12), dp(12), dp(12)); cart.setBackground(luxuryButtonBg(navAccent("cart"), true, 999)); cart.setContentDescription("سبد خرید، " + cartCountText() + " قلم"); cart.setClickable(true); applyTouchFeedback(cart); cart.setOnClickListener(v -> showApp("cart"));
+        ImageView cart = new ImageView(this); cart.setImageResource(R.drawable.mi_shopping_cart); cart.setColorFilter(onColorFor(navAccent("cart"))); cart.setScaleType(ImageView.ScaleType.CENTER_INSIDE); cart.setPadding(dp(12), dp(12), dp(12), dp(12)); cart.setBackground(luxuryButtonBg(navAccent("cart"), true, 999)); cart.setContentDescription("سبد خرید، " + cartCountText() + " قلم"); cart.setClickable(true); applyTouchFeedback(cart); cart.setOnClickListener(v -> showApp("cart"));
         head.addView(cart, new LinearLayout.LayoutParams(dp(46), dp(46)));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
@@ -10309,9 +10493,9 @@ public class MainActivity extends Activity {
         String[][] filters = {{"all","همه"},{"stock","موجود"},{"price2","قیمت ۲"},{"top","پرفروش"},{"low","کمبود"},{"priced","قیمت‌دار"},{"image","تصویردار"},{"package","بسته‌بندی"}};
         for (String[] opt : filters) addVisitorFilterChip(chips, q, f, opt[0], opt[1]);
         Button addLocal = themedActionButton("کالای دستی", navAccent("cart"), false); addLocal.setTextSize(fs(8.4f)); addLocal.setOnClickListener(v -> showVisitorAddProductDialog(q, f));
-        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(dp(92), dp(38)); alp.setMargins(dp(3), 0, dp(3), 0); chips.addView(addLocal, alp);
+        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(dp(92), dp(44)); alp.setMargins(dp(3), 0, dp(3), 0); chips.addView(addLocal, alp);
         Button refresh = themedActionButton("تازه‌سازی", GOLD_2, false); refresh.setTextSize(fs(8.7f)); refresh.setOnClickListener(v -> loadShowcase(q, f, true));
-        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(86), dp(38)); rp.setMargins(dp(3), 0, dp(3), 0); chips.addView(refresh, rp);
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(86), dp(44)); rp.setMargins(dp(3), 0, dp(3), 0); chips.addView(refresh, rp);
         hs.addView(chips, new FrameLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, -2); hp.setMargins(0, dp(9), 0, 0); c.addView(hs, hp);
 
@@ -10366,7 +10550,7 @@ public class MainActivity extends Activity {
         TextView icon = text("💡", 18, tc(GOLD_2), Typeface.BOLD); icon.setGravity(Gravity.CENTER); c.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
         TextView t = text("پیشنهاد فروش: " + suggestion, 10.2f, alpha(TEXT, 225), Typeface.BOLD); t.setMaxLines(2); t.setEllipsize(TextUtils.TruncateAt.END); c.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
         Button p2 = themedActionButton("قیمت ۲", WARNING, "price2".equals(filter)); p2.setTextSize(fs(8.4f)); p2.setOnClickListener(v -> loadShowcase(query, "price2"));
-        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(78), dp(36)); bp.setMargins(dp(6), 0, 0, 0); c.addView(p2, bp);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(78), dp(44)); bp.setMargins(dp(6), 0, 0, 0); c.addView(p2, bp);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(10)); content.addView(c, cp);
     }
 
@@ -10377,13 +10561,13 @@ public class MainActivity extends Activity {
         for (String[] f : filters) {
             Button b = f[0].equals(active) ? primaryButton(f[1]) : secondaryButton(f[1]);
             b.setTextSize(fs(9.5f)); b.setOnClickListener(v -> loadShowcase(query, f[0]));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(92), dp(39)); lp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(b, lp);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(92), dp(44)); lp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(b, lp);
         }
         Button scan = secondaryButton("بارکد/کدخوان"); scan.setTextSize(fs(9.0f)); scan.setOnClickListener(v -> showBarcodeSearchDialog());
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(112), dp(39)); sp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(scan, sp);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(112), dp(44)); sp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(scan, sp);
         if (canOpenPage("cart")) {
             Button cart = primaryButton("سبد: " + cartCountText()); cart.setTextSize(fs(9.5f)); cart.setOnClickListener(v -> showApp("cart"));
-            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(dp(100), dp(39)); cp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(cart, cp);
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(dp(100), dp(44)); cp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(cart, cp);
         }
         scroll.addView(row, new FrameLayout.LayoutParams(-2, -2)); content.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
     }
@@ -10393,7 +10577,7 @@ public class MainActivity extends Activity {
         box.addView(text("جستجوی سریع با بارکد/کد کالا", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         EditText code = input("بارکد یا کد کالا را وارد/اسکن کنید", "", false); code.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, dp(50)); cp.setMargins(0, dp(8), 0, 0); box.addView(code, cp);
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).setPositiveButton("جستجو", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setPositiveButton("جستجو", null).create();
         dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, navAccent("showcase")); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> { String q = code.getText().toString().trim(); dlg.dismiss(); loadShowcase(q, "all"); }); });
         dlg.show();
     }
@@ -10433,8 +10617,7 @@ public class MainActivity extends Activity {
             double p2 = Math.max(0, jsonDouble(r, "قیمت_فروش۲", 0));
             try {
                 r.put("قیمت_فروش", p1);
-                r.put("قیمت_فروش۲", price2Computed(r) ? 0 : p2);
-                r.put("قیمت_فروش۲_محاسباتی", 0);
+                applyPrice2Rule(r);
             } catch (Exception ignored) { }
         }
     }
@@ -10495,16 +10678,17 @@ public class MainActivity extends Activity {
         EditText name = input("نام کالا", "", false);
         EditText code = input("کد/بارکد اختیاری", "LOCAL-" + System.currentTimeMillis(), false);
         EditText unit = input("واحد شمارش", "عدد", false);
-        EditText stock = input("موجودی تقریبی", "0", false); stock.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText price1 = input("قیمت فروش ۱", "", false); price1.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText price2 = input("قیمت فروش ۲ / اختیاری", "", false); price2.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText stock = numberInput("موجودی تقریبی", 0, true);
+        EditText price1 = numberInput("قیمت فروش ۱ (ریال)", 0, true); price1.setText("");
         EditText qty = input("تعداد برای افزودن به سبد", "1", false); qty.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        for (EditText e : new EditText[]{name, code, unit, stock, price1, price2, qty}) { LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(48)); ep.setMargins(0, dp(7), 0, 0); box.addView(e, ep); }
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).setPositiveButton("ثبت و افزودن", null).create();
+        for (EditText e : new EditText[]{name, code, unit, stock, price1}) { LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(48)); ep.setMargins(0, dp(7), 0, 0); box.addView(e, ep); }
+        box.addView(price2AutoLine(price1), price2AutoLp());
+        LinearLayout.LayoutParams qtyLp = new LinearLayout.LayoutParams(-1, dp(48)); qtyLp.setMargins(0, dp(7), 0, 0); box.addView(qty, qtyLp);
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setPositiveButton("ثبت و افزودن", null).create();
         dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, accent); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> {
             double p1 = Math.max(0, parseNumber(price1.getText().toString(), 0));
             if (name.getText().toString().trim().isEmpty() || p1 <= 0) { showNotice("نام کالا و قیمت فروش ۱ را وارد کنید.", false); return; }
-            double p2 = Math.max(0, parseNumber(price2.getText().toString(), 0));
+            double p2 = price2ByRule(p1, 0);
             JSONObject product = new JSONObject();
             try {
                 product.put("کد", code.getText().toString().trim().isEmpty() ? "LOCAL-" + System.currentTimeMillis() : code.getText().toString().trim());
@@ -10530,15 +10714,17 @@ public class MainActivity extends Activity {
         EditText name = input("نام کالا", safeDisplayText(source.opt("نام"), ""), false);
         EditText code = input("کد/بارکد", safeDisplayText(source.opt("کد"), "LOCAL-" + System.currentTimeMillis()), false);
         EditText unit = input("واحد شمارش", unitOrDash(source).replace("—", "عدد"), false);
-        EditText stock = input("موجودی تقریبی", String.valueOf(jsonDouble(source, "موجودی", 0)), false); stock.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText price1 = input("قیمت فروش ۱", String.valueOf(jsonDouble(source, "قیمت_فروش", 0)), false); price1.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText price2 = input("قیمت فروش ۲ / اختیاری", jsonDouble(source, "قیمت_فروش۲", 0) > 0 && !price2Computed(source) ? String.valueOf(jsonDouble(source, "قیمت_فروش۲", 0)) : "", false); price2.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        for (EditText e : new EditText[]{name, code, unit, stock, price1, price2}) { LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(48)); ep.setMargins(0, dp(7), 0, 0); box.addView(e, ep); }
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).setNeutralButton("انتخاب عکس", null).setPositiveButton("ذخیره", null).create();
+        EditText stock = numberInput("موجودی تقریبی", jsonDouble(source, "موجودی", 0), true);
+        EditText price1 = numberInput("قیمت فروش ۱ (ریال)", jsonDouble(source, "قیمت_فروش", 0), true);
+        String[] editLabels = {"نام کالا", "کد / بارکد", "واحد شمارش", "موجودی تقریبی", "قیمت فروش ۱ (ریال)"};
+        EditText[] editFields = {name, code, unit, stock, price1};
+        for (int ei = 0; ei < editFields.length; ei++) addLabeledField(box, editLabels[ei], editFields[ei], 48);
+        box.addView(price2AutoLine(price1), price2AutoLp());
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setNeutralButton("انتخاب عکس", null).setPositiveButton("ذخیره", null).create();
         dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, accent); Button img = dlg.getButton(AlertDialog.BUTTON_NEUTRAL); if (img != null) img.setOnClickListener(v -> { dlg.dismiss(); pickVisitorProductImage(source); }); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> {
             double p1 = Math.max(0, parseNumber(price1.getText().toString(), 0));
             if (name.getText().toString().trim().isEmpty() || p1 <= 0) { showNotice("نام کالا و قیمت فروش ۱ را وارد کنید.", false); return; }
-            double p2 = Math.max(0, parseNumber(price2.getText().toString(), 0));
+            double p2 = price2ByRule(p1, 0);
             String cde = code.getText().toString().trim().isEmpty() ? safeDisplayText(source.opt("کد"), "LOCAL-" + System.currentTimeMillis()) : code.getText().toString().trim();
             JSONObject product = new JSONObject();
             try {
@@ -10564,9 +10750,10 @@ public class MainActivity extends Activity {
     private void renderShowcaseProducts(JSONArray rows, String query, String filter, int requestedLimit) {
         if (VISITOR_EDITION) {
             rows = mergeVisitorLocalProducts(rows, "", "all");
-            rows = visitorProductSearchFilteredRows(rows, query, filter);
             normalizeVisitorExactPrices(rows);
+            rows = visitorProductSearchFilteredRows(rows, query, filter);
         }
+        else normalizeVisitorExactPrices(rows);
         content.removeAllViews();
         if (VISITOR_EDITION) {
             addVisitorShowcaseSmartControls(rows, query, filter, false);
@@ -10664,11 +10851,56 @@ public class MainActivity extends Activity {
 
     private boolean price2Computed(JSONObject r) { return jsonDouble(r, "قیمت_فروش۲_محاسباتی", 0) > 0; }
 
+    /** Business rule: sale price 2 is always sale price 1 plus 6 percent (rounded to whole rials). */
+    static final String PRICE2_MARKUP_TEXT = "۶٪";
+    private static final java.math.BigDecimal PRICE2_MARKUP = new java.math.BigDecimal("1.06");
+
+    private double price2ByRule(double price1, double fallback) {
+        if (price1 > 0) {
+            try { return new java.math.BigDecimal(Double.toString(price1)).multiply(PRICE2_MARKUP).setScale(0, java.math.RoundingMode.HALF_UP).doubleValue(); }
+            catch (Exception e) { return Math.round(price1 * 1.06d); }
+        }
+        return Math.max(0, fallback);
+    }
+
+    /** Applies the 6% rule to one product row; keeps the value stored in the accounting DB under قیمت_فروش۲_ثبت_شده. */
+    private void applyPrice2Rule(JSONObject r) {
+        if (r == null) return;
+        try {
+            double p1 = Math.max(0, jsonDouble(r, "قیمت_فروش", 0));
+            if (!r.has("قیمت_فروش۲_ثبت_شده")) r.put("قیمت_فروش۲_ثبت_شده", Math.max(0, jsonDouble(r, "قیمت_فروش۲", 0)));
+            double stored = Math.max(0, jsonDouble(r, "قیمت_فروش۲_ثبت_شده", 0));
+            r.put("قیمت_فروش۲", price2ByRule(p1, stored));
+            r.put("قیمت_فروش۲_محاسباتی", p1 > 0 ? 1 : 0);
+        } catch (Exception ignored) { }
+    }
+
+    /** Read-only line that live-updates "قیمت فروش ۲ = قیمت ۱ + ۶٪" under a price-1 field. */
+    private TextView price2AutoLine(EditText price1) {
+        TextView t = text("", 11.2f, tc(GOLD), Typeface.BOLD);
+        t.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        t.setPadding(dp(12), dp(10), dp(12), dp(10));
+        t.setBackground(rounded(alpha(GOLD, isLightTheme() ? 18 : 34), 14));
+        Runnable upd = () -> {
+            double p1 = Math.max(0, parseNumber(price1.getText().toString(), 0));
+            t.setText(p1 > 0 ? "قیمت فروش ۲ (خودکار، قیمت ۱ + " + PRICE2_MARKUP_TEXT + "): " + money(price2ByRule(p1, 0)) : "قیمت فروش ۲ خودکار حساب می‌شود: قیمت ۱ + " + PRICE2_MARKUP_TEXT);
+        };
+        price1.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { upd.run(); }
+        });
+        upd.run();
+        return t;
+    }
+
+    private LinearLayout.LayoutParams price2AutoLp() { LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(7), 0, 0); return lp; }
+
     private String price2QualityText(JSONObject r) {
         double p1 = jsonDouble(r, "قیمت_فروش", 0), p2 = jsonDouble(r, "قیمت_فروش۲", 0);
-        if (p2 <= 0) return "";
-        if (p1 > 0 && p2 < p1) return "هشدار: قیمت فروش ۲ از قیمت فروش ۱ کمتر است؛ قبل از ثبت سفارش بررسی شود.";
-        if (p1 > 0 && p2 > p1 * 1.35d) return "هشدار: فاصله قیمت فروش ۲ با قیمت فروش ۱ غیرعادی است.";
+        double stored = jsonDouble(r, "قیمت_فروش۲_ثبت_شده", 0);
+        if (p1 <= 0 || p2 <= 0 || stored <= 0) return "";
+        if (Math.abs(stored - p2) > Math.max(1d, p2 * 0.005d)) return "قیمت ۲ ثبت‌شده در حسابداری (" + money(stored) + ") با قاعده «قیمت ۱ + " + PRICE2_MARKUP_TEXT + "» فرق دارد؛ در سفارش، قیمت ۲ طبق قاعده حساب می‌شود.";
         return "";
     }
 
@@ -10759,7 +10991,7 @@ public class MainActivity extends Activity {
     }
 
     private String visitorCardQty(JSONObject r) {
-        return cartQtyFor(safeDisplayText(r == null ? null : r.opt("کد"), ""));
+        return formatNumber(parseNumber(cartQtyFor(safeDisplayText(r == null ? null : r.opt("کد"), "")), 1));
     }
 
     private void addVisitorFastProductRow(LinearLayout parent, JSONObject r, int index, String query, String filter) {
@@ -10807,7 +11039,7 @@ public class MainActivity extends Activity {
         TextView p1 = pill("فروش۱: " + (price1Ok ? moneyOrDash(r, "قیمت_فروش") : "—"), price1Ok ? SUCCESS : MUTED, false);
         p1.setTextSize(fs(8.0f)); p1.setSingleLine(false); p1.setMaxLines(2); p1.setEllipsize(TextUtils.TruncateAt.END);
         prices.addView(p1, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView p2 = pill("فروش۲: " + (price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—"), price2Ok ? WARNING : MUTED, price2Ok);
+        TextView p2 = pill("\u200Fفروش ۲: " + (price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—"), price2Ok ? WARNING : MUTED, price2Ok);
         p2.setTextSize(fs(8.0f)); p2.setSingleLine(false); p2.setMaxLines(2); p2.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams p2p = new LinearLayout.LayoutParams(0, -2, 1f); p2p.setMargins(dp(5), 0, 0, 0); prices.addView(p2, p2p);
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(5), 0, 0); copy.addView(prices, prp);
@@ -10818,12 +11050,12 @@ public class MainActivity extends Activity {
         actions.setGravity(Gravity.CENTER);
         Button add2 = themedActionButton(price2Ok ? "+۲" : "۲—", WARNING, price2Ok);
         add2.setTextSize(fs(9.0f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .42f);
-        add2.setOnClickListener(v -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
+        add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
         Button add1 = themedActionButton("+۱", navAccent("cart"), true);
         add1.setTextSize(fs(9.0f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
-        add1.setOnClickListener(v -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
-        actions.addView(add2, new LinearLayout.LayoutParams(dp(48), dp(32)));
-        LinearLayout.LayoutParams a1p = new LinearLayout.LayoutParams(dp(48), dp(32)); a1p.setMargins(0, dp(5), 0, 0); actions.addView(add1, a1p);
+        add1.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+        actions.addView(add2, new LinearLayout.LayoutParams(dp(52), dp(44)));
+        LinearLayout.LayoutParams a1p = new LinearLayout.LayoutParams(dp(52), dp(44)); a1p.setMargins(0, dp(5), 0, 0); actions.addView(add1, a1p);
         row.addView(actions, new LinearLayout.LayoutParams(dp(54), -2));
         c.addView(row, new LinearLayout.LayoutParams(-1, -2));
         if (selected) {
@@ -10883,7 +11115,7 @@ public class MainActivity extends Activity {
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setGravity(Gravity.CENTER_VERTICAL);
         chips.addView(pill(inStock ? "موجود" : "ناموجود", inStock ? SUCCESS : DANGER, false), new LinearLayout.LayoutParams(-2, -2));
         TextView unit = pill("واحد " + unitOrDash(r), INFO, false); LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-2, -2); up.setMargins(dp(5), 0, 0, 0); chips.addView(unit, up);
-        if (price2Ok) { TextView p = pill("قیمت۲", WARNING, true); LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-2, -2); pp.setMargins(dp(5), 0, 0, 0); chips.addView(p, pp); }
+        if (price2Ok) { TextView p = pill("\u200Fقیمت ۲", WARNING, true); LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-2, -2); pp.setMargins(dp(5), 0, 0, 0); chips.addView(p, pp); }
         LinearLayout.LayoutParams chp = new LinearLayout.LayoutParams(-1, -2); chp.setMargins(0, dp(7), 0, 0); copy.addView(chips, chp);
         top.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         c.addView(top, new LinearLayout.LayoutParams(-1, -2));
@@ -10894,7 +11126,7 @@ public class MainActivity extends Activity {
         priceRow.addView(showcaseMetric("فروش ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 58));
         priceRow.addView(showcaseMetric("موجودی", stockWithUnit(r), inStock ? SUCCESS : DANGER, false), showcaseCellLp(1f, 58));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(9), 0, 0); c.addView(priceRow, prp);
-        String p2q = price2QualityText(r);
+        String p2q = "";
         if (!p2q.isEmpty()) {
             TextView warn = text(p2q, 9.2f, tc(price2Computed(r) ? INFO : WARNING), Typeface.BOLD);
             warn.setGravity(Gravity.CENTER); warn.setPadding(dp(7), dp(5), dp(7), dp(5));
@@ -10907,9 +11139,9 @@ public class MainActivity extends Activity {
             actions.setOrientation(LinearLayout.HORIZONTAL);
             Button detail = themedActionButton("جزئیات/تعداد", accent, false); detail.setTextSize(fs(8.9f)); detail.setOnClickListener(v -> showShowcaseProductDialog(r, query, filter));
             Button add2 = themedActionButton(price2Ok ? "افزودن قیمت ۲" : "قیمت ۲ ندارد", WARNING, price2Ok); add2.setTextSize(fs(8.8f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f);
-            add2.setOnClickListener(v -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
+            add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
             Button add1 = themedActionButton(selected ? "بروزرسانی ۱" : "افزودن ۱", navAccent("cart"), true); add1.setTextSize(fs(8.9f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
-            add1.setOnClickListener(v -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
+            add1.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
             actions.addView(detail, showcaseButtonLp(.92f));
             actions.addView(add2, showcaseButtonLp(1.04f));
             actions.addView(add1, showcaseButtonLp(1f));
@@ -10964,7 +11196,7 @@ public class MainActivity extends Activity {
         priceRow.addView(showcaseMetric("فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD, true), showcaseCellLp(1f, 74));
         priceRow.addView(showcaseMetric("فروش ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 74));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(8), 0, 0); pricePanel.addView(priceRow, prp);
-        TextView profit = text("سود مشتری: +۲٪  •  موجودی: " + stockWithUnit(r), 10.0f, tc(GOLD_2), Typeface.BOLD); profit.setGravity(Gravity.CENTER); profit.setPadding(dp(8), dp(7), dp(8), dp(7)); profit.setBackground(roundedStroke(alpha(GOLD, 24), 999, alpha(GOLD, 72)));
+        TextView profit = text("قیمت ۲ = قیمت ۱ + ۶٪  •  موجودی: " + stockWithUnit(r), 10.0f, tc(GOLD_2), Typeface.BOLD); profit.setGravity(Gravity.CENTER); profit.setPadding(dp(8), dp(7), dp(8), dp(7)); profit.setBackground(roundedStroke(alpha(GOLD, 24), 999, alpha(GOLD, 72)));
         LinearLayout.LayoutParams pfp = new LinearLayout.LayoutParams(-1, -2); pfp.setMargins(0, dp(8), 0, 0); pricePanel.addView(profit, pfp);
         LinearLayout.LayoutParams panelLp = new LinearLayout.LayoutParams(-1, -2); panelLp.setMargins(0, dp(11), 0, 0); c.addView(pricePanel, panelLp);
 
@@ -10977,16 +11209,54 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams dpLp = new LinearLayout.LayoutParams(dp(70), dp(48)); dpLp.setMargins(dp(8), 0, 0, 0); qtyRow.addView(detail, dpLp);
             LinearLayout.LayoutParams qrp = new LinearLayout.LayoutParams(-1, -2); qrp.setMargins(0, dp(11), 0, 0); c.addView(qtyRow, qrp);
             LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
-            Button add2 = themedActionButton(price2Ok ? "فروش ۲" : "قیمت ۲ ندارد", GOLD, price2Ok); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f); add2.setOnClickListener(v -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
-            Button add1 = themedActionButton("فروش ۱", SUCCESS, true); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f); add1.setOnClickListener(v -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
+            Button add2 = themedActionButton(price2Ok ? "فروش ۲" : "قیمت ۲ ندارد", GOLD, price2Ok); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f); add2.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+            Button add1 = themedActionButton("فروش ۱", SUCCESS, true); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f); add1.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
             actions.addView(add2, showcaseButtonLp(1f)); actions.addView(add1, showcaseButtonLp(1f));
-            if (selected) { Button del = themedActionButton("حذف", DANGER, false); del.setOnClickListener(v -> { removeCartItem(safeDisplayText(r.opt("کد"), "")); rerenderShowcaseFast(query, filter); }); actions.addView(del, showcaseButtonLp(.8f)); }
+            if (selected) { Button del = themedActionButton("حذف", DANGER, false); del.setOnClickListener(v -> removeCartItemWithUndo(safeDisplayText(r.opt("کد"), ""), () -> rerenderShowcaseFast(query, filter))); actions.addView(del, showcaseButtonLp(.8f)); }
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(9), 0, 0); c.addView(actions, ap);
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12)); parent.addView(c, lp);
     }
 
     private void addShowcaseProductCard(LinearLayout parent, JSONObject r, int index, String query, String filter) {
+        if (r == null || parent == null) return;
+        int before = parent.getChildCount();
+        addShowcaseProductCardInner(parent, r, index, query, filter);
+        markOutOfStock(parent, before, r);
+    }
+
+    private boolean isOutOfStock(JSONObject r) {
+        return r != null && r.has("موجودی") && !r.optBoolean("_local", false) && jsonDouble(r, "موجودی", 1) <= 0;
+    }
+
+    /** B11: out-of-stock products are shown muted with a «ناموجود» badge (adding asks for confirmation). */
+    private void markOutOfStock(LinearLayout parent, int before, JSONObject r) {
+        if (!isOutOfStock(r)) return;
+        for (int i = before; i < parent.getChildCount(); i++) {
+            View v = parent.getChildAt(i);
+            v.setAlpha(0.62f);
+            if (v instanceof LinearLayout && ((LinearLayout) v).getOrientation() == LinearLayout.VERTICAL) {
+                TextView badge = pill("⊘  ناموجود", DANGER, false);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+                lp.gravity = Gravity.START;
+                lp.setMargins(0, 0, 0, dp(6));
+                ((LinearLayout) v).addView(badge, 0, lp);
+            }
+        }
+    }
+
+    /** Runs {@code go} directly, or after a confirmation when the product has no stock (B11). */
+    private void confirmStockThen(JSONObject r, Runnable go) {
+        if (!isOutOfStock(r)) { go.run(); return; }
+        new MeelanoDialogBuilder()
+                .setTitle("کالا موجود نیست")
+                .setMessage("موجودی «" + safeDisplayText(r.opt("نام"), "این کالا") + "» صفر است. باز هم به سبد اضافه شود؟")
+                .setNegativeButton("انصراف", null)
+                .setPositiveButton("افزودن", (d, w) -> go.run())
+                .show();
+    }
+
+    private void addShowcaseProductCardInner(LinearLayout parent, JSONObject r, int index, String query, String filter) {
         if (r == null) return;
         if (VISITOR_EDITION) { addVisitorShowcaseProductCard(parent, r, index, query, filter); return; }
         ProductVisualProfile vp = productVisualProfile(r);
@@ -11031,7 +11301,7 @@ public class MainActivity extends Activity {
         TextView group = text("  " + safeDisplayText(r.opt("گروه"), vp.title), 10.2f, tc(accent), Typeface.BOLD); group.setSingleLine(false); group.setMaxLines(2);
         chips.addView(group, new LinearLayout.LayoutParams(0, -2, 1f));
         if (price2Ok) {
-            TextView p2Chip = text("قیمت۲ فعال", 8.8f, onColorFor(WARNING), Typeface.BOLD);
+            TextView p2Chip = text("\u200Fقیمت ۲ فعال", 8.8f, onColorFor(WARNING), Typeface.BOLD);
             p2Chip.setGravity(Gravity.CENTER);
             p2Chip.setPadding(dp(7), dp(3), dp(7), dp(3));
             p2Chip.setBackground(luxuryButtonBg(WARNING, true, 999));
@@ -11072,7 +11342,7 @@ public class MainActivity extends Activity {
             Button detail = themedActionButton("نمایش", accent, false); detail.setTextSize(fs(9.2f)); detail.setOnClickListener(v -> showShowcaseProductDialog(r, query, filter));
             LinearLayout.LayoutParams dpLp = new LinearLayout.LayoutParams(dp(92), dp(46)); dpLp.setMargins(dp(6), 0, 0, 0); qtyRow.addView(detail, dpLp);
             if (selected) {
-                Button remove = themedActionButton("حذف", DANGER, false); remove.setTextSize(fs(9.0f)); remove.setOnClickListener(v -> { removeCartItem(safeDisplayText(r.opt("کد"), "")); rerenderShowcaseFast(query, filter); });
+                Button remove = themedActionButton("حذف", DANGER, false); remove.setTextSize(fs(9.0f)); remove.setOnClickListener(v -> removeCartItemWithUndo(safeDisplayText(r.opt("کد"), ""), () -> rerenderShowcaseFast(query, filter)));
                 LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(82), dp(46)); rp.setMargins(dp(6), 0, 0, 0); qtyRow.addView(remove, rp);
             }
             LinearLayout.LayoutParams qrp = new LinearLayout.LayoutParams(-1, -2); qrp.setMargins(0, dp(11), 0, 0); c.addView(qtyRow, qrp);
@@ -11081,11 +11351,11 @@ public class MainActivity extends Activity {
             Button add = themedActionButton(selected ? "بروزرسانی با قیمت ۱" : "افزودن با قیمت ۱", navAccent("cart"), true);
             add.setTextSize(fs(9.4f));
             add.setEnabled(price1Ok); add.setAlpha(price1Ok ? 1f : 0.52f);
-            add.setOnClickListener(v -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("کالا با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
+            add.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("کالا با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
             Button add2 = themedActionButton(price2Ok ? "افزودن با قیمت ۲ ✦" : "قیمت ۲ ثبت نشده", WARNING, price2Ok);
             add2.setTextSize(fs(9.2f));
             add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : 0.52f);
-            add2.setOnClickListener(v -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("کالا با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
+            add2.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("کالا با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
             action.addView(add, showcaseButtonLp(1f));
             action.addView(add2, showcaseButtonLp(1f));
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(8), 0, 0); c.addView(action, ap);
@@ -11246,10 +11516,10 @@ public class MainActivity extends Activity {
         editProduct.setTextSize(fs(9.1f));
         LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-1, dp(45)); elp.setMargins(0, dp(6), 0, 0); box.addView(editProduct, elp);
 
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).create();
-        if (add1Ref[0] != null) add1Ref[0].setOnClickListener(v -> { addOrUpdateCartItem(r, qtyRef[0].getText().toString(), 1); showNotice("با قیمت ۱ به سبد اضافه شد.", false); dlg.dismiss(); if (query != null || filter != null) rerenderShowcaseFast(stringOr(query, ""), stringOr(filter, "all")); });
-        if (add2Ref[0] != null) add2Ref[0].setOnClickListener(v -> { addOrUpdateCartItem(r, qtyRef[0].getText().toString(), 2); showNotice("با قیمت ۲ به سبد اضافه شد.", false); dlg.dismiss(); if (query != null || filter != null) rerenderShowcaseFast(stringOr(query, ""), stringOr(filter, "all")); });
-        if (removeRef[0] != null) removeRef[0].setOnClickListener(v -> { removeCartItem(safeDisplayText(r.opt("کد"), "")); showNotice("از سبد حذف شد.", false); dlg.dismiss(); if (query != null || filter != null) rerenderShowcaseFast(stringOr(query, ""), stringOr(filter, "all")); });
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create();
+        if (add1Ref[0] != null) add1Ref[0].setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qtyRef[0].getText().toString(), 1); showNotice("با قیمت ۱ به سبد اضافه شد.", false); dlg.dismiss(); if (query != null || filter != null) rerenderShowcaseFast(stringOr(query, ""), stringOr(filter, "all")); }));
+        if (add2Ref[0] != null) add2Ref[0].setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qtyRef[0].getText().toString(), 2); showNotice("با قیمت ۲ به سبد اضافه شد.", false); dlg.dismiss(); if (query != null || filter != null) rerenderShowcaseFast(stringOr(query, ""), stringOr(filter, "all")); }));
+        if (removeRef[0] != null) removeRef[0].setOnClickListener(v -> { dlg.dismiss(); removeCartItemWithUndo(safeDisplayText(r.opt("کد"), ""), () -> { if (query != null || filter != null) rerenderShowcaseFast(stringOr(query, ""), stringOr(filter, "all")); }); });
         fixVisual.setOnClickListener(v -> { dlg.dismiss(); showProductVisualChooser(r, query, filter); });
         if (photoRef[0] != null) photoRef[0].setOnClickListener(v -> { dlg.dismiss(); pickVisitorProductImage(r); });
         if (editProductRef[0] != null) editProductRef[0].setOnClickListener(v -> { dlg.dismiss(); showVisitorEditProductDialog(r, query, filter); });
@@ -11261,7 +11531,7 @@ public class MainActivity extends Activity {
         if (product == null) return;
         String[] labels = {"تشخیص خودکار", "لبنیات/شیر", "شیرینی/شکلات", "نوشیدنی", "آبمیوه", "چای", "قهوه", "برنج", "حبوبات", "روغن", "کنسرو/قوطی", "سس", "شیشه/جار", "تنقلات", "خشکبار", "تخم‌مرغ", "پروتئینی", "شوینده", "بهداشتی", "دستمال", "کالای عمومی"};
         String[] types = {"", "milk_carton", "sweet_box", "drink_bottle", "juice_carton", "tea_box", "coffee_pack", "rice_bag", "beans_bag", "oil_bottle", "can", "sauce_bottle", "jar", "snack_pouch", "nuts_bag", "egg_tray", "meat_tray", "detergent_bottle", "care_bottle", "tissue", "generic_box"};
-        AlertDialog dlg = new AlertDialog.Builder(this)
+        AlertDialog dlg = new MeelanoDialogBuilder()
                 .setTitle("اصلاح تصویر کالا")
                 .setItems(labels, (d, which) -> {
                     if (prefs != null) {
@@ -11288,7 +11558,7 @@ public class MainActivity extends Activity {
 
     private String cartQtyFor(String code) {
         int i = cartFindIndex(code); if (i < 0) return "1";
-        JSONObject o = visitorCartItems.optJSONObject(i); return o == null ? "1" : String.valueOf(o.optDouble("qty", 1));
+        JSONObject o = visitorCartItems.optJSONObject(i); return o == null ? "1" : plainNumber(o.optDouble("qty", 1));
     }
 
     private void addOrUpdateCartItem(JSONObject product, String qtyText) { addOrUpdateCartItem(product, qtyText, 1); }
@@ -11307,8 +11577,8 @@ public class MainActivity extends Activity {
             JSONObject old = ix >= 0 ? visitorCartItems.optJSONObject(ix) : null;
             if (increment && old != null) qty = old.optDouble("qty", 0) + qty;
             double price1 = jsonDouble(product, "قیمت_فروش", 0);
-            double price2 = jsonDouble(product, "قیمت_فروش۲", 0);
-            boolean computedP2 = false;
+            double price2 = price2ByRule(price1, jsonDouble(product, "قیمت_فروش۲", 0));
+            boolean computedP2 = price1 > 0;
             int tier = priceTier == 2 && price2 > 0 ? 2 : 1;
             double price = tier == 2 ? price2 : price1;
             JSONObject item = new JSONObject();
@@ -11325,6 +11595,29 @@ public class MainActivity extends Activity {
     }
 
     private boolean cartBadgeBounce = false;
+
+    /** B10: remove a cart line and offer «بازگردانی» for a few seconds. */
+    private void removeCartItemWithUndo(String code, Runnable rerender) {
+        int ix = cartFindIndex(code);
+        final JSONObject removed = ix >= 0 ? visitorCartItems.optJSONObject(ix) : null;
+        final int removedAt = ix;
+        final String pageAtRemoval = activePage;
+        removeCartItem(code);
+        if (rerender != null) rerender.run();
+        if (removed == null) return;
+        showNotice("«" + removed.optString("name", "کالا") + "» از سبد حذف شد.", false, "بازگردانی", () -> {
+            try {
+                if (cartFindIndex(removed.optString("code", "")) >= 0) return;
+                JSONArray out = new JSONArray();
+                for (int i = 0; i < visitorCartItems.length(); i++) { if (i == removedAt) out.put(removed); out.put(visitorCartItems.opt(i)); }
+                if (removedAt >= visitorCartItems.length()) out.put(removed);
+                visitorCartItems = out;
+                refreshVisitorCartBadge();
+                autosaveCart(false);
+                if (rerender != null && pageAtRemoval != null && pageAtRemoval.equals(activePage)) rerender.run();
+            } catch (Exception ignored) { }
+        });
+    }
 
     private void removeCartItem(String code) {
         JSONArray out = new JSONArray();
@@ -11358,8 +11651,16 @@ public class MainActivity extends Activity {
 
     private double parseNumber(String text, double fallback) {
         try {
-            String n = normalizeDigits(text == null ? "" : text).replace(',', '.').replace(" ", "").trim();
+            // Accepts Persian/Arabic digits, the Persian thousands (٬) and decimal (٫) separators,
+            // grouped input such as 18,500,000 and a comma used as a decimal point (2,5).
+            String n = normalizeDigits(text == null ? "" : text)
+                    .replace('\u066C', ',').replace('\u060C', ',').replace('\u066B', '.')
+                    .replace(" ", "").replace("\u00A0", "").replace("\u200C", "").replace("\u200F", "").replace("\u200E", "")
+                    .replace("ریال", "").replace("تومان", "").trim();
             if (n.isEmpty()) return fallback;
+            if (n.matches("^-?\\d{1,3}(,\\d{3})+(\\.\\d+)?$")) n = n.replace(",", "");
+            else if (n.indexOf('.') >= 0) n = n.replace(",", "");
+            else n = n.replace(',', '.');
             return Double.parseDouble(n);
         } catch (Exception ignored) { return fallback; }
     }
@@ -11636,11 +11937,7 @@ public class MainActivity extends Activity {
         TextView icon = text(glyph == null ? "" : glyph, sizeSp, onColorFor(accent), Typeface.BOLD);
         icon.setGravity(Gravity.CENTER);
         icon.setSingleLine(true);
-        icon.setShadowLayer(dp(3), 0, dp(1), alpha(Color.BLACK, 160));
-        GradientDrawable bg = gradient(new int[]{mix(accent, Color.WHITE, isLightTheme() ? 0.32f : 0.20f), accent, mix(accent, NAVY, isLightTheme() ? 0.12f : 0.30f)}, GradientDrawable.Orientation.TL_BR, 999);
-        bg.setStroke(dp(1), alpha(mix(accent, GOLD_2, 0.45f), 185));
-        icon.setBackground(bg);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) icon.setElevation(dp(7));
+        icon.setBackground(rounded(accent, 999));
         return icon;
     }
 
@@ -11650,14 +11947,13 @@ public class MainActivity extends Activity {
         for (int i = 0; i < visitorCartItems.length(); i++) {
             JSONObject item = visitorCartItems.optJSONObject(i); if (item == null) continue;
             try {
-                boolean computed = item.optBoolean("price2Computed", false) || item.optDouble("price2Computed", 0) > 0;
-                if (!computed) continue;
                 double p1 = Math.max(0, item.optDouble("price1", item.optDouble("price", 0)));
-                item.put("price2", 0);
-                item.put("price2Computed", false);
+                double p2 = price2ByRule(p1, item.optDouble("price2", 0));
+                if (p1 <= 0 || Math.abs(item.optDouble("price2", 0) - p2) < 0.5d) continue;
+                item.put("price2", p2);
+                item.put("price2Computed", true);
                 if ("2".equals(item.optString("priceTier", "1"))) {
-                    item.put("priceTier", "1");
-                    item.put("price", p1);
+                    item.put("price", p2);
                     item.put("amount", cartItemNet(item));
                 }
                 visitorCartItems.put(i, item);
@@ -11881,7 +12177,7 @@ public class MainActivity extends Activity {
         box.addView(text("این گزینه‌ها ضروری نیستند و برای ویزیتورهای حرفه‌ای‌تر نگه داشته شده‌اند.", 10.2f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         if (canUsePermission("cart_signature")) { Button sign = secondaryButton(visitorCartSignature.isEmpty() ? "ثبت امضای مشتری" : "امضا ثبت شد ✓"); sign.setOnClickListener(v -> { syncCartFormInputs(); showSignatureDialog(); }); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(44)); lp.setMargins(0, dp(8), 0, 0); box.addView(sign, lp); }
         if (canUsePermission("cart_pdf")) { Button pdf = secondaryButton("PDF / اشتراک"); pdf.setOnClickListener(v -> { syncCartFormInputs(); generateCurrentCartPdfAndShare(false); }); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(44)); lp.setMargins(0, dp(8), 0, 0); box.addView(pdf, lp); }
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create();
         dlg.setOnShowListener(d -> styleMeelanoDialog(dlg, navAccent("cart")));
         dlg.show();
     }
@@ -11921,8 +12217,8 @@ public class MainActivity extends Activity {
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout buttons = new LinearLayout(this); buttons.setOrientation(LinearLayout.VERTICAL);
         Button edit = themedActionButton("✎ ویرایش", accent, false); edit.setTextSize(fs(7.6f)); edit.setOnClickListener(v -> showEditCartItemDialog(index));
-        Button del = themedActionButton("× حذف", DANGER, false); del.setTextSize(fs(7.6f)); del.setOnClickListener(v -> { removeCartItem(item.optString("code", "")); renderCartPage(); });
-        buttons.addView(edit, new LinearLayout.LayoutParams(dp(74), dp(32))); LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(74), dp(32)); dlp.setMargins(0, dp(4), 0, 0); buttons.addView(del, dlp); head.addView(buttons, new LinearLayout.LayoutParams(dp(78), -2));
+        Button del = themedActionButton("× حذف", DANGER, false); del.setTextSize(fs(7.6f)); del.setOnClickListener(v -> removeCartItemWithUndo(item.optString("code", ""), this::renderCartPage));
+        buttons.addView(edit, new LinearLayout.LayoutParams(dp(84), dp(44))); LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(84), dp(44)); dlp.setMargins(0, dp(4), 0, 0); buttons.addView(del, dlp); head.addView(buttons, new LinearLayout.LayoutParams(dp(78), -2));
         row.addView(head, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout metrics = new LinearLayout(this); metrics.setOrientation(LinearLayout.HORIZONTAL);
         metrics.addView(customerMiniMetric("تعداد", formatNumber(item.optDouble("qty", 0)) + " " + item.optString("unit", ""), SUCCESS), weightedMiniLp());
@@ -11941,9 +12237,9 @@ public class MainActivity extends Activity {
         Button minus = themedActionButton("−", DANGER, false); minus.setTextSize(fs(17)); minus.setOnClickListener(v -> changeCartItemQty(index, -1));
         Button plus = themedActionButton("+", SUCCESS, true); plus.setTextSize(fs(17)); plus.setOnClickListener(v -> changeCartItemQty(index, 1));
         TextView qtyLabel = text("تعداد سریع: " + formatNumber(item.optDouble("qty", 0)) + " " + item.optString("unit", ""), 10.3f, TEXT, Typeface.BOLD); qtyLabel.setGravity(Gravity.CENTER); qtyLabel.setBackground(roundedStroke(alpha(GOLD, 14), 16, alpha(GOLD, 48)));
-        quickQty.addView(minus, new LinearLayout.LayoutParams(dp(54), dp(38)));
-        LinearLayout.LayoutParams qlp = new LinearLayout.LayoutParams(0, dp(38), 1f); qlp.setMargins(dp(6), 0, dp(6), 0); quickQty.addView(qtyLabel, qlp);
-        quickQty.addView(plus, new LinearLayout.LayoutParams(dp(54), dp(38)));
+        quickQty.addView(minus, new LinearLayout.LayoutParams(dp(56), dp(48)));
+        LinearLayout.LayoutParams qlp = new LinearLayout.LayoutParams(0, dp(48), 1f); qlp.setMargins(dp(6), 0, dp(6), 0); quickQty.addView(qtyLabel, qlp);
+        quickQty.addView(plus, new LinearLayout.LayoutParams(dp(56), dp(48)));
         LinearLayout.LayoutParams qqp = new LinearLayout.LayoutParams(-1, -2); qqp.setMargins(0, dp(7), 0, 0); row.addView(quickQty, qqp);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(8), 0, 0); parent.addView(row, lp);
     }
@@ -11972,11 +12268,11 @@ public class MainActivity extends Activity {
         Button minus = themedActionButton("−", DANGER, false); minus.setTextSize(fs(15)); minus.setOnClickListener(v -> changeCartItemQty(index, -1));
         Button plus = themedActionButton("+", SUCCESS, true); plus.setTextSize(fs(15)); plus.setOnClickListener(v -> changeCartItemQty(index, 1));
         Button edit = themedActionButton("ویرایش", accent, false); edit.setTextSize(fs(8.8f)); edit.setOnClickListener(v -> showEditCartItemDialog(index));
-        Button del = themedActionButton("حذف", DANGER, false); del.setTextSize(fs(8.8f)); del.setOnClickListener(v -> { removeCartItem(item.optString("code", "")); renderCartPage(); });
-        actions.addView(minus, new LinearLayout.LayoutParams(dp(48), dp(36)));
-        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(dp(48), dp(36)); pp.setMargins(dp(5), 0, 0, 0); actions.addView(plus, pp);
-        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(0, dp(36), 1f); ep.setMargins(dp(5), 0, 0, 0); actions.addView(edit, ep);
-        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(0, dp(36), 1f); dpv.setMargins(dp(5), 0, 0, 0); actions.addView(del, dpv);
+        Button del = themedActionButton("حذف", DANGER, false); del.setTextSize(fs(8.8f)); del.setOnClickListener(v -> removeCartItemWithUndo(item.optString("code", ""), this::renderCartPage));
+        actions.addView(minus, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(dp(48), dp(48)); pp.setMargins(dp(5), 0, 0, 0); actions.addView(plus, pp);
+        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(0, dp(48), 1f); ep.setMargins(dp(5), 0, 0, 0); actions.addView(edit, ep);
+        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(0, dp(48), 1f); dpv.setMargins(dp(5), 0, 0, 0); actions.addView(del, dpv);
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(7), 0, 0); row.addView(actions, ap);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(8), 0, 0); parent.addView(row, lp);
     }
@@ -11985,17 +12281,19 @@ public class MainActivity extends Activity {
         JSONObject item = visitorCartItems.optJSONObject(index); if (item == null) return;
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10), dp(8), dp(10), dp(6));
         box.addView(text("ویرایش کالا: " + item.optString("name", "کالا"), 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        EditText qty = input("تعداد/وزن", String.valueOf(item.optDouble("qty", 1)), false); qty.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText price = input("قیمت واحد", String.valueOf(item.optDouble("price", 0)), false); price.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText discount = input("تخفیف ردیف", String.valueOf(item.optDouble("lineDiscount", 0)), false); discount.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        EditText note = input("توضیح این کالا", item.optString("note", ""), false); note.setSingleLine(false); note.setMinLines(2);
-        for (EditText e : new EditText[]{qty, price, discount}) { LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(48)); ep.setMargins(0, dp(7), 0, 0); box.addView(e, ep); }
+        EditText qty = numberInput("مثلاً ۱۲", item.optDouble("qty", 1), true);
+        EditText price = numberInput("قیمت یک واحد", item.optDouble("price", 0), true);
+        EditText discount = numberInput("بدون تخفیف", item.optDouble("lineDiscount", 0), true);
+        EditText note = input("توضیح این کالا (اختیاری)", item.optString("note", ""), false); note.setSingleLine(false); note.setMinLines(2);
+        addLabeledField(box, "تعداد / وزن" + (item.optString("unit", "").trim().isEmpty() ? "" : " (" + item.optString("unit", "").trim() + ")"), qty, 48);
+        addLabeledField(box, "قیمت واحد (ریال)", price, 48);
+        addLabeledField(box, "تخفیف این ردیف (ریال)", discount, 48);
         LinearLayout priceRow = new LinearLayout(this); priceRow.setOrientation(LinearLayout.HORIZONTAL);
-        Button p1 = secondaryButton("قیمت ۱: " + money(item.optDouble("price1", item.optDouble("price", 0)))); p1.setTextSize(fs(8.5f)); p1.setOnClickListener(v -> { price.setText(String.valueOf(item.optDouble("price1", item.optDouble("price", 0)))); try { item.put("priceTier", "1"); } catch (Exception ignored) { } });
-        Button p2 = secondaryButton("قیمت ۲: " + (item.optDouble("price2", 0) > 0 ? money(item.optDouble("price2", 0)) : "—")); p2.setTextSize(fs(8.5f)); p2.setEnabled(item.optDouble("price2", 0) > 0); p2.setAlpha(item.optDouble("price2", 0) > 0 ? 1f : .45f); p2.setOnClickListener(v -> { if (item.optDouble("price2", 0) <= 0) return; price.setText(String.valueOf(item.optDouble("price2", item.optDouble("price", 0)))); try { item.put("priceTier", "2"); } catch (Exception ignored) { } });
+        Button p1 = secondaryButton("قیمت ۱: " + money(item.optDouble("price1", item.optDouble("price", 0)))); p1.setTextSize(fs(8.5f)); p1.setOnClickListener(v -> { price.setText(plainNumber(item.optDouble("price1", item.optDouble("price", 0)))); try { item.put("priceTier", "1"); } catch (Exception ignored) { } });
+        Button p2 = secondaryButton("قیمت ۲: " + (item.optDouble("price2", 0) > 0 ? money(item.optDouble("price2", 0)) : "—")); p2.setTextSize(fs(8.5f)); p2.setEnabled(item.optDouble("price2", 0) > 0); p2.setAlpha(item.optDouble("price2", 0) > 0 ? 1f : .45f); p2.setOnClickListener(v -> { if (item.optDouble("price2", 0) <= 0) return; price.setText(plainNumber(item.optDouble("price2", item.optDouble("price", 0)))); try { item.put("priceTier", "2"); } catch (Exception ignored) { } });
         priceRow.addView(p1, weightedButtonLp()); priceRow.addView(p2, weightedButtonLp()); LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(7), 0, 0); box.addView(priceRow, prp);
-        LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-1, dp(76)); np.setMargins(0, dp(7), 0, 0); box.addView(note, np);
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
+        addLabeledField(box, "توضیح", note, 76);
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
         dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, navAccent("cart")); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> { try { item.put("qty", Math.max(0.001, parseNumber(qty.getText().toString(), item.optDouble("qty", 1)))); item.put("price", Math.max(0, parseNumber(price.getText().toString(), item.optDouble("price", 0)))); item.put("lineDiscount", Math.max(0, parseNumber(discount.getText().toString(), 0))); item.put("note", note.getText().toString().trim()); item.put("amount", cartItemNet(item)); visitorCartItems.put(index, item); } catch (Exception ignored) { } dlg.dismiss(); renderCartPage(); }); });
         dlg.show();
     }
@@ -12027,14 +12325,14 @@ public class MainActivity extends Activity {
         HorizontalScrollView hs = new HorizontalScrollView(this); styleHorizontalScroll(hs); LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
         for (String opt : new String[]{"نقدی", "کارت‌خوان", "حواله", "چکی", "اعتباری"}) {
             Button b = opt.equals(visitorCartSettlement) ? primaryButton(opt) : secondaryButton(opt); b.setTextSize(fs(9.1f)); b.setOnClickListener(v -> { syncCartFormInputs(); visitorCartSettlement = opt; renderCartPage(); });
-            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(92), dp(39)); bp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(b, bp);
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(92), dp(44)); bp.setMargins(dp(3), 0, dp(3), dp(8)); row.addView(b, bp);
         }
         hs.addView(row, new FrameLayout.LayoutParams(-2, -2)); c.addView(hs, new LinearLayout.LayoutParams(-1, -2));
         cartDeliveryInput = input("تاریخ تحویل", visitorCartDeliveryDate, false);
         cartAddressInput = input("آدرس تحویل", stringOr(visitorCartAddress, visitorCartCustomer == null ? "" : visitorCartCustomer.optString("address", "")), false);
         cartPaymentRefInput = input("شماره پیگیری/چک/حواله", visitorCartPaymentRef, false);
-        cartDiscountInput = input("تخفیف کلی", String.valueOf(visitorCartGlobalDiscount), false); cartDiscountInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        cartTaxInput = input("درصد مالیات/ارزش افزوده", String.valueOf(visitorCartTaxPercent), false); cartTaxInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        cartDiscountInput = numberInput("تخفیف کلی (ریال)", visitorCartGlobalDiscount, true);
+        cartTaxInput = numberInput("درصد مالیات / ارزش افزوده", visitorCartTaxPercent, true);
         for (EditText e : new EditText[]{cartDeliveryInput, cartAddressInput, cartPaymentRefInput, cartDiscountInput, cartTaxInput}) { LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(48)); ep.setMargins(0, dp(7), 0, 0); c.addView(e, ep); }
         LinearLayout summary = new LinearLayout(this); summary.setOrientation(LinearLayout.HORIZONTAL);
         summary.addView(customerMiniMetric("خالص", money(cartNetBeforeTax()), SUCCESS), weightedMiniLp());
@@ -12079,7 +12377,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(12), dp(10), dp(12), dp(6));
         box.addView(text("حذف کامل پیش‌فاکتور", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         box.addView(text("همه اقلام، مشتری، یادداشت، امضا و پیش‌نویس محلی همین سبد حذف می‌شود. این کار روی پیش‌فاکتورهای ثبت‌شده قبلی اثر ندارد.", 10.8f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("انصراف", null).setPositiveButton("حذف کامل", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("انصراف", null).setPositiveButton("حذف کامل", null).create();
         dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, DANGER); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) { ok.setTextColor(tc(DANGER)); ok.setOnClickListener(v -> { String draftId = visitorCartDraftId == null ? "" : visitorCartDraftId; if (!draftId.trim().isEmpty()) removeLocalDraft(draftId); if (prefs != null) prefs.edit().remove(KEY_CART_DRAFT).apply(); resetCartState(); showNotice("پیش‌فاکتور فعلی کامل حذف شد.", false); dlg.dismiss(); renderCartPage(); }); } });
         dlg.show();
     }
@@ -12102,7 +12400,7 @@ public class MainActivity extends Activity {
         SignaturePadView pad = new SignaturePadView(this);
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, dp(220)); pp.setMargins(0, dp(8), 0, dp(8)); box.addView(pad, pp);
         Button clear = secondaryButton("پاک کردن امضا"); clear.setOnClickListener(v -> pad.clear()); box.addView(clear, new LinearLayout.LayoutParams(-1, dp(42)));
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).setPositiveButton("ثبت امضا", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setPositiveButton("ثبت امضا", null).create();
         dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, navAccent("cart")); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> { visitorCartSignature = pad.exportPngBase64(); showNotice("امضا ثبت شد.", false); dlg.dismiss(); renderCartPage(); }); });
         dlg.show();
     }
@@ -12185,7 +12483,7 @@ public class MainActivity extends Activity {
         head.addView(cart3dIcon("♙", accent, 18f), new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         copy.addView(text("انتخاب مشتری سبد", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("۵ مشتری اول نمایش داده می‌شود؛ برای مشتری دیگر نام، کد یا موبایل را جستجو کنید.", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("تا ۳۰ مشتری نمایش داده می‌شود؛ برای مشتری دیگر نام، کد یا موبایل را جستجو کنید.", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         box.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
@@ -12203,7 +12501,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams sbp = new LinearLayout.LayoutParams(-1, -2); sbp.setMargins(0, dp(7), 0, 0); box.addView(searchActions, sbp);
 
         final JSONArray pickerRows = rows == null ? new JSONArray() : rows;
-        TextView fastHint = text("نمای سریع مشتریان: فقط ۵ ردیف سبک نمایش داده می‌شود؛ برای دسترسی به مشتری دیگر جستجو کنید.", 9.4f, MUTED, Typeface.BOLD);
+        TextView fastHint = text("✓  حساب بدون مانده      !  دارای مانده بدهی یا مسدود", 9.8f, TEXT, Typeface.BOLD);
         fastHint.setPadding(dp(8), dp(7), dp(8), dp(7));
         fastHint.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 14 : 22), 16, alpha(accent, 58)));
         LinearLayout.LayoutParams fhp = new LinearLayout.LayoutParams(-1, -2); fhp.setMargins(0, dp(8), 0, 0); box.addView(fastHint, fhp);
@@ -12212,30 +12510,35 @@ public class MainActivity extends Activity {
         LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);
         JSONArray displayRows = pickerRows;
         if (displayRows.length() == 0) addEmptyTo(list, "مشتری مطابق این جستجو پیدا نشد.");
-        int maxRows = Math.min(displayRows.length(), 5);
+        int maxRows = Math.min(displayRows.length(), 30);
+        String currentCode = visitorCartCustomer == null ? "" : visitorCartCustomer.optString("code", "");
         for (int i = 0; i < maxRows; i++) {
             JSONObject r = displayRows.optJSONObject(i); if (r == null) continue;
             boolean risky = r.optDouble("balance", 0) > 0 || r.optBoolean("blocked", false);
+            boolean isCurrent = !currentCode.isEmpty() && currentCode.equals(r.optString("code", ""));
             int rowAccent = risky ? WARNING : SUCCESS;
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(dp(9), dp(8), dp(9), dp(8));
             card.setClickable(true);
             card.setFocusable(true);
-            card.setBackground(roundedStroke(alpha(rowAccent, isLightTheme() ? 18 : 28), 20, alpha(rowAccent, 76)));
+            GradientDrawable cardBg = roundedStroke(alpha(isCurrent ? GOLD : rowAccent, isLightTheme() ? 18 : 28), 18, alpha(isCurrent ? GOLD : rowAccent, isCurrent ? 220 : 76));
+            if (isCurrent) cardBg.setStroke(dp(2), GOLD);
+            card.setBackground(cardBg);
             applyTouchFeedback(card);
             LinearLayout top = new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL); top.setGravity(Gravity.CENTER_VERTICAL);
             top.addView(cart3dIcon(risky ? "!" : "✓", rowAccent, 13f), new LinearLayout.LayoutParams(dp(38), dp(38)));
             LinearLayout names = new LinearLayout(this); names.setOrientation(LinearLayout.VERTICAL); names.setPadding(dp(8), 0, dp(8), 0);
             TextView name = text(r.optString("name", "مشتری"), 12.6f, TEXT, Typeface.BOLD); name.setSingleLine(true); name.setEllipsize(TextUtils.TruncateAt.END); names.addView(name, new LinearLayout.LayoutParams(-1, -2));
-            TextView meta = text("کد " + r.optString("code", "—") + (r.optString("phone", "").trim().isEmpty() ? "" : " • " + r.optString("phone", "")), 9.4f, MUTED, Typeface.BOLD); meta.setSingleLine(true); meta.setEllipsize(TextUtils.TruncateAt.END); names.addView(meta, new LinearLayout.LayoutParams(-1, -2));
+            String riskText = r.optBoolean("blocked", false) ? " • مسدود" : (r.optDouble("balance", 0) > 0 ? " • مانده " + money(r.optDouble("balance", 0)) : "");
+            TextView meta = text((isCurrent ? "مشتری فعلی سبد • " : "") + "کد " + r.optString("code", "—") + (r.optString("phone", "").trim().isEmpty() ? "" : " • " + r.optString("phone", "")) + riskText, 9.4f, isCurrent ? tc(GOLD) : MUTED, Typeface.BOLD); meta.setSingleLine(true); meta.setEllipsize(TextUtils.TruncateAt.END); names.addView(meta, new LinearLayout.LayoutParams(-1, -2));
             top.addView(names, new LinearLayout.LayoutParams(0, -2, 1f));
-            Button choose = themedActionButton("انتخاب", rowAccent, !risky);
+            Button choose = themedActionButton(isCurrent ? "✓ فعلی" : "انتخاب", GOLD, !isCurrent);
             choose.setTextSize(fs(8.4f));
             View.OnClickListener select = v -> { visitorCartCustomer = r; if (visitorCartAddress.trim().isEmpty()) visitorCartAddress = r.optString("address", ""); if (dlg[0] != null) dlg[0].dismiss(); if ("visit".equals(activePage)) showApp("visit"); else renderCartPage(); };
             choose.setOnClickListener(select);
             card.setOnClickListener(select);
-            top.addView(choose, new LinearLayout.LayoutParams(dp(76), dp(38)));
+            top.addView(choose, new LinearLayout.LayoutParams(dp(80), dp(44)));
             card.addView(top, new LinearLayout.LayoutParams(-1, -2));
             if (!r.optString("address", "").trim().isEmpty()) {
                 TextView address = text("نشانی: " + r.optString("address", ""), 9.2f, MUTED, Typeface.NORMAL);
@@ -12247,7 +12550,7 @@ public class MainActivity extends Activity {
         if (displayRows.length() > maxRows) addEmptyTo(list, "برای نمایش مشتریان بیشتر، نام/کد/موبایل را جستجو کنید.");
         scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(360)); lp.setMargins(0, dp(8), 0, 0); box.addView(scroll, lp);
-        dlg[0] = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).create();
+        dlg[0] = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create();
         styleMeelanoDialog(dlg[0], accent);
         dlg[0].show();
     }
@@ -12425,7 +12728,7 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(46)); bp.setMargins(0, dp(6), 0, 0); list.addView(b, bp);
         }
         sc.addView(list, new ScrollView.LayoutParams(-1, -2)); box.addView(sc, new LinearLayout.LayoutParams(-1, dp(360)));
-        dlg[0] = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).create(); dlg[0].setOnShowListener(d -> styleMeelanoDialog(dlg[0], navAccent("cart"))); dlg[0].show();
+        dlg[0] = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create(); dlg[0].setOnShowListener(d -> styleMeelanoDialog(dlg[0], navAccent("cart"))); dlg[0].show();
     }
 
     private void restoreCartSnapshot(JSONObject d) {
@@ -12520,8 +12823,9 @@ public class MainActivity extends Activity {
 
         final JSONObject finalSnap = snap;
         final JSONObject finalCheck = check;
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(scroll).setNegativeButton("بازگشت", null).setPositiveButton(offline ? "ذخیره در صف" : "تایید و ارسال", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(scroll).setNegativeButton("بازگشت", null).setPositiveButton(offline ? "ذخیره در صف" : "تایید و ارسال", null).create();
         dlg.setOnShowListener(d -> {
+            dialogChrome(dlg);
             try { if (dlg.getWindow() != null) dlg.getWindow().setBackgroundDrawable(premiumPanel(accent, 30)); } catch (Exception ignored) { }
             Button neg = dlg.getButton(AlertDialog.BUTTON_NEGATIVE);
             if (neg != null) { neg.setTextColor(MUTED); neg.setAllCaps(false); applyTouchFeedback(neg); }
@@ -13368,7 +13672,7 @@ public class MainActivity extends Activity {
         box.addView(text("پیش‌فاکتور #"+formatNumber(d.optLong("id")),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2));
         box.addView(text("مشتری: "+d.optString("customerName","")+"\nوضعیت: "+prefactorStatusFa(d.optString("status",""))+"\nتبدیل به فاکتور: "+prefactorInvoiceReadinessText(d)+"\nمبلغ: "+money(d.optDouble("grandTotal",0))+"\nتوضیحات: "+d.optString("notes","")+(!d.optString("systemConvertNote","").isEmpty()?"\nراهنمای سیستم: "+d.optString("systemConvertNote",""):""),11,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2));
         JSONArray items=d.optJSONArray("items"); for(int i=0;items!=null&&i<items.length()&&i<12;i++){ JSONObject it=items.optJSONObject(i); if(it!=null) box.addView(text("• "+it.optString("name","")+" × "+formatNumber(it.optDouble("qty",0))+" = "+money(it.optDouble("amount",0)),10.2f,TEXT,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2)); }
-        AlertDialog dlg=new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن",null).setPositiveButton("ساخت PDF",null).create(); dlg.setOnShowListener(x->{ styleMeelanoDialog(dlg,navAccent("cart")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null) ok.setOnClickListener(v->{ generatePrefactorPdf(d,"Meelano-Prefactor-"+d.optLong("id")+".pdf"); sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(d), null); }); }); dlg.show();
+        AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",null).setPositiveButton("ساخت PDF",null).create(); dlg.setOnShowListener(x->{ styleMeelanoDialog(dlg,navAccent("cart")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null) ok.setOnClickListener(v->{ generatePrefactorPdf(d,"Meelano-Prefactor-"+d.optLong("id")+".pdf"); sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(d), null); }); }); dlg.show();
     }
 
     private void generateCurrentCartPdfAndShare(boolean shareOnly){ JSONObject snap=currentCartSnapshot(finalCartStatus()); generatePrefactorPdf(snap,"Meelano-Prefactor-Draft-v3.42.pdf"); sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(snap), null); }
@@ -13393,7 +13697,7 @@ public class MainActivity extends Activity {
     }
 
     private void showVisitResultDialog(JSONObject customer){
-        LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(12),dp(10),dp(12),dp(6)); box.addView(text("نتیجه بازدید: "+customer.optString("name","مشتری"),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); EditText result=input("نتیجه: خرید کرد/نکرد، مغازه بسته بود، نیاز به پیگیری…","نیازمند پیگیری",false); EditText note=input("توضیحات بازدید","",false); note.setSingleLine(false); note.setMinLines(2); box.addView(result,new LinearLayout.LayoutParams(-1,dp(48))); box.addView(note,new LinearLayout.LayoutParams(-1,dp(82))); AlertDialog dlg=new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن",null).setPositiveButton("ثبت",null).create(); dlg.setOnShowListener(d->{ styleMeelanoDialog(dlg,navAccent("visitor_dashboard")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null)ok.setOnClickListener(v->{ dlg.dismiss(); saveVisitResult(customer,result.getText().toString(),note.getText().toString()); }); }); dlg.show();
+        LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(12),dp(10),dp(12),dp(6)); box.addView(text("نتیجه بازدید: "+customer.optString("name","مشتری"),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); EditText result=input("نتیجه: خرید کرد/نکرد، مغازه بسته بود، نیاز به پیگیری…","نیازمند پیگیری",false); EditText note=input("توضیحات بازدید","",false); note.setSingleLine(false); note.setMinLines(2); box.addView(result,new LinearLayout.LayoutParams(-1,dp(48))); box.addView(note,new LinearLayout.LayoutParams(-1,dp(82))); AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",null).setPositiveButton("ثبت",null).create(); dlg.setOnShowListener(d->{ styleMeelanoDialog(dlg,navAccent("visitor_dashboard")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null)ok.setOnClickListener(v->{ dlg.dismiss(); saveVisitResult(customer,result.getText().toString(),note.getText().toString()); }); }); dlg.show();
     }
 
     private JSONArray localVisitResults() { try { String raw = prefs == null ? "[]" : prefs.getString(KEY_VISIT_RESULTS_LOCAL, "[]"); return new JSONArray(raw == null || raw.trim().isEmpty() ? "[]" : raw); } catch (Exception ignored) { return new JSONArray(); } }
@@ -13414,7 +13718,7 @@ public class MainActivity extends Activity {
 
     private String queryEndOfDayReportSql() throws Exception { try(Connection c=openConnection()){ ensurePrefactorTables(c); List<Object> params=new ArrayList<>(); String where=prefactorScopeWhere("p",params); String and=where.isEmpty()?" WHERE ":where+" AND "; String sql="SELECT COUNT_BIG(1), ISNULL(SUM(ISNULL(grand_total,total_amount)),0), SUM(CASE WHEN status=N'draft' THEN 1 ELSE 0 END), SUM(CASE WHEN status=N'pending_approval' THEN 1 ELSE 0 END) FROM dbo.meelano_prefactors p"+and+" CONVERT(date,p.created_at)=CONVERT(date,SYSDATETIME())"; long cnt=0,draft=0,pending=0; double total=0; try(PreparedStatement ps=c.prepareStatement(sql)){ setParams(ps,params); try(ResultSet r=ps.executeQuery()){ if(r.next()){cnt=r.getLong(1); total=r.getDouble(2); draft=r.getLong(3); pending=r.getLong(4);} } } return "گزارش پایان روز ویزیتور\nپیش‌فاکتور امروز: "+formatNumber(cnt)+"\nجمع مبلغ: "+money(total)+"\nپیش‌نویس: "+formatNumber(draft)+"\nدر انتظار تایید: "+formatNumber(pending)+"\nصف آفلاین گوشی: "+formatNumber(offlineQueue().length()); } }
 
-    private void showEndOfDayReportText(String body){ AlertDialog dlg=new AlertDialog.Builder(this).setTitle("جمع‌بندی پایان روز").setMessage(body).setNegativeButton("بستن",null).setPositiveButton("اشتراک/ثبت",(d,w)->{ sharePlainText("گزارش پایان روز MEELANO",body,null); saveEndOfDayReport(body); }).create(); dlg.show(); }
+    private void showEndOfDayReportText(String body){ AlertDialog dlg=new MeelanoDialogBuilder().setTitle("جمع‌بندی پایان روز").setMessage(body).setNegativeButton("بستن",null).setPositiveButton("اشتراک/ثبت",(d,w)->{ sharePlainText("گزارش پایان روز MEELANO",body,null); saveEndOfDayReport(body); }).create(); dlg.show(); }
 
     private void saveEndOfDayReport(String body){ runDb(() -> { try(Connection c=openConnection()){ ensurePrefactorTables(c); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_day_reports(visitor_username,visitor_id,report_text,created_at) VALUES(?,?,?,SYSDATETIME())")){ ps.setString(1,currentAccountName()); ps.setString(2,currentVisitorScopeId()==null?"":String.valueOf(currentVisitorScopeId())); ps.setString(3,body); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("گزارش پایان روز ثبت شد.", false); } @Override public void fail(Exception e){ showNotice("ثبت گزارش آنلاین انجام نشد.", true); }}); }
 
@@ -13911,10 +14215,12 @@ public class MainActivity extends Activity {
             String invPrice2RawExpr = sqlNumberExpr("i", price2, "decimal(19,2)");
             String priceExpr = "COALESCE(NULLIF(prx.price1,0)," + invPriceExpr + ",0)";
             String price2RawExpr = "COALESCE(NULLIF(prx.price2,0)," + invPrice2RawExpr + ",0)";
-            String price2FinalExpr = "ISNULL(" + price2RawExpr + ",0)";
+            // Business rule: price 2 = price 1 + 6% (rounded to whole rials). The raw stored value is kept for comparison.
+            String price2FinalExpr = "(CASE WHEN ISNULL(" + priceExpr + ",0)>0 THEN ROUND(CAST(ISNULL(" + priceExpr + ",0) AS decimal(19,2))*1.06,0) ELSE ISNULL(" + price2RawExpr + ",0) END)";
             select.add(priceExpr + " AS قیمت_فروش");
             select.add(price2FinalExpr + " AS قیمت_فروش۲");
-            select.add("CAST(0 AS int) AS قیمت_فروش۲_محاسباتی");
+            select.add("ISNULL(" + price2RawExpr + ",0) AS قیمت_فروش۲_ثبت_شده");
+            select.add("CAST(1 AS int) AS قیمت_فروش۲_محاسباتی");
             select.add(sqlNumberExpr("i", buyPrice, "decimal(19,2)") + " AS بهای_خرید");
             String movementStockExpr = "(ISNULL(ba.buy_qty,0)-ISNULL(sa.sale_qty,0))";
             String invStockExpr = stock == null ? "CAST(NULL AS decimal(19,3))" : sqlNumberExpr("i", stock, "decimal(19,3)");
@@ -14173,14 +14479,14 @@ public class MainActivity extends Activity {
     private void applyProductImage(ImageView img, JSONObject r, boolean decodeRealImage) {
         if (img == null) return;
         Bitmap local = visitorProductImageOverrideBitmap(r);
-        if (local != null) { img.setImageBitmap(local); return; }
+        if (local != null) { img.clearColorFilter(); img.setImageBitmap(local); return; }
         Bitmap smart = smartProductBitmap(r);
-        if (smart != null) img.setImageBitmap(smart); else img.setImageResource(ir.meelano.android.R.drawable.icon_products);
+        if (smart != null) { img.clearColorFilter(); img.setImageBitmap(smart); } else { img.setImageResource(R.drawable.mi_inventory_2); img.setColorFilter(alpha(MUTED, 200)); }
         if (!decodeRealImage || !hasProductImage(r)) return;
         String raw = r.optString("تصویر", "").trim();
         String cacheKey = "db_image|" + r.optString("کد", "") + "|" + raw.length() + "|" + raw.hashCode();
         Bitmap cachedImage = productBitmapCache.get(cacheKey);
-        if (cachedImage != null && !cachedImage.isRecycled()) { img.setImageBitmap(cachedImage); return; }
+        if (cachedImage != null && !cachedImage.isRecycled()) { img.clearColorFilter(); img.setImageBitmap(cachedImage); return; }
         int comma = raw.indexOf(',');
         if (raw.startsWith("data:image") && comma > 0) raw = raw.substring(comma + 1);
         try {
@@ -14190,7 +14496,7 @@ public class MainActivity extends Activity {
             else bytes = Base64.decode(clean, Base64.DEFAULT);
             // Product cards show the image at <= ~140dp; decode small instead of full resolution.
             Bitmap bmp = decodeSampled(bytes, dp(160));
-            if (bmp != null) { productBitmapCache.put(cacheKey, bmp); img.setImageBitmap(bmp); }
+            if (bmp != null) { productBitmapCache.put(cacheKey, bmp); img.clearColorFilter(); img.setImageBitmap(bmp); }
         } catch (Exception | OutOfMemoryError ignored) { }
     }
 
@@ -15476,11 +15782,7 @@ public class MainActivity extends Activity {
         TextView icon = text(glyph, glyph != null && glyph.length() > 2 ? 12.8f : 19.5f, onColorFor(accent), Typeface.BOLD);
         icon.setGravity(Gravity.CENTER);
         icon.setSingleLine(true);
-        icon.setShadowLayer(dp(4), 0, dp(2), alpha(Color.BLACK, isLightTheme() ? 105 : 175));
-        GradientDrawable bg = gradient(new int[]{mix(accent, Color.WHITE, isLightTheme() ? 0.38f : 0.22f), accent, mix(accent, GOLD_2, 0.20f), mix(accent, NAVY, isLightTheme() ? 0.10f : 0.34f)}, GradientDrawable.Orientation.TL_BR, 18);
-        bg.setStroke(dp(1), alpha(mix(accent, Color.WHITE, 0.58f), 132));
-        icon.setBackground(bg);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) icon.setElevation(dp(5));
+        icon.setBackground(rounded(accent, 14));
         applyTouchFeedback(icon);
         return icon;
     }
@@ -16064,7 +16366,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) name.setTextDirection(View.TEXT_DIRECTION_RTL);
         box.addView(name, new LinearLayout.LayoutParams(-1, dp(54)));
 
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog dialog = new MeelanoDialogBuilder()
                 .setView(box)
                 .setPositiveButton("ثبت و ادامه", (d, w) -> {
                     String first = extractFirstName(name.getText().toString());
@@ -16074,6 +16376,7 @@ public class MainActivity extends Activity {
                 })
                 .create();
         dialog.setOnShowListener(d -> {
+            dialogChrome(dialog);
             name.requestFocus();
             if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 245), 28, alpha(GOLD, 90)));
             Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
@@ -17002,7 +17305,7 @@ public class MainActivity extends Activity {
         ai.addView(more, new LinearLayout.LayoutParams(-1, -2));
 
         Button clear = secondaryButton("پاک کردن همه کلیدهای AI");
-        clear.setOnClickListener(v -> new AlertDialog.Builder(this)
+        clear.setOnClickListener(v -> new MeelanoDialogBuilder()
                 .setTitle("پاک کردن کلیدها")
                 .setMessage("کلیدهای OpenAI، Gemini، Groq و GapGPT از همین دستگاه پاک شوند؟")
                 .setNegativeButton("خیر", null)
@@ -17076,7 +17379,7 @@ public class MainActivity extends Activity {
         String active = activeAiProvider();
         int checked = 0;
         for (int i = 0; i < ids.length; i++) if (ids[i].equals(active)) checked = i;
-        new AlertDialog.Builder(this)
+        new MeelanoDialogBuilder()
                 .setTitle("مدل پیش‌فرض دستیار")
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
                     prefs.edit().putString(KEY_AI_PROVIDER, ids[which]).apply();
@@ -17306,7 +17609,7 @@ public class MainActivity extends Activity {
         addHero("صفحه سلامت اتصال", "وضعیت اتصال، زمان پاسخ، آخرین موفقیت/خطا و تست اتصال بدون نمایش جزئیات حساس.");
         LinearLayout c = card();
         c.setBackground(gradient(new int[]{alpha(INFO, 26), alpha(SUCCESS, 18), alpha(SURFACE, 248)}, GradientDrawable.Orientation.RIGHT_LEFT, 26));
-        c.addView(text("Meelano Connection Health", 17, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("سلامت اتصال میلانو", 17, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("نمایشگر اتصال از بالای برنامه حذف شده است؛ وضعیت اتصال فقط هنگام عملیات‌ها و خطاها نمایش داده می‌شود.", 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("آخرین اتصال موفق: " + prefs.getString(KEY_LAST_CONNECTION_OK, "ثبت نشده"), 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("آخرین خطا: " + prefs.getString(KEY_LAST_CONNECTION_ERROR, "ندارد"), 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
@@ -17345,8 +17648,8 @@ public class MainActivity extends Activity {
             }
             return out.toString();
         }, new DbCallback() {
-            @Override public void ok(String body) { new AlertDialog.Builder(MainActivity.this).setTitle("عیب‌یابی اتصال").setMessage(body).setPositiveButton("باشه", null).show(); if ("health".equals(activePage)) renderConnectionHealthPage(); }
-            @Override public void fail(Exception e) { new AlertDialog.Builder(MainActivity.this).setTitle("عیب‌یابی اتصال").setMessage("اتصال کامل نشد:\n" + readableError(e) + "\n\nجزئیات حساس اتصال نمایش داده نمی‌شود.").setPositiveButton("باشه", null).show(); if ("health".equals(activePage)) renderConnectionHealthPage(); }
+            @Override public void ok(String body) { new MeelanoDialogBuilder().setTitle("عیب‌یابی اتصال").setMessage(body).setPositiveButton("باشه", null).show(); if ("health".equals(activePage)) renderConnectionHealthPage(); }
+            @Override public void fail(Exception e) { new MeelanoDialogBuilder().setTitle("عیب‌یابی اتصال").setMessage("اتصال کامل نشد:\n" + readableError(e) + "\n\nجزئیات حساس اتصال نمایش داده نمی‌شود.").setPositiveButton("باشه", null).show(); if ("health".equals(activePage)) renderConnectionHealthPage(); }
         });
     }
 
@@ -17570,7 +17873,7 @@ public class MainActivity extends Activity {
             Button edit = secondaryButton("تنظیم نقش"); edit.setTextSize(fs(9.5f));
             final JSONObject rr = r;
             edit.setOnClickListener(v -> showPermissionDialog(true, rr.optString("role"), rr.optString("label"), rr.optString("role"), rr.optString("permissions", defaultPermissionString(rr.optString("role"))), true));
-            row.addView(edit, new LinearLayout.LayoutParams(dp(104), dp(38)));
+            row.addView(edit, new LinearLayout.LayoutParams(dp(104), dp(44)));
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(8), 0, 0); c.addView(row, rp);
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12)); content.addView(c, lp);
@@ -17629,7 +17932,7 @@ public class MainActivity extends Activity {
             b.setOnClickListener(v -> { if (dlg[0] != null) dlg[0].dismiss(); saveUserRole(user.optString("username"), user.optString("display"), user.optString("source"), user.optString("sourceId"), rk); });
             LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(42)); bp.setMargins(0, dp(7), 0, 0); box.addView(b, bp);
         }
-        dlg[0] = new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن", null).create();
+        dlg[0] = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create();
         dlg[0].setOnShowListener(d -> styleMeelanoDialog(dlg[0], navAccent("command")));
         dlg[0].show();
     }
@@ -17664,8 +17967,9 @@ public class MainActivity extends Activity {
         none.setOnClickListener(v -> { selected.clear(); for (CheckBox cb : checks) cb.setChecked(false); });
         scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
         outer.addView(scroll, new LinearLayout.LayoutParams(-1, dp(390)));
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(outer).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(outer).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
         dlg.setOnShowListener(d -> {
+            dialogChrome(dlg);
             styleMeelanoDialog(dlg, navAccent("command"));
             Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
             if (ok != null) ok.setOnClickListener(v -> { String csv = permissionCsv(selected); dlg.dismiss(); if (roleTarget) saveRolePermissions(roleKey, title, csv); else saveUserPermissions(targetKey, title, roleKey, csv); });
