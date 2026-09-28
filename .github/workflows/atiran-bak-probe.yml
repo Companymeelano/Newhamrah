@@ -36,7 +36,13 @@ jobs:
       - name: Restore Atiran2
         run: |
           pip install --quiet python-tds
-          python3 .github/scripts/atiran_e2e.py restore "$RUNNER_TEMP/restore.json"
+          for i in 1 2 3; do
+            if python3 .github/scripts/atiran_e2e.py restore "$RUNNER_TEMP/restore.json" > "$RUNNER_TEMP/r.log" 2>&1; then echo "::notice::restore ok (try $i)"; break; fi
+            grep -v -i "password" "$RUNNER_TEMP/r.log" | tail -4 | cut -c1-300 | sed 's/^/::notice::restore try '"$i"': /'
+            docker logs mssql 2>&1 | tail -3 | cut -c1-200 | sed 's/^/::notice::mssql: /'
+            sleep 20
+          done
+          test -s "$RUNNER_TEMP/restore.json"
       - name: Probe (read-only)
         run: python3 .github/scripts/atiran_bak_probe.py "$RUNNER_TEMP/bak-probe.json"
       - name: Encrypt and commit
