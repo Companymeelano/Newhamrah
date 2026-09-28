@@ -1,0 +1,53 @@
+name: Atiran read-only probe
+
+# Runs only when a commit message contains [atiran-probe]. Reads the Atiran database structure
+# (SELECT only) and commits the result ENCRYPTED with tools/atiran-probe/probe-public-key.pem,
+# because this repository is public. Nothing but counts is written to the log.
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    if: contains(github.event.head_commit.message, '[atiran-probe]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Network check (no data)
+        run: |
+          python3 - <<'PY'
+          import re, socket
+          s = open("MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java", encoding="utf-8").read()
+          m = re.search(r"int\[\] S_HOST = \{([^}]*)\}", s)
+          h = "".join(chr(int(x) ^ 73) for x in m.group(1).replace("\n", "").split(",") if x.strip())
+          try:
+              socket.create_connection((h, 1433), timeout=15).close(); print("tcp 1433 reachable")
+          except Exception as e:
+              print("tcp 1433 NOT reachable:", type(e).__name__)
+          PY
+      - name: Read-only probe
+        run: |
+          pip install --quiet python-tds
+          python3 .github/scripts/atiran_probe.py "$RUNNER_TEMP/probe.json" 2>&1 | grep -v -i -E "password|user=|server=" || true
+          test -s "$RUNNER_TEMP/probe.json" || echo '{"errors":["probe produced no output"]}' > "$RUNNER_TEMP/probe.json"
+      - name: Encrypt and commit
+        run: |
+          set -e
+          mkdir -p tools/atiran-probe
+          gzip -9 -c "$RUNNER_TEMP/probe.json" > "$RUNNER_TEMP/probe.json.gz"
+          openssl rand -out "$RUNNER_TEMP/k.bin" 32
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in "$RUNNER_TEMP/probe.json.gz" -out tools/atiran-probe/probe.json.gz.enc -pass file:"$RUNNER_TEMP/k.bin"
+          openssl pkeyutl -encrypt -pubin -inkey tools/atiran-probe/probe-public-key.pem -pkeyopt rsa_padding_mode:oaep -in "$RUNNER_TEMP/k.bin" -out tools/atiran-probe/probe.key.enc
+          rm -f "$RUNNER_TEMP/k.bin" "$RUNNER_TEMP/probe.json" "$RUNNER_TEMP/probe.json.gz"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add tools/atiran-probe/probe.json.gz.enc tools/atiran-probe/probe.key.enc
+          git commit -m "Atiran probe result (encrypted) [skip ci]" || echo "No changes"
+          for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
