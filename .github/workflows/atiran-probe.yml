@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   probe:
-    if: contains(github.event.head_commit.message, '[atiran-probe]')
+    if: contains(github.event.head_commit.message, '[atiran-probe')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -33,6 +33,8 @@ jobs:
               print("tcp 1433 NOT reachable:", type(e).__name__)
           PY
       - name: Read-only probe
+        env:
+          PROBE_STAGE: ${{ contains(github.event.head_commit.message, '[atiran-probe-2]') && '2' || '1' }}
         run: |
           pip install --quiet python-tds
           python3 .github/scripts/atiran_probe.py "$RUNNER_TEMP/probe.json" 2>&1 | grep -v -i -E "password|user=|server=" || true

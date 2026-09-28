@@ -11,6 +11,7 @@ a public key before committing it (this repository is public). Only counts are p
 import datetime
 import decimal
 import json
+import os
 import re
 import sys
 import uuid
@@ -74,6 +75,12 @@ def main():
             out["errors"].append("%s: %s" % (key, str(ex)[:300]))
 
     q("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SET LOCK_TIMEOUT 5000;")
+
+    if os.environ.get("PROBE_STAGE") == "2":
+        stage2(q, safe)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage2 sections:", len(out) - 1, "errors:", len(out["errors"]))
+        return
 
     safe("server", lambda: q("SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(40)) ver, CAST(SERVERPROPERTY('Edition') AS nvarchar(80)) edition, DB_NAME() db, CAST(SERVERPROPERTY('Collation') AS nvarchar(80)) collation, IS_SRVROLEMEMBER('sysadmin') sysadmin, IS_MEMBER('db_owner') dbo, HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER STATE') viewstate"))
     safe("tables", lambda: q("SELECT t.name, SUM(p.rows) row_count, t.create_date, t.modify_date FROM sys.tables t JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) GROUP BY t.name, t.create_date, t.modify_date ORDER BY t.name"))
@@ -163,6 +170,42 @@ def main():
     print("probe ok: tables=%d columns=%d samples=%d plan_pish=%d errors=%d" % (
         len(tables), len(out.get("columns", {}).get("rows", [])), len(out["samples"]),
         len(out.get("plan_cache_pish", {}).get("rows", [])), len(out["errors"])))
+
+
+def stage2(q, safe):
+    """Second read-only pass: units/prices, warehouse, approval settings, join paths, full list procs."""
+    safe("inv_stats", lambda: q("SELECT COUNT(*) n, SUM(CASE WHEN mohvah>1 THEN 1 ELSE 0 END) multi, SUM(CASE WHEN active='t' THEN 1 ELSE 0 END) act FROM dbo.inventory"))
+    safe("inv_multi", lambda: q("SELECT TOP 20 shka, mohvah, vahsanj, bastebandi, tedbastebandi, inventory_price, FinalSalePrice, vahsp, buy_price, pure_buy_price, active, ptax, PAvarez FROM dbo.inventory WHERE mohvah>1 ORDER BY shka DESC"))
+    safe("inv_single", lambda: q("SELECT TOP 10 shka, mohvah, vahsanj, bastebandi, tedbastebandi, inventory_price, FinalSalePrice, vahsp, active FROM dbo.inventory WHERE mohvah=1 AND active='t' ORDER BY shka DESC"))
+    safe("sale_lines_vs_inv", lambda: q("""SELECT TOP 40 s.shfacfo, s.rdf__, s.RDF, s.SHKA, s.rdf_anbar, s.TEDVAH, s.TEDJOZ, s.VAHPRICE, s.JOZPRICE, s.LINESUM, s.BASTEBANDI, s.TEDBASTEBANDI, s.PERTAFIF, s.TafifAghlam, s.litakhma, s.ptax, s.tax,
+        i.mohvah, i.vahsanj, i.bastebandi inv_bastebandi, i.tedbastebandi inv_tedbaste, i.inventory_price, i.FinalSalePrice, i.vahsp
+        FROM dbo.subsailfact s JOIN dbo.inventory i ON i.shka=s.SHKA WHERE s.active='t' ORDER BY CASE WHEN i.mohvah>1 THEN 0 ELSE 1 END, s.shfacfo DESC"""))
+    safe("sale_rdf_base", lambda: q("SELECT MIN(RDF) min_rdf, MAX(RDF) max_rdf, COUNT(*) n FROM dbo.subsailfact WHERE active='t' AND shfacfo IN (SELECT TOP 50 shfacfo FROM dbo.sailfact WHERE active='t' ORDER BY shfacfo DESC)"))
+    safe("anbars", lambda: q("SELECT rdf_anbar, name, Active, Base FROM dbo.anbars ORDER BY rdf_anbar", masked=True))
+    safe("anbar_usage", lambda: q("SELECT TOP 10 rdf_anbar, COUNT(*) n FROM dbo.subsailfact GROUP BY rdf_anbar ORDER BY n DESC"))
+    safe("settings", lambda: q("SELECT id, dis, value FROM dbo.overal_setting WHERE id IN (77,78,95,98,135) OR dis LIKE N'%پيش%' OR dis LIKE N'%پیش%' OR dis LIKE N'%انبار%' OR dis LIKE N'%pish%' ORDER BY id"))
+    safe("customers", lambda: q("""SELECT c.SHMO, c.code, c.active, c.man, c.RDF_masir, c.vis_rdf,
+        (SELECT COUNT(*) FROM dbo.masir m WHERE m.rdf_masir=c.RDF_masir) has_masir,
+        (SELECT COUNT(*) FROM dbo.masir m JOIN dbo.[Quarter] qq ON m.QuarterID=qq.ID JOIN dbo.regions r ON qq.RegionId=r.rdf_region JOIN dbo.CITYS ct ON r.rdf_city=ct.RDF WHERE m.rdf_masir=c.RDF_masir) list_join_ok
+        FROM dbo.CUSTOMERS c WHERE c.SHMO IN (412,896,294,319,1310)"""))
+    safe("cust_join_stats", lambda: q("""SELECT COUNT(*) n,
+        SUM(CASE WHEN EXISTS(SELECT 1 FROM dbo.masir m JOIN dbo.[Quarter] qq ON m.QuarterID=qq.ID JOIN dbo.regions r ON qq.RegionId=r.rdf_region JOIN dbo.CITYS ct ON r.rdf_city=ct.RDF WHERE m.rdf_masir=c.RDF_masir) THEN 1 ELSE 0 END) list_ok
+        FROM dbo.CUSTOMERS c WHERE c.active='t'"""))
+    safe("visitors", lambda: q("SELECT vis_rdf, vis_name, active, Username, UserID FROM dbo.visitors ORDER BY vis_rdf"))
+    safe("sys_users", lambda: q("SELECT user_id, user_name, active, role_id FROM dbo.sys_users ORDER BY user_id"))
+    safe("pish_all", lambda: q("SELECT * FROM dbo.sailfact_pish ORDER BY shfacfo, rdf__"))
+    safe("subpish_all", lambda: q("SELECT * FROM dbo.subsailfact_pish ORDER BY shfacfo, rdf__, RDF"))
+    safe("meelano_items", lambda: q("SELECT TOP 40 prefactor_id, product_code, qty, price, amount, unit, pack_count, line_discount FROM dbo.meelano_prefactor_items ORDER BY prefactor_id DESC, id"))
+    safe("today", lambda: q("SELECT CAST(dbo.UDF_Gregorian_To_Persian(GETDATE()) AS nvarchar(40)) p, GETDATE() g, OBJECT_ID('dbo.date_alan') da"))
+    for name in ["ListPishFactor", "AddInvoice", "EditInvoice", "add_sail_pish", "sp_ListPishFactor"]:
+        safe("def_" + name, lambda name=name: q("SELECT SUBSTRING(OBJECT_DEFINITION(OBJECT_ID(%s)), n*3500+1, 3500) part FROM (SELECT TOP 12 ROW_NUMBER() OVER (ORDER BY object_id)-1 n FROM sys.objects) x ORDER BY n", ("dbo." + name,)))
+    safe("proc_stats", lambda: q("""SELECT TOP 40 OBJECT_NAME(ps.object_id, ps.database_id) name, ps.execution_count, ps.last_execution_time FROM sys.dm_exec_procedure_stats ps
+        WHERE ps.database_id=DB_ID() ORDER BY ps.last_execution_time DESC"""))
+    safe("pish_proc_stats", lambda: q("""SELECT OBJECT_NAME(ps.object_id, ps.database_id) name, ps.execution_count, ps.last_execution_time FROM sys.dm_exec_procedure_stats ps
+        WHERE ps.database_id=DB_ID() AND (OBJECT_NAME(ps.object_id, ps.database_id) LIKE '%pish%' OR OBJECT_NAME(ps.object_id, ps.database_id) LIKE '%Invoice%')"""))
+    safe("plan_views", lambda: q("""SELECT TOP 30 qs.execution_count, qs.last_execution_time, SUBSTRING(st.text,1,3000) txt FROM sys.dm_exec_query_stats qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
+        WHERE (st.text LIKE '%pishfactor%' OR st.text LIKE '%ListPishFactor%' OR st.text LIKE '%VW_ListAllPishFactors%' OR st.text LIKE '%subsailfact_pish%' OR st.text LIKE '%add_sail_pish%')
+        AND st.text NOT LIKE '%dm_exec_query_stats%' AND st.text NOT LIKE 'CREATE%' ORDER BY qs.last_execution_time DESC"""))
 
 
 if __name__ == "__main__":
