@@ -1,4 +1,4 @@
-09-28 08:05:31.693   560  1576 D CoreBackPreview: Window{eaf3040 u0 ir.meelano.visitor.debug/ir.meelano.android.MainActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@53d60be, mPriority=0, mIsAnimationCallback=false}
-09-28 08:05:33.199  5040  5067 E SurfaceSyncGroup: Failed to receive transaction ready in 1000ms. Marking SurfaceSyncGroup(wmsSync-VRI[MainActivity]#0) as ready
-09-28 08:05:33.200  5040  5067 E SurfaceSyncGroup: Failed to receive transaction ready in 1000ms. Marking SurfaceSyncGroup(VRI[MainActivity]#1) as ready
-09-28 08:05:33.218   560   580 I ActivityTaskManager: Displayed ir.meelano.visitor.debug/ir.meelano.android.MainActivity for user 0: +3s200ms
+09-28 08:13:27.928   571   588 D CoreBackPreview: Window{77abb9b u0 ir.meelano.visitor.debug/ir.meelano.android.MainActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@8244711, mPriority=0, mIsAnimationCallback=false}
+09-28 08:13:29.432  4946  4974 E SurfaceSyncGroup: Failed to receive transaction ready in 1000ms. Marking SurfaceSyncGroup(wmsSync-VRI[MainActivity]#0) as ready
+09-28 08:13:29.433  4946  4974 E SurfaceSyncGroup: Failed to receive transaction ready in 1000ms. Marking SurfaceSyncGroup(VRI[MainActivity]#1) as ready
+09-28 08:13:29.436   571   592 I ActivityTaskManager: Displayed ir.meelano.visitor.debug/ir.meelano.android.MainActivity for user 0: +3s159ms

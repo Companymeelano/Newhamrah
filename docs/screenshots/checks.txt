@@ -1,2 +1,2 @@
-PASS back-on-visitor_dashboard: got=exit expected=exit :: mCurrentFocus=Window{5e642b3 u0 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}
-PASS back-on-showcase: got=stay expected=stay :: mCurrentFocus=Window{eaf3040 u0 ir.meelano.visitor.debug/ir.meelano.android.MainActivity}
+PASS back-on-visitor_dashboard: got=exit expected=exit :: mCurrentFocus=Window{97b0286 u0 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}
+PASS back-on-showcase: got=stay expected=stay :: mCurrentFocus=Window{77abb9b u0 ir.meelano.visitor.debug/ir.meelano.android.MainActivity}
