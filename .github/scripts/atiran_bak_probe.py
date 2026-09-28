@@ -16,6 +16,72 @@ from atiran_e2e import connect, safe_rows  # noqa: E402
 OUT = sys.argv[1]
 
 
+SQL_FILE = "MEELANO-Android/app/src/main/res/raw/atiran_new_customer.sql"
+
+
+def stage2(c, cur, q, out):
+    """Follow-up rows of a real customer, then run the app's exact new-customer batch on this copy."""
+    q("last_real", "SELECT TOP (1) SHMO FROM dbo.CUSTOMERS ORDER BY SHMO DESC")
+    last = out["last_real"]["rows"][0][0]
+    for t in ["cus_image", "cust_act", "sys_cus"]:
+        q("cols2_" + t, "SELECT c.name, t.name, c.is_nullable, c.is_identity FROM sys.columns c JOIN sys.types t ON c.user_type_id=t.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.%s') ORDER BY c.column_id" % t)
+    q("real_cus_image", "SELECT shmo, DATALENGTH([image]) FROM dbo.cus_image WHERE shmo IN (%d,%d,%d)" % (last, last - 1, last - 2))
+    q("real_cust_act", "SELECT TOP (10) * FROM dbo.cust_act WHERE shmo IN (%d,%d,%d) ORDER BY shmo DESC" % (last, last - 1, last - 2))
+    q("real_sys_cus", "SELECT * FROM dbo.sys_cus WHERE Shmo IN (%d,%d,%d)" % (last, last - 1, last - 2))
+    q("counts_follow", "SELECT (SELECT COUNT(*) FROM dbo.CUSTOMERS), (SELECT COUNT(DISTINCT shmo) FROM dbo.cus_image), (SELECT COUNT(DISTINCT shmo) FROM dbo.cust_act), (SELECT COUNT(DISTINCT Shmo) FROM dbo.sys_cus)")
+    q("custgroup", "SELECT * FROM dbo.custgroup")
+    q("acc_started", "SELECT dbo.IsAccountingSystemStarted()")
+    q("settings", "SELECT * FROM dbo.overal_setting WHERE id IN (74,77,78,95,117)")
+    q("shim_by_masir", "SELECT RDF_masir, MAX(sh_i_m), COUNT(*) FROM dbo.CUSTOMERS GROUP BY RDF_masir")
+    q("ttms", "SELECT * FROM dbo.CustomerTypeTTMS")
+    q("inv_cols", "SELECT c.name, t.name FROM sys.columns c JOIN sys.types t ON c.user_type_id=t.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.inventory') ORDER BY c.column_id")
+    q("server_date", "SELECT dbo.ReturnDateServer()")
+    q("inv_rows", "SELECT TOP (900) * FROM dbo.inventory")
+
+    sql = open(SQL_FILE, encoding="utf-8").read()
+    assert "%" not in sql
+    pyformat = sql.replace("?", "%s")
+    date = out["server_date"]["rows"][0][0] if out["server_date"]["rows"] else "1405/07/06"
+
+    def add(name, vis):
+        cur.execute(pyformat, (name, "09160000000", "", "آزمايش ميلانو", "", "ثبت از برنامه ميلانو", vis, 1, 1, "latifi", date, 31.3, 48.6, 1))
+        res = None
+        while True:
+            if cur.description:
+                res = cur.fetchall()
+            if not cur.nextset():
+                break
+        return res
+
+    tests = {}
+    try:
+        tests["insert1"] = [list(r) for r in add("08آزمايش ميلانو-اهواز", 6)]
+        tests["insert2"] = [list(r) for r in add("08آزمايش دوم ميلانو", 6)]
+    except Exception as ex:
+        tests["insert_error"] = str(ex)[:400]
+    try:
+        add("08آزمايش ميلانو-اهواز", 6)
+        tests["duplicate"] = "NOT BLOCKED"
+    except Exception as ex:
+        tests["duplicate"] = "blocked: " + str(ex)[:160]
+    out["tests"] = tests
+    if "insert1" in tests:
+        a = tests["insert1"][0][0]
+        q("new_row", "SELECT * FROM dbo.CUSTOMERS WHERE SHMO IN (%d,%d)" % (a, a + 1))
+        q("new_cus_image", "SELECT shmo, DATALENGTH([image]) FROM dbo.cus_image WHERE shmo=%d" % a)
+        q("new_cust_act", "SELECT * FROM dbo.cust_act WHERE shmo=%d" % a)
+        q("new_sys_cus", "SELECT * FROM dbo.sys_cus WHERE Shmo=%d" % a)
+        q("new_chain", "SELECT COUNT(*) FROM dbo.CUSTOMERS cu JOIN dbo.masir m ON cu.RDF_masir=m.rdf_masir JOIN dbo.[Quarter] qq ON m.QuarterID=qq.ID JOIN dbo.regions r ON qq.RegionId=r.rdf_region JOIN dbo.CITYS ct ON r.rdf_city=ct.RDF WHERE cu.SHMO=%d" % a)
+        for v in ["VW_ListCustomer", "vw_customer", "VW_CustomerInformation", "moshtari", "CustomersTablet"]:
+            cur.execute("SELECT name FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.%s')" % v)
+            cols = [r[0] for r in cur.fetchall()]
+            key = next((x for x in cols if x.lower() in ("shmo", "shmo_", "customerid", "customer_id")), None)
+            if key:
+                q("view_" + v, "SELECT COUNT(*) FROM dbo.[%s] WHERE [%s]=%d" % (v, key, a))
+            else:
+                out["view_" + v] = {"cols": cols[:40], "rows": []}
+
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -23,6 +89,12 @@ def main():
 
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
+
+    if os.environ.get("PROBE_STAGE") == "2":
+        stage2(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 2 done; errors:", len(out["errors"]), "; tests:", {k: (v if isinstance(v, str) else "ok") for k, v in out.get("tests", {}).items()})
+        return
 
     def cols(table):
         q("cols_" + table, """

@@ -44,7 +44,9 @@ jobs:
           done
           test -s "$RUNNER_TEMP/restore.json"
       - name: Probe (read-only)
-        run: python3 .github/scripts/atiran_bak_probe.py "$RUNNER_TEMP/bak-probe.json"
+        env:
+          PROBE_STAGE: ${{ contains(github.event.head_commit.message, '[stage-2]') && '2' || '1' }}
+        run: python3 .github/scripts/atiran_bak_probe.py "$RUNNER_TEMP/bak-probe.json" 2>&1 | grep -v -i password | tail -5
       - name: Encrypt and commit
         if: always()
         run: |
