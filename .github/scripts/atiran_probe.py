@@ -76,6 +76,11 @@ def main():
 
     q("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SET LOCK_TIMEOUT 5000;")
 
+    if os.environ.get("PROBE_STAGE") == "3":
+        stage3(conn, q, safe, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage3 errors:", len(out["errors"]))
+        return
     if os.environ.get("PROBE_STAGE") == "2":
         stage2(q, safe)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
@@ -206,6 +211,62 @@ def stage2(q, safe):
     safe("plan_views", lambda: q("""SELECT TOP 30 qs.execution_count, qs.last_execution_time, SUBSTRING(st.text,1,3000) txt FROM sys.dm_exec_query_stats qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
         WHERE (st.text LIKE '%pishfactor%' OR st.text LIKE '%ListPishFactor%' OR st.text LIKE '%VW_ListAllPishFactors%' OR st.text LIKE '%subsailfact_pish%' OR st.text LIKE '%add_sail_pish%')
         AND st.text NOT LIKE '%dm_exec_query_stats%' AND st.text NOT LIKE 'CREATE%' ORDER BY qs.last_execution_time DESC"""))
+
+
+def stage3(conn, q, safe, out):
+    """Rolled-back dry run: write one pre-invoice exactly like the app's new writer, ask Atiran's own
+    ListPishFactor whether it is listed, then ROLLBACK. Nothing stays in the database."""
+    cur = conn.cursor()
+    steps = []
+    try:
+        cur.execute("BEGIN TRANSACTION")
+        cur.execute("SELECT ISNULL(MAX(shfacfo),0)+1 FROM dbo.sailfact_pish WITH (UPDLOCK, HOLDLOCK)"); no = cur.fetchone()[0]
+        cur.execute("SELECT CAST(dbo.UDF_Gregorian_To_Persian(GETDATE()) AS nvarchar(30))"); date = cur.fetchone()[0]
+        cur.execute("SELECT man FROM dbo.CUSTOMERS WHERE SHMO=412"); man = cur.fetchone()[0]
+        cur.execute("SELECT TOP (1) ISNULL(rdf_tahbarg,0), ISNULL(nah_par,0) FROM dbo.sailfact WHERE active='t' AND shmo=412 ORDER BY shfacfo DESC"); r = cur.fetchone(); tah, nah = (r if r else (0, 0))
+        steps.append({"no": no, "date": date, "tahbarg": tah, "nah_par": nah})
+        cur.execute("""INSERT INTO dbo.sailfact_pish(rdf__,shfacfo,USER__,[date],shmo,barbari,shfacthand,vis_rdf,sumlineall,[all],gainall,tafif,jamtakhgh,done_date,panevis,isret,ismodify,active,modpar,rdf_sarbarg,rdf_tahbarg,nah_par,mod_darsad_vis,nah_d_text,man_gh,sh_f,user_f,date_f,ted_rooz,taeed,taeedUser,sysid,TaedHesabdari,TaedForush,Rejected,tax,avarez,Promotion,Stamp)
+            VALUES(1,%s,%s,%s,412,0,%s,6,%s,%s,0,0,0,%s,%s,'0','0','t',0,0,%s,%s,0,%s,%s,0,'--','--',30,0,'--',1,0,0,0,0,0,0,%s)""",
+            (no, "latifi", date, "آزمايش ميلانو (برگشت داده مي‌شود)", 70 * 65000 + 2 * 7140000, 70 * 65000 + 2 * 7140000, date, "ذکر نشده", tah, nah, "اعتباري", man, "MEELANO-TEST"))
+        lines = [(1796, 1, 10, 65000 * 60, 65000, "عدد", 70 * 65000, 0), (667, 2, 0, 7140000, 7140000, "", 2 * 7140000, 1)]
+        for shka, tv, tj, vp, jp, bb, ls, rdf in lines:
+            cur.execute("""INSERT INTO dbo.subsailfact_pish(rdf__,shfacfo,SHKA,rdf_anbar,TEDVAH,TEDJOZ,VAHPRICE,JOZPRICE,BASTEBANDI,TEDBASTEBANDI,LINESUM,LINEGAIN,ISRET,PERTAFIF,RDF,jozgain,PERVIS,litakhma,active,amani,Pavarez,Avarez,Ptax,Tax,Mp,PerPromotion)
+                VALUES(1,%s,%s,1,%s,%s,%s,%s,%s,0,%s,0,'0',0,%s,0,0,0,'t',0,0,0,0,0,0,0)""", (no, shka, tv, tj, vp, jp, bb, ls, rdf))
+        cur.execute("UPDATE dbo.sailfact_pish SET TaedHesabdari=1, UserTaedHesabdari=N'اتوماتيك', DateTaedHesabdari=%s WHERE shfacfo=%s AND active='t' AND (SELECT value FROM dbo.overal_setting WHERE id=77)=1", (date, no))
+        cur.execute("UPDATE dbo.sailfact_pish SET TaedForush=1, UserTaedForush=N'اتوماتيك', DateTaedForush=%s WHERE shfacfo=%s AND active='t' AND (SELECT value FROM dbo.overal_setting WHERE id=78)=1", (date, no))
+        cur.execute("SELECT rdf__,shfacfo,USER__,[date],shmo,vis_rdf,[all],active,Rejected,sh_f,TaedHesabdari,TaedForush,DateRecive,TimeRecive,Stamp FROM dbo.sailfact_pish WHERE shfacfo=%s", (no,))
+        steps.append({"header_after_triggers": [list(map(str, x)) for x in cur.fetchall()]})
+        for mod in (1, 2, 4):
+            try:
+                cur.execute("EXEC dbo.ListPishFactor @mydate=%s, @Mod=%s", (date, mod))
+                found = []
+                while True:
+                    if cur.description:
+                        cols = [d[0] for d in cur.description]
+                        for row in cur.fetchall():
+                            rec = dict(zip(cols, row))
+                            if str(rec.get("shfacfo")) == str(no):
+                                found.append({k: str(rec.get(k)) for k in ("shfacfo", "date", "MONAME", "vis_name", "all", "Weight") if k in rec})
+                    if not cur.nextset():
+                        break
+                steps.append({"ListPishFactor_mod": mod, "listed": found})
+            except Exception as ex:
+                steps.append({"ListPishFactor_mod": mod, "error": str(ex)[:300]})
+        cur.execute("SELECT COUNT(*) FROM dbo.pishfactors WHERE shfacfo=%s", (no,)); steps.append({"view_pishfactors": cur.fetchone()[0]})
+        cur.execute("SELECT COUNT(*) FROM dbo.pishfactor_body WHERE shfacfo=%s", (no,)); steps.append({"view_pishfactor_body": cur.fetchone()[0]})
+        cur.execute("SELECT COUNT(*) FROM dbo.VwListPishfactorhayeTeadNashodeh WHERE shfacfo=%s", (no,)); steps.append({"view_teadnashode": cur.fetchone()[0]})
+    except Exception as ex:
+        out["errors"].append("stage3: " + str(ex)[:400])
+    finally:
+        try:
+            cur.execute("IF @@TRANCOUNT>0 ROLLBACK TRANSACTION")
+        except Exception as ex:
+            out["errors"].append("rollback: " + str(ex)[:200])
+        try:
+            cur.execute("SELECT @@TRANCOUNT, (SELECT COUNT(*) FROM dbo.sailfact_pish WHERE Stamp='MEELANO-TEST')"); steps.append({"after_rollback_trancount_and_test_rows": list(cur.fetchone())})
+        except Exception as ex:
+            out["errors"].append("verify: " + str(ex)[:200])
+    out["stage3"] = steps
 
 
 if __name__ == "__main__":

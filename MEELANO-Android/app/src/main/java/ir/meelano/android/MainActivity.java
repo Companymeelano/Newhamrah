@@ -12927,7 +12927,7 @@ public class MainActivity extends Activity {
         if (snap == null || snap.optJSONArray("items") == null || snap.optJSONArray("items").length() == 0) { showNotice("سبد خالی است.", false); return; }
         if (snap.optString("customerCode", "").trim().isEmpty()) { showNotice("ابتدا مشتری را انتخاب کنید.", true); return; }
         runDb(() -> insertPrefactorSnapshot(snap, status), new DbCallback() {
-            @Override public void ok(String body) { showNotice("draft".equals(status) ? "پیش‌نویس ذخیره شد." : "پیش‌فاکتور ثبت شد. شماره: " + body, true); if (clearOnSuccess && !"draft".equals(status)) { removeLocalDraft(snap.optString("clientUuid", "")); resetCartState(); } renderCartPage(); }
+            @Override public void ok(String body) { if ("draft".equals(status)) showNotice("پیش‌نویس ذخیره شد.", true); else if (String.valueOf(body).contains("نرسید")) { final long retryId = lastUnsyncedPrefactorId; showNotice(body, true, "تلاش دوباره", () -> retryAtiranPrefactorSync(retryId)); } else showNotice(body, true); if (clearOnSuccess && !"draft".equals(status)) { removeLocalDraft(snap.optString("clientUuid", "")); resetCartState(); } renderCartPage(); }
             @Override public void fail(Exception e) { if (!"draft".equals(status)) saveOfflinePrefactor(snap, shortError(e)); else showNotice("پیش‌نویس فقط محلی ماند.", true); renderCartPage(); }
         });
     }
@@ -12943,7 +12943,7 @@ public class MainActivity extends Activity {
         try (Connection c = openConnection()) {
             ensurePrefactorTables(c);
             String uuid = snap.optString("clientUuid", "");
-            if (!uuid.trim().isEmpty()) try (PreparedStatement find = c.prepareStatement("SELECT TOP (1) id FROM dbo.meelano_prefactors WHERE client_uuid=?")) { find.setString(1, uuid); try (ResultSet r = find.executeQuery()) { if (r.next()) { long existingId = r.getLong(1); try { syncNativeAtiranPrefactor(c, existingId, snap, snap.optJSONArray("items")); } catch (Exception ignored) { } String nativeNo = currentNativePrefactorNo(c, existingId); return nativeNo == null || nativeNo.trim().isEmpty() ? String.valueOf(existingId) : nativeNo; } } } catch (Exception ignored) { }
+            if (!uuid.trim().isEmpty()) try (PreparedStatement find = c.prepareStatement("SELECT TOP (1) id FROM dbo.meelano_prefactors WHERE client_uuid=?")) { find.setString(1, uuid); try (ResultSet r = find.executeQuery()) { if (r.next()) { long existingId = r.getLong(1); try { syncNativeAtiranPrefactor(c, existingId, snap, snap.optJSONArray("items")); } catch (Exception ignored) { } return prefactorSubmitMessage(c, existingId); } } } catch (Exception ignored) { }
             c.setAutoCommit(false);
             try {
                 // ارسال ویزیتور باید سریع باشد؛ کنترل سنگین موجودی/قیمت قبلاً از کالا انجام شده و اینجا باعث تاخیر ثبت می‌شد.
@@ -12961,9 +12961,8 @@ public class MainActivity extends Activity {
                 }
                 markPrefactorInvoiceReadiness(c, id, status == null ? snap.optString("status", "sent") : status);
                 syncNativeAtiranPrefactor(c, id, snap, items);
-                String nativeNo = currentNativePrefactorNo(c, id);
                 c.commit();
-                return nativeNo == null || nativeNo.trim().isEmpty() ? String.valueOf(id) : nativeNo;
+                return prefactorSubmitMessage(c, id);
             } catch (Exception ex) { try { c.rollback(); } catch (Exception ignored) { } throw ex; }
             finally { try { c.setAutoCommit(true); } catch (Exception ignored) { } }
         }
@@ -13035,13 +13034,11 @@ public class MainActivity extends Activity {
     }
 
     private NativePrefactorTarget discoverNativePrefactorTarget(Connection c) throws Exception {
-        NativePrefactorTarget base = buildNativePrefactorTarget(c, "sailfact", "subsailfact", true, "جدول اصلی فروش آتیران با نشانگر پیش‌فاکتور");
-        if (base != null && nativePrefactorMarkerColumn(columns(c, base.headerTable)) != null) return base;
+        // Pre-invoices are never written into the real sales tables (sailfact/subsailfact): a row there is a real invoice.
         String header = resolveNativeTable(c, "sailfact_pish", "sailfactpish", "sailfact_p", "sailfactp", "sail_pish", "sailpish", "pish_sailfact", "pishsailfact", "pre_sailfact", "presailfact", "sailfact_pre", "sailfactpre", "pishfact", "pish_factor", "pishfactor", "preinvoice", "proforma", "prefactor", "پیش_فاکتور", "پيش_فاکتور");
         String detail = resolveNativeTable(c, "subsailfact_pish", "subsailfactpish", "subsailfact_p", "subsailfactp", "sub_sailfact_pish", "subsail_pish", "subpish_sailfact", "pish_subsailfact", "pishsubsailfact", "subpishfact", "sub_pish_factor", "subpishfactor", "preinvoice_items", "proforma_items", "prefactor_items", "ریز_پیش_فاکتور");
         NativePrefactorTarget dedicated = buildNativePrefactorTarget(c, header, detail, false, "جدول اختصاصی پیش‌فاکتور آتیران");
         if (dedicated != null) return dedicated;
-        if (base != null && nativeWeakPrefactorMarkerColumn(columns(c, base.headerTable)) != null) return base;
         return null;
     }
 
@@ -13187,6 +13184,7 @@ public class MainActivity extends Activity {
         if (c == null || id <= 0 || snap == null) return;
         String st = snap.optString("status", "sent");
         if ("draft".equals(st)) { updateNativePrefactorSync(c, id, "", "", "پیش‌نویس است و هنوز برای تبدیل به فاکتور فروش ارسال نشده."); return; }
+        if (isAtiranPishSchema(c)) { syncAtiranPishExact(c, id, snap, items); return; }
         java.sql.Savepoint sp = null;
         boolean startedTx = false;
         try {
@@ -13260,6 +13258,299 @@ public class MainActivity extends Activity {
     }
 
 
+
+    // ---------------------------------------------------------------------------------------------
+    // Atiran pre-invoice writer (sailfact_pish / subsailfact_pish).
+    // Built from Atiran's own database, read in September 2026:
+    //  * dbo.add_sail_pish (Atiran's own "new pre-invoice" procedure) writes rdf__=1, shfacfo=MAX+1,
+    //    active='t', isret/ismodify '0', Rejected=0, sh_f=0, taeed=0, taeedUser/user_f/date_f '--',
+    //    man_gh = customer balance, then sets TaedHesabdari / TaedForush when overal_setting 77 / 78 = 1.
+    //  * dbo.ListPishFactor (the list Atiran shows) only returns rows with active='t', Rejected=0,
+    //    TaedForush=1, TaedHesabdari=1, sh_f=0 AND at least one subsailfact_pish row with active='t'
+    //    whose SHKA exists in inventory; the customer must reach CITYS through masir/Quarter/regions.
+    //  * Detail lines: RDF is 0-based, rdf__ equals the header's rdf__, JOZPRICE is the price of one
+    //    piece, VAHPRICE = JOZPRICE * inventory.mohvah, LINESUM = (TEDVAH*mohvah + TEDJOZ) * JOZPRICE.
+    //  * Dates are Persian text yyyy/mm/dd (char(10)); Atiran text uses the Arabic yeh.
+    // Earlier Meelano versions wrote active='1', left Rejected/sh_f NULL and skipped the approvals,
+    // so Atiran never listed those rows. They are switched off (active='f') the next time this runs.
+    // ---------------------------------------------------------------------------------------------
+    private static final String ATIRAN_MEELANO_STAMP = "MEELANO-";
+
+    private boolean isAtiranPishSchema(Connection c) {
+        try {
+            if (c == null || !tableExists(c, "sailfact_pish") || !tableExists(c, "subsailfact_pish")) return false;
+            Set<String> h = columns(c, "sailfact_pish"); Set<String> d = columns(c, "subsailfact_pish");
+            return hasCol(h, "shfacfo") && hasCol(h, "rdf__") && hasCol(h, "active") && hasCol(h, "shmo") && hasCol(h, "all")
+                    && hasCol(d, "shfacfo") && hasCol(d, "rdf__") && hasCol(d, "SHKA") && hasCol(d, "RDF") && hasCol(d, "TEDVAH") && hasCol(d, "JOZPRICE") && hasCol(d, "active");
+        } catch (Exception ignored) { return false; }
+    }
+
+    /** Atiran stores Persian text with the Arabic yeh; many of its columns are varchar (code page 1256 has no Persian yeh). */
+    private String atiranText(String s, int max) {
+        String v = stringOr(s, "").replace('\u06CC', '\u064A').replace('\u0649', '\u064A').replace("\u200C", " ").trim();
+        return max > 0 && v.length() > max ? v.substring(0, max) : v;
+    }
+
+    private String atiranPersianToday(Connection c) {
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT TRY_CONVERT(nvarchar(30),dbo.UDF_Gregorian_To_Persian(GETDATE()))")) {
+            if (r.next()) { String v = normalizeDigits(stringOr(r.getString(1), "")).trim(); if (v.matches("^1[34]\\d{2}/\\d{2}/\\d{2}$")) return v; }
+        } catch (Exception ignored) { }
+        String v = normalizeDigits(stringOr(nativeAtiranToday(c), "")).trim();
+        return v.matches("^1[34]\\d{2}/\\d{2}/\\d{2}$") ? v : jalaliTodayText();
+    }
+
+    private long atiranSetting(Connection c, int id, long fallback) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) TRY_CONVERT(bigint,[value]) FROM dbo.overal_setting WHERE id=?")) {
+            ps.setInt(1, id);
+            try (ResultSet r = ps.executeQuery()) { if (r.next()) { long v = r.getLong(1); if (!r.wasNull()) return v; } }
+        } catch (Exception ignored) { }
+        return fallback;
+    }
+
+    private int atiranDefaultWarehouse(Connection c) {
+        String[] queries = {
+                "SELECT TOP (1) rdf_anbar FROM dbo.anbars WHERE ISNULL(Base,0)=1 AND ISNULL(Active,1)=1 ORDER BY rdf_anbar",
+                "SELECT TOP (1) s.rdf_anbar FROM dbo.subsailfact s WHERE s.active='t' AND EXISTS(SELECT 1 FROM dbo.anbars a WHERE a.rdf_anbar=s.rdf_anbar) GROUP BY s.rdf_anbar ORDER BY COUNT_BIG(1) DESC",
+                "SELECT TOP (1) rdf_anbar FROM dbo.anbars WHERE ISNULL(Active,1)=1 ORDER BY rdf_anbar",
+                "SELECT TOP (1) rdf_anbar FROM dbo.anbars ORDER BY rdf_anbar" };
+        for (String q : queries) {
+            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery(q)) { if (r.next()) return r.getInt(1); } catch (Exception ignored) { }
+        }
+        return 1;
+    }
+
+    private void putAtiran(Map<String, Object> values, Set<String> cols, String col, Object value) {
+        String real = resolve(cols, col);
+        if (real != null && value != null) values.put(real, value);
+    }
+
+    private static double round2(double v) { return Math.round(v * 100.0) / 100.0; }
+    private static double round3(double v) { return Math.round(v * 1000.0) / 1000.0; }
+
+    /** Soft-disables rows written by old Meelano versions (active='1' is never used by Atiran itself: it uses 't'/'f'). */
+    private void deactivateLegacyMeelanoPishRows(Connection c) {
+        try (Statement st = c.createStatement()) {
+            st.executeUpdate("UPDATE dbo.sailfact_pish SET active='f' WHERE active NOT IN ('t','f')");
+            st.executeUpdate("UPDATE dbo.subsailfact_pish SET active='f' WHERE active NOT IN ('t','f')");
+        } catch (Exception ignored) { }
+    }
+
+    private long findAtiranPishByStamp(Connection c, Set<String> hCols, long id) {
+        String stamp = resolve(hCols, "Stamp");
+        if (stamp == null || id <= 0) return 0;
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) shfacfo FROM dbo.sailfact_pish WHERE active='t' AND TRY_CONVERT(nvarchar(120)," + qi(stamp) + ")=? ORDER BY shfacfo DESC")) {
+            ps.setString(1, ATIRAN_MEELANO_STAMP + id);
+            try (ResultSet r = ps.executeQuery()) { if (r.next()) return r.getLong(1); }
+        } catch (Exception ignored) { }
+        return 0;
+    }
+
+    private boolean atiranPishActive(Connection c, String no) {
+        long n = (long) parseNumber(no, 0);
+        if (n <= 0) return false;
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) 1 FROM dbo.sailfact_pish h WHERE h.shfacfo=? AND h.active='t' AND EXISTS(SELECT 1 FROM dbo.subsailfact_pish d WHERE d.shfacfo=h.shfacfo AND d.rdf__=h.rdf__ AND d.active='t')")) {
+            ps.setLong(1, n);
+            try (ResultSet r = ps.executeQuery()) { return r.next(); }
+        } catch (Exception ignored) { return false; }
+    }
+
+    /** Describes whether Atiran's own list (dbo.ListPishFactor) will show this pre-invoice. */
+    private String atiranPishVisibilityNote(Connection c, long no) {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT ISNULL(CAST(h.TaedHesabdari AS int),0), ISNULL(CAST(h.TaedForush AS int),0), ISNULL(CAST(h.Rejected AS int),0), " +
+                "(SELECT COUNT_BIG(1) FROM dbo.subsailfact_pish d JOIN dbo.inventory i ON i.shka=d.SHKA WHERE d.shfacfo=h.shfacfo AND d.rdf__=h.rdf__ AND d.active='t'), " +
+                "(SELECT COUNT_BIG(1) FROM dbo.CUSTOMERS cu JOIN dbo.masir m ON cu.RDF_masir=m.rdf_masir JOIN dbo.[Quarter] q ON m.QuarterID=q.ID JOIN dbo.regions r ON q.RegionId=r.rdf_region JOIN dbo.CITYS ct ON r.rdf_city=ct.RDF WHERE cu.SHMO=h.shmo) " +
+                "FROM dbo.sailfact_pish h WHERE h.shfacfo=? AND h.active='t'")) {
+            ps.setLong(1, no);
+            try (ResultSet r = ps.executeQuery()) {
+                if (!r.next()) return "ردیف در آتیران پیدا نشد.";
+                List<String> problems = new ArrayList<>();
+                if (r.getInt(1) != 1) problems.add("تایید حسابداری");
+                if (r.getInt(2) != 1) problems.add("تایید مدیر فروش");
+                if (r.getInt(3) != 0) problems.add("رد شده است");
+                if (r.getLong(4) <= 0) problems.add("کالاهای پیش‌فاکتور در آتیران شناخته نشد");
+                if (r.getLong(5) <= 0) problems.add("مسیر/محله مشتری در آتیران تعریف نشده");
+                if (problems.isEmpty()) return "";
+                return "در فهرست آتیران هنوز دیده نمی‌شود؛ مانده: " + join(problems, "، ") + ".";
+            }
+        } catch (Exception ex) { return ""; }
+    }
+
+    /**
+     * Writes one Meelano pre-invoice into Atiran exactly the way dbo.add_sail_pish does.
+     * Must run inside a transaction (the caller commits or rolls back).
+     * Returns the Atiran pre-invoice number (shfacfo).
+     */
+    private long writeAtiranPish(Connection c, long id, JSONObject snap, JSONArray items) throws Exception {
+        if (items == null || items.length() == 0) throw new DbException("اقلام پیش‌فاکتور خالی است.");
+        Set<String> hCols = columns(c, "sailfact_pish"); Set<String> dCols = columns(c, "subsailfact_pish");
+
+        long shmo = (long) parseNumber(snap.optString("customerCode", ""), 0);
+        if (shmo <= 0) throw new DbException("کد مشتری برای آتیران معتبر نیست.");
+        double customerBalance = 0; boolean customerFound = false;
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) ISNULL(TRY_CONVERT(decimal(19,4),man),0) FROM dbo.CUSTOMERS WHERE SHMO=?")) {
+            ps.setLong(1, shmo);
+            try (ResultSet r = ps.executeQuery()) { if (r.next()) { customerFound = true; customerBalance = r.getDouble(1); } }
+        }
+        if (!customerFound) throw new DbException("مشتری با کد " + shmo + " در آتیران پیدا نشد.");
+
+        int visRdf = -1;
+        long wantedVisitor = (long) parseNumber(snap.optString("visitorId", ""), 0);
+        if (wantedVisitor > 0) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) vis_rdf FROM dbo.visitors WHERE vis_rdf=?")) {
+                ps.setLong(1, wantedVisitor);
+                try (ResultSet r = ps.executeQuery()) { if (r.next()) visRdf = r.getInt(1); }
+            } catch (Exception ignored) { }
+        }
+
+        int warehouse = atiranDefaultWarehouse(c);
+        double taxPercent = Math.max(0, snap.optDouble("taxPercent", 0));
+        List<Map<String, Object>> lines = new ArrayList<>(); List<String> unknown = new ArrayList<>();
+        double sumGross = 0, sumLineDiscount = 0;
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject it = items.optJSONObject(i); if (it == null) continue;
+            String code = it.optString("code", "").trim();
+            long shka = (long) parseNumber(code, 0);
+            long mohvah = 1; String pack = ""; boolean found = false;
+            if (shka > 0) {
+                try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) ISNULL(TRY_CONVERT(bigint,mohvah),1), ISNULL(TRY_CONVERT(nvarchar(60),bastebandi),N'') FROM dbo.inventory WHERE shka=?")) {
+                    ps.setLong(1, shka);
+                    try (ResultSet r = ps.executeQuery()) { if (r.next()) { found = true; mohvah = Math.max(1, r.getLong(1)); pack = stringOr(r.getString(2), ""); } }
+                }
+            }
+            if (!found) { unknown.add(code.isEmpty() ? it.optString("name", "?") : code); continue; }
+            double qty = Math.max(0, it.optDouble("qty", 0));
+            double piecePrice = Math.max(0, it.optDouble("price", 0));
+            double gross = cartItemGross(it); double discount = cartItemDiscount(it);
+            double tedvah; int tedjoz;
+            if (mohvah > 1 && Math.abs(qty - Math.rint(qty)) < 1e-9) { long pieces = Math.round(qty); tedvah = pieces / mohvah; tedjoz = (int) (pieces % mohvah); }
+            else if (mohvah > 1) { tedvah = round3(qty / mohvah); tedjoz = 0; }
+            else { tedvah = round3(qty); tedjoz = 0; }
+            Map<String, Object> d = new LinkedHashMap<>();
+            putAtiran(d, dCols, "rdf__", 1); putAtiran(d, dCols, "SHKA", shka); putAtiran(d, dCols, "rdf_anbar", warehouse);
+            putAtiran(d, dCols, "TEDVAH", tedvah); putAtiran(d, dCols, "TEDJOZ", tedjoz);
+            putAtiran(d, dCols, "VAHPRICE", piecePrice * mohvah); putAtiran(d, dCols, "JOZPRICE", piecePrice);
+            putAtiran(d, dCols, "BASTEBANDI", atiranText(pack, 25)); putAtiran(d, dCols, "TEDBASTEBANDI", 0);
+            putAtiran(d, dCols, "LINESUM", gross); putAtiran(d, dCols, "LINEGAIN", 0); putAtiran(d, dCols, "ISRET", "0");
+            putAtiran(d, dCols, "PERTAFIF", gross > 0 ? round2(discount * 100.0 / gross) : 0); putAtiran(d, dCols, "RDF", lines.size());
+            putAtiran(d, dCols, "jozgain", 0); putAtiran(d, dCols, "PERVIS", 0); putAtiran(d, dCols, "litakhma", discount);
+            putAtiran(d, dCols, "active", "t"); putAtiran(d, dCols, "amani", false);
+            putAtiran(d, dCols, "Pavarez", 0); putAtiran(d, dCols, "Avarez", 0);
+            putAtiran(d, dCols, "Ptax", taxPercent); putAtiran(d, dCols, "Tax", Math.round(Math.max(0, gross - discount) * taxPercent / 100.0));
+            putAtiran(d, dCols, "Mp", 0); putAtiran(d, dCols, "PerPromotion", 0);
+            lines.add(d); sumGross += gross; sumLineDiscount += discount;
+        }
+        if (!unknown.isEmpty()) throw new DbException("این کالاها در آتیران پیدا نشد: " + join(unknown, "، "));
+        if (lines.isEmpty()) throw new DbException("هیچ کالای معتبری برای آتیران در پیش‌فاکتور نیست.");
+
+        long no;
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT ISNULL(MAX(shfacfo),0)+1 FROM dbo.sailfact_pish WITH (UPDLOCK, HOLDLOCK)")) {
+            no = r.next() ? Math.max(1, r.getLong(1)) : 1;
+        }
+        String date = atiranPersianToday(c);
+        String user = atiranText(stringOr(snap.optString("visitor", ""), currentAccountName()), 300);
+        if (user.isEmpty()) user = "Meelano";
+        double discountTotal = sumLineDiscount + Math.max(0, snap.optDouble("globalDiscount", 0));
+        double tax = Math.max(0, snap.optDouble("taxAmount", 0));
+        double all = snap.optDouble("grandTotal", 0);
+        if (all <= 0) all = Math.max(0, sumGross - discountTotal + tax);
+        String notes = atiranText(snap.optString("notes", ""), 900);
+        String settlement = atiranText(snap.optString("settlement", ""), 200);
+        int tahbarg = 0, nahPar = 0;
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) ISNULL(rdf_tahbarg,0), ISNULL(nah_par,0) FROM dbo.sailfact WHERE active='t' AND (shmo=? OR ?=0) ORDER BY CASE WHEN shmo=? THEN 0 ELSE 1 END, shfacfo DESC")) {
+            ps.setLong(1, shmo); ps.setInt(2, 0); ps.setLong(3, shmo);
+            try (ResultSet r = ps.executeQuery()) { if (r.next()) { tahbarg = r.getInt(1); nahPar = r.getInt(2); } }
+        } catch (Exception ignored) { }
+
+        Map<String, Object> h = new LinkedHashMap<>();
+        putAtiran(h, hCols, "rdf__", 1); putAtiran(h, hCols, "shfacfo", no); putAtiran(h, hCols, "USER__", user);
+        putAtiran(h, hCols, "date", date); putAtiran(h, hCols, "shmo", shmo); putAtiran(h, hCols, "barbari", 0);
+        putAtiran(h, hCols, "shfacthand", notes.isEmpty() ? "ذكر نشده" : notes); putAtiran(h, hCols, "vis_rdf", visRdf);
+        putAtiran(h, hCols, "sumlineall", sumGross); putAtiran(h, hCols, "all", all); putAtiran(h, hCols, "gainall", 0);
+        putAtiran(h, hCols, "tafif", discountTotal); putAtiran(h, hCols, "jamtakhgh", sumLineDiscount);
+        putAtiran(h, hCols, "done_date", date); putAtiran(h, hCols, "panevis", "ذکر نشده");
+        putAtiran(h, hCols, "isret", "0"); putAtiran(h, hCols, "ismodify", "0"); putAtiran(h, hCols, "active", "t");
+        putAtiran(h, hCols, "modpar", 0); putAtiran(h, hCols, "rdf_sarbarg", 0); putAtiran(h, hCols, "rdf_tahbarg", tahbarg);
+        putAtiran(h, hCols, "nah_par", nahPar); putAtiran(h, hCols, "mod_darsad_vis", 0);
+        if (!settlement.isEmpty()) putAtiran(h, hCols, "nah_d_text", settlement);
+        putAtiran(h, hCols, "man_gh", customerBalance); putAtiran(h, hCols, "sh_f", 0); putAtiran(h, hCols, "user_f", "--"); putAtiran(h, hCols, "date_f", "--");
+        putAtiran(h, hCols, "ted_rooz", (int) atiranSetting(c, 38, 0)); putAtiran(h, hCols, "taeed", 0); putAtiran(h, hCols, "taeedUser", "--");
+        putAtiran(h, hCols, "sysid", 1); putAtiran(h, hCols, "TaedHesabdari", false); putAtiran(h, hCols, "TaedForush", false);
+        putAtiran(h, hCols, "Rejected", false); putAtiran(h, hCols, "tax", tax); putAtiran(h, hCols, "avarez", 0); putAtiran(h, hCols, "Promotion", 0);
+        putAtiran(h, hCols, "Stamp", ATIRAN_MEELANO_STAMP + id);
+        insertFlexibleRow(c, "sailfact_pish", h);
+        for (Map<String, Object> d : lines) { putAtiran(d, dCols, "shfacfo", no); insertFlexibleRow(c, "subsailfact_pish", d); }
+
+        // Same automatic approvals Atiran's own add_sail_pish applies (overal_setting 77 and 78).
+        if (atiranSetting(c, 77, 0) == 1 && hasCol(hCols, "TaedHesabdari")) {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.sailfact_pish SET TaedHesabdari=1, UserTaedHesabdari=N'اتوماتيك', DateTaedHesabdari=? WHERE shfacfo=? AND active='t'")) { ps.setString(1, date); ps.setLong(2, no); ps.executeUpdate(); }
+        }
+        if (atiranSetting(c, 78, 0) == 1 && hasCol(hCols, "TaedForush")) {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.sailfact_pish SET TaedForush=1, UserTaedForush=N'اتوماتيك', DateTaedForush=? WHERE shfacfo=? AND active='t'")) { ps.setString(1, date); ps.setLong(2, no); ps.executeUpdate(); }
+        }
+        return no;
+    }
+
+    private void syncAtiranPishExact(Connection c, long id, JSONObject snap, JSONArray items) {
+        java.sql.Savepoint sp = null; boolean startedTx = false;
+        try {
+            String existingNo = currentNativePrefactorNo(c, id).trim();
+            String existingTable = currentNativePrefactorTable(c, id).trim();
+            if (!existingNo.isEmpty() && "sailfact_pish".equalsIgnoreCase(existingTable) && atiranPishActive(c, existingNo)) return;
+            Set<String> hCols = columns(c, "sailfact_pish");
+            long stamped = findAtiranPishByStamp(c, hCols, id);
+            if (stamped > 0) {
+                String vis = atiranPishVisibilityNote(c, stamped);
+                updateNativePrefactorSync(c, id, "sailfact_pish", String.valueOf(stamped), "در آتیران ثبت است: پیش‌فاکتور شماره " + stamped + (vis.isEmpty() ? "" : " — " + vis));
+                return;
+            }
+            if (c.getAutoCommit()) { c.setAutoCommit(false); startedTx = true; } else sp = c.setSavepoint("meelano_atiran_pish");
+            deactivateLegacyMeelanoPishRows(c);
+            long no = writeAtiranPish(c, id, snap, items);
+            String vis = atiranPishVisibilityNote(c, no);
+            updateNativePrefactorSync(c, id, "sailfact_pish", String.valueOf(no),
+                    "در آتیران ثبت شد: پیش‌فاکتور شماره " + no + " به تاریخ " + atiranPersianToday(c) + (vis.isEmpty() ? " — در فهرست پیش‌فاکتورهای آتیران و «فاکتور فروش ← از پیش‌فاکتور» دیده می‌شود." : " — " + vis));
+            if (startedTx) c.commit();
+        } catch (Exception ex) {
+            try { if (startedTx) c.rollback(); else if (sp != null) c.rollback(sp); } catch (Exception ignored) { }
+            updateNativePrefactorSync(c, id, "", "", "به آتیران نرسید: " + shortError(ex));
+            try { if (startedTx) c.commit(); } catch (Exception ignored) { }
+        } finally { try { if (startedTx) c.setAutoCommit(true); } catch (Exception ignored) { } }
+    }
+
+    private volatile long lastUnsyncedPrefactorId = 0;
+
+    /** Sends one saved pre-invoice to Atiran again (button on the "did not reach Atiran" notice). */
+    private void retryAtiranPrefactorSync(long id) {
+        if (id <= 0) return;
+        showNotice("ارسال دوباره به آتیران…", false);
+        runDb(() -> {
+            try (Connection c = openConnection()) {
+                ensurePrefactorTables(c);
+                repairUnsyncedNativePrefactors(c);
+                return prefactorSubmitMessage(c, id);
+            }
+        }, new DbCallback() {
+            @Override public void ok(String body) { if (String.valueOf(body).contains("نرسید")) showNotice(body, true, "تلاش دوباره", () -> retryAtiranPrefactorSync(id)); else showNotice(body, true); }
+            @Override public void fail(Exception e) { showNotice("اتصال به سرور برقرار نشد: " + shortError(e), true, "تلاش دوباره", () -> retryAtiranPrefactorSync(id)); }
+        });
+    }
+
+    /** Message shown after the visitor submits: says honestly whether Atiran received the pre-invoice. */
+    private String prefactorSubmitMessage(Connection c, long id) {
+        String table = currentNativePrefactorTable(c, id).trim(); String no = currentNativePrefactorNo(c, id).trim();
+        String note = "";
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) ISNULL(system_convert_note,N'') FROM dbo.meelano_prefactors WHERE id=?")) {
+            ps.setLong(1, id);
+            try (ResultSet r = ps.executeQuery()) { if (r.next()) note = stringOr(r.getString(1), ""); }
+        } catch (Exception ignored) { }
+        if (!no.isEmpty() && !table.isEmpty()) {
+            String extra = note.contains("دیده نمی‌شود") ? "\n" + note.substring(note.indexOf("در فهرست")) : "";
+            return "پیش‌فاکتور در آتیران ثبت شد. شماره آتیران: " + no + extra;
+        }
+        lastUnsyncedPrefactorId = id;
+        return "پیش‌فاکتور در میلانو ذخیره شد (شماره " + id + ") اما به آتیران نرسید." + (note.isEmpty() ? "" : "\nعلت: " + note.replace("به آتیران نرسید: ", "")) + "\nبا باز کردن «پیش‌فاکتورهای من» دوباره تلاش می‌شود.";
+    }
 
     private void repairUnsyncedNativePrefactors(Connection c) {
         if (c == null) return;
