@@ -124,6 +124,49 @@ def stage3(c, cur, q, out):
     q("s3_server_date", "SELECT dbo.ReturnDateServer(), CAST(dbo.UDF_Gregorian_To_Persian(GETDATE()) AS nvarchar(30))")
 
 
+RECEIPT_WORDS = ["daryaft", "chk", "chek", "check", "cheq", "bank", "hesab", "pos", "kart", "card", "havale", "hvl",
+                 "sandog", "sandoq", "naghd", "nagd", "tasv", "sayad", "fish", "recei", "pay", "get", "sanad", "tafsil",
+                 "moin", "kol", "vosol", "vasl", "pardakht", "trans", "enteghal", "cash", "box", "account", "acc"]
+
+
+def stage4(c, cur, q, out):
+    """Receipts (store edition): how Atiran records cash, cheques, card (POS), bank transfer and havaleh
+    against a customer, how they are linked to invoices (settlement) and which lists (banks, boxes, POS) exist."""
+    like = " OR ".join("t.name LIKE N'%%%s%%'" % w for w in RECEIPT_WORDS)
+    cur.execute("SELECT t.name FROM sys.tables t WHERE " + like + " ORDER BY t.name")
+    tables = [r[0] for r in cur.fetchall()]
+    out["s4_tables"] = tables
+    q("s4_counts", "SELECT t.name, SUM(p.rows) FROM sys.tables t JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) "
+                   "WHERE " + like + " GROUP BY t.name ORDER BY t.name")
+    q("s4_all_counts", "SELECT t.name, SUM(p.rows) FROM sys.tables t JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) GROUP BY t.name HAVING SUM(p.rows) > 0 ORDER BY t.name")
+    q("s4_cols", "SELECT OBJECT_NAME(c.object_id), c.name, ty.name, c.max_length, c.is_nullable, c.is_identity, OBJECT_DEFINITION(c.default_object_id) "
+                 "FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id JOIN sys.tables t ON t.object_id=c.object_id "
+                 "WHERE (" + like + ") OR t.name IN (N'cust_act', N'sailfact') ORDER BY OBJECT_NAME(c.object_id), c.column_id")
+    q("s4_triggers", "SELECT OBJECT_NAME(tr.parent_id), tr.name, tr.is_disabled, tr.is_instead_of_trigger, LEFT(OBJECT_DEFINITION(tr.object_id), 15000) "
+                     "FROM sys.triggers tr JOIN sys.tables t ON t.object_id=tr.parent_id WHERE (" + like + ") OR t.name IN (N'cust_act', N'sailfact')")
+    q("s4_fks", "SELECT OBJECT_NAME(fk.parent_object_id), COL_NAME(fc.parent_object_id, fc.parent_column_id), OBJECT_NAME(fc.referenced_object_id), "
+                "COL_NAME(fc.referenced_object_id, fc.referenced_column_id) FROM sys.foreign_keys fk JOIN sys.foreign_key_columns fc ON fk.object_id=fc.constraint_object_id")
+    # Procedures / functions that write receipts or settle invoices.
+    q("s4_procs", "SELECT o.name, o.type, LEN(m.definition), LEFT(m.definition, 40000) FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id "
+                  "WHERE o.type IN ('P','FN','IF','TF','V') AND (o.name LIKE N'%dar%' OR o.name LIKE N'%chk%' OR o.name LIKE N'%chek%' OR o.name LIKE N'%check%' "
+                  "OR o.name LIKE N'%tasv%' OR o.name LIKE N'%pos%' OR o.name LIKE N'%havale%' OR o.name LIKE N'%bank%' OR o.name LIKE N'%sanad%' "
+                  "OR o.name LIKE N'%sayad%' OR o.name LIKE N'%naghd%' OR o.name LIKE N'%recei%' OR o.name LIKE N'%vosol%' OR o.name LIKE N'%hesab%' "
+                  "OR m.definition LIKE N'%INSERT%INTO%getchk%' OR m.definition LIKE N'%INSERT%cust_act%act_bes%' OR m.definition LIKE N'%tasvieh%')")
+    q("s4_proc_params", "SELECT OBJECT_NAME(p.object_id), p.name, TYPE_NAME(p.user_type_id), p.max_length, p.is_output FROM sys.parameters p "
+                        "JOIN sys.objects o ON o.object_id=p.object_id WHERE o.type='P' AND (o.name LIKE N'%dar%' OR o.name LIKE N'%chk%' OR o.name LIKE N'%tasv%' "
+                        "OR o.name LIKE N'%pos%' OR o.name LIKE N'%havale%' OR o.name LIKE N'%bank%' OR o.name LIKE N'%sanad%') ORDER BY OBJECT_NAME(p.object_id), p.parameter_id")
+    # What kinds of customer movements exist (act_id), with examples.
+    q("s4_act_ids", "SELECT act_id, COUNT(*), SUM(act_bed), SUM(act_bes), MIN([date]), MAX([date]) FROM dbo.cust_act GROUP BY act_id ORDER BY act_id")
+    q("s4_act_samples", "SELECT * FROM (SELECT ROW_NUMBER() OVER (PARTITION BY act_id ORDER BY rdf_ DESC) rn, * FROM dbo.cust_act) x WHERE rn <= 4 ORDER BY act_id, rn")
+    q("s4_recent_bes", "SELECT TOP (40) * FROM dbo.cust_act WHERE act_bes > 0 ORDER BY rdf_ DESC")
+    for t in tables:
+        q("s4_rows_" + t, "SELECT TOP (8) * FROM dbo.[%s] ORDER BY 1 DESC" % t.replace("]", "]]"))
+    q("s4_tasvieh", "SELECT tasvieh, COUNT(*), SUM([all]) FROM dbo.sailfact WHERE active='t' GROUP BY tasvieh")
+    q("s4_settings", "SELECT * FROM dbo.overal_setting")
+    q("s4_visitors", "SELECT vis_rdf, CAST(vis_name AS nvarchar(200)), CAST(Username AS nvarchar(100)), UserID FROM dbo.visitors")
+    q("s4_server_date", "SELECT dbo.ReturnDateServer(), CAST(dbo.UDF_Gregorian_To_Persian(GETDATE()) AS nvarchar(30))")
+
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -132,6 +175,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "4":
+        stage4(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 4 done; errors:", len(out["errors"]), "; tables:", len(out.get("s4_tables", [])))
+        return
     if os.environ.get("PROBE_STAGE") == "3":
         stage3(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
