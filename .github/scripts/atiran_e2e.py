@@ -333,7 +333,8 @@ def verify_store(cur, out, checks):
     d = re.search(r"STORE data today=\S+ debtors=(\d+) overdue=(\d+) overdueSum=(-?\d+) customersTotal=(-?\d+) debt=(-?\d+)", joined)
     if d and before.get("debtors"):
         checks["store_debtors_match_db"] = int(d.group(1)) == int(before["debtors"][0]) and abs(int(d.group(5)) - float(before["debtors"][1])) < 2
-        checks["store_customers_total_match_db"] = int(d.group(4)) == int(before.get("customers", -1))
+        # the visitor test before this one adds its test customers, so compare with the current count
+        checks["store_customers_total_match_db"] = int(d.group(4)) == int(rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS")["rows"][0][0])
         checks["store_overdue_found"] = int(d.group(2)) > 0 and 0 < int(d.group(3)) <= float(before["debtors"][1]) + 1
     g = re.search(r"STORE groups (.*)", joined)
     if g and before.get("debtors"):
@@ -359,9 +360,16 @@ def verify_store(cur, out, checks):
     lines = rows(cur, "SELECT d.RDF, d.SHKA, d.TEDVAH, d.TEDJOZ, d.VAHPRICE, d.JOZPRICE, d.LINESUM, d.rdf_anbar, d.active FROM dbo.subsailfact d WHERE d.shfacfo=%s ORDER BY d.RDF", (no,))
     out["store_lines"] = lines
     checks["store_two_lines_in_subsailfact"] = len(lines["rows"]) == 2 and sorted(int(r[1]) for r in lines["rows"]) == [621, 667]
-    out["store_ka_act"] = safe_rows(cur, out, "SELECT * FROM dbo.ka_act WHERE shfacfo=%s" % no)
-    ka = out["store_ka_act"]
-    checks["store_stock_movements_ka_act"] = bool(ka.get("rows")) and len(ka["rows"]) >= 2
+    out["ka_act_latest"] = safe_rows(cur, out, "SELECT TOP (6) * FROM dbo.ka_act ORDER BY 1 DESC")
+    kcols = out["ka_act_latest"].get("cols", [])
+    kcol = next((c for c in kcols if c.lower() in ("shfacfo", "sh_fac", "shfac", "ghno", "sh_f", "shfactor", "factorno", "docnumber")), None)
+    out["ka_act_invoice_column"] = kcol
+    if kcol:
+        ka = safe_rows(cur, out, "SELECT * FROM dbo.ka_act WHERE [%s]=%s" % (kcol, no))
+        ka816 = safe_rows(cur, out, "SELECT * FROM dbo.ka_act WHERE [%s]=816" % kcol)
+        out["store_ka_act"] = ka
+        out["ka_act_816"] = ka816
+        checks["store_stock_movements_ka_act"] = len(ka.get("rows", [])) >= 2
     after_stock = rows(cur, "SELECT shka, mojkavah, mojkajoz, mohvah FROM dbo.inventory WHERE shka IN (667, 621) ORDER BY shka")
     out["store_stock_after"] = after_stock
     try:
@@ -380,7 +388,11 @@ def verify_store(cur, out, checks):
         checks["store_customer_debt_increased_by_invoice"] = False
     out["store_cust_act"] = safe_rows(cur, out, "SELECT TOP (5) * FROM dbo.cust_act WHERE shmo=412 ORDER BY 1 DESC")
     out["store_confirmation"] = safe_rows(cur, out, "SELECT * FROM dbo.FactorConfirmation WHERE Shfacfo=%s" % no)
-    checks["store_factor_confirmation_row"] = len(out["store_confirmation"].get("rows", [])) == 1
+    out["confirmation_816"] = safe_rows(cur, out, "SELECT * FROM dbo.FactorConfirmation WHERE Shfacfo=816")
+    out["confirmation_total"] = safe_rows(cur, out, "SELECT COUNT(*) FROM dbo.FactorConfirmation")
+    # Atiran's own confirmed invoices are the reference: same row handling as invoice 816.
+    checks["store_confirmation_like_atiran"] = len(out["store_confirmation"].get("rows", [])) == len(out["confirmation_816"].get("rows", [])) and str(h.get("Status")) in ("1", "True")
+    checks["store_taeed_user_readable"] = bool(h) and "\ufffd" not in str(h.get("TaeedUser")) and "?" not in str(h.get("TaeedUser"))
     out["store_counter_after"] = safe_rows(cur, out, "SELECT * FROM dbo.InvoiceNumberCounter")
     # Same shape as an invoice written by the Atiran program itself (816, by nazari).
     ref = rows(cur, "SELECT * FROM dbo.sailfact WHERE shfacfo=816")

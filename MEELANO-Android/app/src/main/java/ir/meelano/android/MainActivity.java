@@ -1801,7 +1801,7 @@ public class MainActivity extends Activity {
         appTitle.setEllipsize(TextUtils.TruncateAt.END);
         appTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         if (!isLightTheme()) appTitle.setShadowLayer(dp(3), 0, dp(1), alpha(Color.BLACK, 150));
-        String sub = session == null ? "ورود امن ویزیتور" : "ویزیتور فعال • " + session.userName;
+        String sub = session == null ? (STORE_EDITION ? "ورود امن کارکنان فروشگاه" : "ورود امن ویزیتور") : (STORE_EDITION ? "کارمند فروشگاه • " : "ویزیتور فعال • ") + session.userName;
         subtitle = text(sub, 9.8f, alpha(TEXT, 226), Typeface.BOLD);
         subtitle.setSingleLine(true);
         subtitle.setEllipsize(TextUtils.TruncateAt.END);
@@ -2059,6 +2059,7 @@ public class MainActivity extends Activity {
     }
 
     private void styleMeelanoButton(Button b, String label, int accent, boolean primary, float textSp) {
+        if (STORE_EDITION && b.getText() != null && b.getText().toString().contains("پیش")) b.setText(storeWording(b.getText().toString()));
         int tone = buttonTone(accent, label);
         b.setAllCaps(false);
         b.setTextColor(primary ? onColorFor(tone) : tc(tone));
@@ -2948,7 +2949,7 @@ public class MainActivity extends Activity {
         maybeRestoreAutosavedCart();
         motionSerial = 0;
         setConnectionStatus("connected");
-        subtitle.setText(VISITOR_EDITION ? "ویزیتور فعال • " + session.userName : session.userName);
+        subtitle.setText(STORE_EDITION ? "کارمند فروشگاه • " + session.userName : VISITOR_EDITION ? "ویزیتور فعال • " + session.userName : session.userName);
         stage.removeAllViews();
         if (VISITOR_EDITION) stage.addView(new VisitorLeatherBackgroundView(this), new FrameLayout.LayoutParams(-1, -1));
 
@@ -3705,7 +3706,7 @@ public class MainActivity extends Activity {
         LinearLayout copy = new LinearLayout(this);
         copy.setOrientation(LinearLayout.VERTICAL);
         copy.setPadding(dp(11), 0, dp(8), 0);
-        TextView badge = text("حالت ویزیت • فقط فروش میدانی", 9.2f, onColorFor(accent), Typeface.BOLD);
+        TextView badge = text(STORE_EDITION ? "فروشگاه • فاکتور قطعی و گزارش" : "حالت ویزیت • فقط فروش میدانی", 9.2f, onColorFor(accent), Typeface.BOLD);
         badge.setGravity(Gravity.CENTER);
         badge.setSingleLine(true);
         badge.setPadding(dp(8), dp(3), dp(8), dp(3));
@@ -3721,7 +3722,7 @@ public class MainActivity extends Activity {
         copy.addView(s, new LinearLayout.LayoutParams(-1, -2));
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         hero.addView(row, new LinearLayout.LayoutParams(-1, -2));
-        addVisitorFlowRibbon(hero, accent);
+        if (!STORE_EDITION) addVisitorFlowRibbon(hero, accent);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, 0, 0, dp(12));
         content.addView(hero, lp);
@@ -20817,7 +20818,7 @@ public class MainActivity extends Activity {
     /** In the store app every order is a final invoice, so «پیش‌فاکتور» wording becomes «فاکتور». */
     private String storeWording(String s) {
         if (!STORE_EDITION || s == null || !s.contains("پیش")) return s;
-        return s.replace("پیش‌فاکتورها", "فاکتورها").replace("پیش‌فاکتور", "فاکتور").replace("پیش فاکتور", "فاکتور");
+        return s.replace("ارسال پیش‌فاکتور", "ثبت فاکتور").replace("پیش‌فاکتورها", "فاکتورها").replace("پیش‌فاکتور", "فاکتور").replace("پیش فاکتور", "فاکتور");
     }
 
     /** "mahmodi" / "nazari" for the two store staff members, "" for anybody else. */
@@ -20859,7 +20860,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
         }
         int uid = 0; String user = "";
-        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) user_id, user_name FROM dbo.sys_users WHERE ISNULL(active,1)=1 AND (user_lname LIKE ? OR user_lname LIKE ? OR user_name LIKE ? OR user_name LIKE ?) ORDER BY user_id DESC")) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) user_id, CAST(user_name AS nvarchar(100)) FROM dbo.sys_users WHERE ISNULL(active,1)=1 AND (user_lname LIKE ? OR user_lname LIKE ? OR user_name LIKE ? OR user_name LIKE ?) ORDER BY user_id DESC")) {
             ps.setString(1, "%" + ar + "%"); ps.setString(2, "%" + fa + "%"); ps.setString(3, "%" + ar + "%"); ps.setString(4, "%" + fa + "%");
             try (ResultSet r = ps.executeQuery()) { if (r.next()) { uid = r.getInt(1); user = stringOr(r.getString(2), ""); } }
         } catch (Exception ignored) { }
@@ -21050,11 +21051,11 @@ public class MainActivity extends Activity {
                 try (ResultSet r = ps.executeQuery()) { if (r.next()) { JSONObject o = new JSONObject(); o.put("count", r.getDouble(1)); o.put("sum", r.getDouble(2)); out.put("mineToday", o); } }
             }
             out.put("monthly", rowsJson(c, "SELECT LEFT(s.[date],7), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s WHERE" + live + "AND s.[date]>=? GROUP BY LEFT(s.[date],7) ORDER BY 1", new String[]{"month", "count", "sum"}, from6m));
-            out.put("byUser", rowsJson(c, "SELECT ISNULL(u.user_name,N'—'), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s LEFT JOIN dbo.sys_users u ON u.user_id=s.userid WHERE" + live + "AND s.[date]>=? GROUP BY u.user_name ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
-            out.put("topCustomers", rowsJson(c, "SELECT TOP (8) MAX(cu.MONAME), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s JOIN dbo.CUSTOMERS cu ON cu.SHMO=s.shmo WHERE" + live + "AND s.[date]>=? GROUP BY s.shmo ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
-            out.put("topProducts", rowsJson(c, "SELECT TOP (8) MAX(d.naka), ISNULL(SUM(d.TEDVAH),0), ISNULL(SUM(d.LINESUM),0) FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=? GROUP BY d.SHKA ORDER BY 3 DESC", new String[]{"name", "qty", "sum"}, month));
+            out.put("byUser", rowsJson(c, "SELECT ISNULL(CAST(u.user_name AS nvarchar(100)),N'—'), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s LEFT JOIN dbo.sys_users u ON u.user_id=s.userid WHERE" + live + "AND s.[date]>=? GROUP BY u.user_name ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
+            out.put("topCustomers", rowsJson(c, "SELECT TOP (8) CAST(MAX(cu.MONAME) AS nvarchar(500)), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s JOIN dbo.CUSTOMERS cu ON cu.SHMO=s.shmo WHERE" + live + "AND s.[date]>=? GROUP BY s.shmo ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
+            out.put("topProducts", rowsJson(c, "SELECT TOP (8) CAST(MAX(d.naka) AS nvarchar(500)), ISNULL(SUM(d.TEDVAH),0), ISNULL(SUM(d.LINESUM),0) FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=? GROUP BY d.SHKA ORDER BY 3 DESC", new String[]{"name", "qty", "sum"}, month));
             String from60 = MeelanoJalali.addDays(today, -59);
-            out.put("lowStock", rowsJson(c, "SELECT TOP (40) i.naka, ISNULL(i.mojkavah,0), i.shka FROM dbo.inventory i WHERE ISNULL(i.mojkavah,0) <= 5 AND i.shka IN (SELECT d.SHKA FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=?) ORDER BY ISNULL(i.mojkavah,0), i.naka", new String[]{"name", "stock", "code"}, from60));
+            out.put("lowStock", rowsJson(c, "SELECT TOP (40) CAST(i.naka AS nvarchar(500)), ISNULL(i.mojkavah,0), i.shka FROM dbo.inventory i WHERE ISNULL(i.mojkavah,0) <= 5 AND i.shka IN (SELECT d.SHKA FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=?) ORDER BY ISNULL(i.mojkavah,0), i.naka", new String[]{"name", "stock", "code"}, from60));
             try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT COUNT(*), SUM(CASE WHEN ISNULL(mojkavah,0)*ISNULL(NULLIF(mohvah,0),1)+ISNULL(mojkajoz,0) > 0 THEN 1 ELSE 0 END) FROM dbo.inventory")) {
                 if (r.next()) { JSONObject o = new JSONObject(); o.put("total", r.getLong(1)); o.put("inStock", r.getLong(2)); out.put("stock", o); }
             } catch (Exception ignored) { }
@@ -21103,7 +21104,7 @@ public class MainActivity extends Activity {
     private void queryStoreDebts(Connection c, JSONObject out, int todayDay, int creditDays) throws Exception {
         Map<Integer, String> visName = new HashMap<>();
         int latifi = 0, khodayar = 0;
-        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT vis_rdf, ISNULL(vis_name,N''), LOWER(LTRIM(RTRIM(ISNULL(Username,N'')))) FROM dbo.visitors")) {
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT vis_rdf, ISNULL(CAST(vis_name AS nvarchar(250)),N''), LOWER(LTRIM(RTRIM(ISNULL(CAST(Username AS nvarchar(120)),N'')))) FROM dbo.visitors")) {
             while (r.next()) {
                 int id = r.getInt(1); String name = stringOr(r.getString(2), "").trim(); String u = stringOr(r.getString(3), "");
                 if (name.contains("/")) name = name.substring(0, name.indexOf('/')).trim();
@@ -21113,7 +21114,7 @@ public class MainActivity extends Activity {
             }
         }
         Map<Long, JSONObject> debtors = new LinkedHashMap<>();
-        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT SHMO, ISNULL(MONAME,N''), man, ISNULL(vis_rdf,0), ISNULL(cell,N''), ISNULL(tell1,N'') FROM dbo.CUSTOMERS WHERE man > 0 ORDER BY man DESC")) {
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT SHMO, ISNULL(CAST(MONAME AS nvarchar(500)),N''), man, ISNULL(vis_rdf,0), ISNULL(CAST(cell AS nvarchar(60)),N''), ISNULL(CAST(tell1 AS nvarchar(60)),N'') FROM dbo.CUSTOMERS WHERE man > 0 ORDER BY man DESC")) {
             while (r.next()) {
                 JSONObject o = new JSONObject();
                 long shmo = r.getLong(1); String name = stringOr(r.getString(2), "").trim();
@@ -21434,9 +21435,13 @@ public class MainActivity extends Activity {
         r.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 10 : 18), 16, alpha(accent, 44)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL);
         TextView t = text(title, 11.4f, TEXT, Typeface.BOLD); t.setMaxLines(2); t.setEllipsize(TextUtils.TruncateAt.END); copy.addView(t, new LinearLayout.LayoutParams(-1, -2));
-        if (sub != null && !sub.isEmpty()) { TextView s = text(sub, 9.4f, MUTED, Typeface.BOLD); s.setMaxLines(2); copy.addView(s, new LinearLayout.LayoutParams(-1, -2)); }
+        if (sub != null && !sub.isEmpty()) { TextView s = text(sub, 9.4f, MUTED, Typeface.BOLD); s.setMaxLines(3); s.setTextDirection(View.TEXT_DIRECTION_RTL); copy.addView(s, new LinearLayout.LayoutParams(-1, -2)); }
         r.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        if (value != null) { TextView v = text(value, 11.2f, tc(accent), Typeface.BOLD); v.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL); r.addView(v, new LinearLayout.LayoutParams(-2, -2)); }
+        if (value != null) {
+            TextView v = text(value, 11.2f, tc(accent), Typeface.BOLD); v.setGravity(Gravity.CENTER); v.setSingleLine(true);
+            v.setPadding(dp(8), dp(4), dp(8), dp(4)); v.setBackground(rounded(alpha(accent, isLightTheme() ? 20 : 34), 999));
+            LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(-2, -2); vp.setMarginStart(dp(10)); vp.setMarginEnd(dp(2)); r.addView(v, vp);
+        }
         if (onClick != null) { r.setClickable(true); r.setFocusable(true); applyTouchFeedback(r); r.setOnClickListener(v -> onClick.run()); }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(6), 0, 0);
         parent.addView(r, lp);
@@ -21547,7 +21552,7 @@ public class MainActivity extends Activity {
         LinearLayout card = storeCard("مشتریانی که از سررسیدشان گذشته", formatNumber(overdue == null ? 0 : overdue.length()) + " مشتری • " + compactMoney(d.optDouble("overdueSum")) + " • مهلت پیش‌فرض " + formatNumber(d.optInt("creditDays")) + " روز", WARNING);
         if (aging != null) {
             List<MeelanoCharts.Point> pts = new ArrayList<>(); int[] cols = {SUCCESS, WARNING, mix(WARNING, DANGER, .5f), DANGER};
-            for (int i = 0; i < aging.length(); i++) { JSONObject o = aging.optJSONObject(i); pts.add(new MeelanoCharts.Point(o.optString("name") + " • " + formatNumber(o.optInt("count")) + " مشتری", o.optDouble("sum"), tc(cols[i % 4]))); }
+            for (int i = 0; i < aging.length(); i++) { JSONObject o = aging.optJSONObject(i); pts.add(new MeelanoCharts.Point(o.optString("name") + "، " + formatNumber(o.optInt("count")) + " مشتری", o.optDouble("sum"), tc(cols[i % 4]))); }
             addStoreChart(card, storeBars(WARNING).setPoints(pts, STORE_MONEY), 0);
             ((LinearLayout.LayoutParams) card.getChildAt(card.getChildCount() - 1).getLayoutParams()).height = MeelanoCharts.Bars.heightFor(pts.size(), getResources().getDisplayMetrics().density);
         }
@@ -21587,7 +21592,7 @@ public class MainActivity extends Activity {
     private void renderStoreReports() {
         JSONObject d = storeDataCache; if (d == null) { loadStoreReports(); return; }
         content.removeAllViews();
-        addHero("گزارش‌های فروشگاه", "به‌روز از آتیران • " + MeelanoCharts.fa(MeelanoJalali.shortLabel(d.optString("today"))));
+        addHero("گزارش‌های فروشگاه", d.optString("weekday") + " " + MeelanoCharts.fa(MeelanoJalali.shortLabel(d.optString("today"))) + " • به‌روز از آتیران");
         String[][] tabs = {{"debtors", "بدهکاران"}, {"overdue", "سررسید گذشته"}, {"sales", "فروش"}, {"products", "کالاها"}, {"customers", "مشتریان"}, {"attendance", "حضور و غیاب"}};
         HorizontalScrollView hs = new HorizontalScrollView(this); hs.setHorizontalScrollBarEnabled(false);
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL);
@@ -21629,7 +21634,7 @@ public class MainActivity extends Activity {
                 JSONArray rows = g.optJSONArray("rows");
                 for (int k = 0; rows != null && k < rows.length() && k < 150; k++) {
                     JSONObject o = rows.optJSONObject(k);
-                    String sub = (o.optDouble("overdue") > 0.5 ? "سررسید گذشته: " + compactMoney(o.optDouble("overdue")) : "در مهلت") + (o.optString("phone").isEmpty() ? "" : " • " + o.optString("phone"));
+                    String sub = (o.optDouble("overdue") > 0.5 ? "سررسید گذشته: " + compactMoney(o.optDouble("overdue")) : "در مهلت") + (o.optString("phone").isEmpty() ? "" : "\nتلفن: " + o.optString("phone"));
                     LinearLayout r = addStoreRow(list, o.optString("name"), sub, money(o.optDouble("man")), o.optDouble("overdue") > 0.5 ? WARNING : INFO, () -> openStoreCustomer(o));
                     r.setOnLongClickListener(v -> { openPhoneDialer(o.optString("phone")); return true; });
                 }
@@ -21657,7 +21662,7 @@ public class MainActivity extends Activity {
             JSONObject o = rows.optJSONObject(i);
             if (o.optInt("days") < storeOverdueMinDays) continue;
             String late = o.optInt("days") >= 999 ? "مانده از قبل" : formatNumber(o.optInt("days")) + " روز تأخیر";
-            String sub = late + " • " + o.optString("visName") + (o.optInt("open") > 0 ? " • قدیمی‌ترین فاکتور باز: " + MeelanoCharts.fa(o.optString("oldest")) : "");
+            String sub = late + "، ویزیتور: " + o.optString("visName") + (o.optInt("open") > 0 ? "\nقدیمی‌ترین فاکتور باز: " + MeelanoCharts.fa(o.optString("oldest")) : "");
             int accent = o.optInt("days") > 90 ? DANGER : o.optInt("days") > 30 ? mix(WARNING, DANGER, .5f) : WARNING;
             LinearLayout r = addStoreRow(list, o.optString("name"), sub + "\nمانده کل: " + money(o.optDouble("man")), compactMoney(o.optDouble("overdue")), accent, () -> openStoreCustomer(o));
             r.setOnLongClickListener(v -> { openPhoneDialer(o.optString("phone")); return true; });
@@ -21685,7 +21690,7 @@ public class MainActivity extends Activity {
             JSONObject o = rows.optJSONObject(i);
             String label = o.optString(monthLabels ? "month" : "name").replace('ي', 'ی').replace('ك', 'ک');
             if (monthLabels) label = MeelanoJalali.monthName(label + "/01") + " " + label.substring(0, Math.min(4, label.length()));
-            if (o.has("count")) label += " • " + formatNumber(o.optDouble("count")) + " فاکتور";
+            if (o.has("count")) label += "، " + formatNumber(o.optDouble("count")) + " فاکتور";
             pts.add(new MeelanoCharts.Point(label, o.optDouble("sum"), tc(pal[i % pal.length])));
         }
         if (monthLabels) Collections.reverse(pts);
@@ -21714,7 +21719,7 @@ public class MainActivity extends Activity {
         if (top != null && top.length() > 0) {
             LinearLayout c = storeCard("پرفروش‌ترین کالاهای " + d.optString("month"), "مبلغ و مقدار فروش", SUCCESS);
             List<MeelanoCharts.Point> pts = new ArrayList<>(); int[] pal = storePalette();
-            for (int i = 0; i < top.length(); i++) { JSONObject o = top.optJSONObject(i); pts.add(new MeelanoCharts.Point(o.optString("name").replace('ي', 'ی').replace('ك', 'ک') + " • " + formatNumber(o.optDouble("qty")), o.optDouble("sum"), tc(pal[i % pal.length]))); }
+            for (int i = 0; i < top.length(); i++) { JSONObject o = top.optJSONObject(i); pts.add(new MeelanoCharts.Point(o.optString("name").replace('ي', 'ی').replace('ك', 'ک') + "، " + formatNumber(o.optDouble("qty")), o.optDouble("sum"), tc(pal[i % pal.length]))); }
             addStoreChart(c, storeBars(SUCCESS).setPoints(pts, STORE_MONEY), 0);
             ((LinearLayout.LayoutParams) c.getChildAt(c.getChildCount() - 1).getLayoutParams()).height = MeelanoCharts.Bars.heightFor(pts.size(), getResources().getDisplayMetrics().density);
         }
@@ -21761,14 +21766,14 @@ public class MainActivity extends Activity {
         List<MeelanoCharts.Point> pts = new ArrayList<>(); int[] pal = {INFO, GOLD};
         int i = 0;
         for (Map.Entry<String, int[]> e : sum.entrySet()) {
-            pts.add(new MeelanoCharts.Point(storeStaffDisplay(e.getKey()) + " • " + formatNumber(e.getValue()[0]) + " روز", e.getValue()[1] / 60.0, tc(pal[i++ % 2])));
+            pts.add(new MeelanoCharts.Point(storeStaffDisplay(e.getKey()) + "، " + formatNumber(e.getValue()[0]) + " روز حضور", e.getValue()[1] / 60.0, tc(pal[i++ % 2])));
         }
         addStoreChart(c, storeBars(INFO).setPoints(pts, v -> MeelanoCharts.fa(String.valueOf(Math.round(v))) + " ساعت"), 0);
         ((LinearLayout.LayoutParams) c.getChildAt(c.getChildCount() - 1).getLayoutParams()).height = MeelanoCharts.Bars.heightFor(pts.size(), getResources().getDisplayMetrics().density);
         LinearLayout list = storeCard("ریز ورود و خروج (۴۰ روز اخیر)", null, navAccent("attendance"));
         int n = 0;
         for (JSONObject day : days) {
-            addStoreRow(list, day.optString("name") + " • " + MeelanoJalali.weekday(day.optString("date")) + " " + MeelanoCharts.fa(day.optString("date")),
+            addStoreRow(list, day.optString("name") + "، " + MeelanoJalali.weekday(day.optString("date")) + " " + MeelanoCharts.fa(day.optString("date")),
                     "ورود: " + stringOr(MeelanoCharts.fa(day.optString("in")), "—") + "   خروج: " + stringOr(MeelanoCharts.fa(day.optString("out")), "—"),
                     hoursText(day.optInt("minutes")), day.optString("out").isEmpty() ? WARNING : SUCCESS, null);
             if (++n >= 80) break;
