@@ -14458,6 +14458,67 @@ public class MainActivity extends Activity {
         pendingProductImageKey = ""; pendingProductImageName = "";
     }
 
+    // ------------------------------------------------------------------
+    // Bundled product photos: assets/products/<key>.jpg (512x512), chosen by product name.
+    // Priority in applyProductImage: visitor's own photo > photo from Atiran > bundled photo > drawn picture.
+    // To add a photo: put <key>.jpg in assets/products and add its keywords in productPhotoKeyFor().
+    // ------------------------------------------------------------------
+    private final Set<String> missingProductPhotos = java.util.Collections.synchronizedSet(new HashSet<String>());
+
+    private String productPhotoKey(JSONObject r) {
+        if (r == null) return null;
+        String forced = prefs == null ? "" : prefs.getString(productVisualOverrideKey(r), "");
+        if (forced != null && !forced.trim().isEmpty()) return productPhotoKeyForType(forced.trim());
+        String key = productPhotoKeyFor(r.optString("نام", ""));
+        if (key == null) key = productPhotoKeyFor(r.optString("گروه", ""));
+        return key;
+    }
+
+    /** Photo for a visual type the visitor picked by hand ("اصلاح هوشمندی تصویر"); null keeps the drawn picture. */
+    private String productPhotoKeyForType(String type) {
+        if ("rice_bag".equals(type)) return "rice";
+        if ("oil_bottle".equals(type)) return "cooking_oil";
+        if ("tea_box".equals(type)) return "black_tea";
+        if ("pasta_pack".equals(type)) return "pasta";
+        if ("cheese".equals(type)) return "white_cheese";
+        if ("water_bottle".equals(type)) return "mineral_water";
+        if ("milk_carton".equals(type)) return "milk";
+        if ("dairy_cup".equals(type)) return "yogurt";
+        return null;
+    }
+
+    private String productPhotoKeyFor(String text) {
+        if (text == null || text.trim().isEmpty()) return null;
+        String t = productKeyText(text);
+        if (productHas(t, "شیر کاکائو", "شیرکاکائو", "شیر موز", "شیرموز")) return "milk";
+        if (productHas(t, "شیرینی", "شیرین", "شیره", "شیر خشک", "شیرخشک", "شیر برنج", "بستنی", "کیک", "بیسکویت", "بیسکوییت", "شکلات")) return null;
+        if (productHas(t, "ماست")) return "yogurt";
+        if (productHas(t, "پنیر")) return "white_cheese";
+        if (productHas(t, "شیر")) return "milk";
+        if (productHas(t, "آب معدنی", "اب معدنی", "آب آشامیدنی", "اب اشامیدنی")) return "mineral_water";
+        if (productHas(t, "مایع ظرف", "ظرفشویی", "ظرف شویی")) return productHas(t, "پودر", "قرص", "ماشین") ? null : "dish_soap";
+        if (productHas(t, "چای")) return productHas(t, "چای سبز", "چای ساز", "چایساز", "دمنوش", "لیوان", "قوری") ? null : "black_tea";
+        if (productHas(t, "برنج")) return "rice";
+        if (productHas(t, "ماکارونی", "ماکارانی", "پاستا")) return "pasta";
+        if (productHas(t, "رب")) return productHas(t, "انار", "آلو", "الو", "لیمو") ? null : "tomato_paste";
+        if (productHas(t, "روغن")) return productHas(t, "موتور", "ترمز", "بدن", "بچه", "ماساژ", "مو", "آرایشی", "ارایشی") ? null : "cooking_oil";
+        return null;
+    }
+
+    private Bitmap bundledProductPhoto(JSONObject r) {
+        String key = productPhotoKey(r);
+        if (key == null || missingProductPhotos.contains(key)) return null;
+        String cacheKey = "asset_photo|" + key;
+        Bitmap cached = productBitmapCache.get(cacheKey);
+        if (cached != null && !cached.isRecycled()) return cached;
+        try (InputStream in = getAssets().open("products/" + key + ".jpg")) {
+            Bitmap bmp = BitmapFactory.decodeStream(in);
+            if (bmp != null) { productBitmapCache.put(cacheKey, bmp); return bmp; }
+        } catch (Exception | OutOfMemoryError ignored) { }
+        missingProductPhotos.add(key);
+        return null;
+    }
+
     private boolean hasProductImage(JSONObject r) {
         if (visitorProductImageOverrideBitmap(r) != null) return true;
         String raw = r == null ? "" : r.optString("تصویر", "");
@@ -14480,7 +14541,8 @@ public class MainActivity extends Activity {
         if (img == null) return;
         Bitmap local = visitorProductImageOverrideBitmap(r);
         if (local != null) { img.clearColorFilter(); img.setImageBitmap(local); return; }
-        Bitmap smart = smartProductBitmap(r);
+        Bitmap smart = bundledProductPhoto(r);
+        if (smart == null) smart = smartProductBitmap(r);
         if (smart != null) { img.clearColorFilter(); img.setImageBitmap(smart); } else { img.setImageResource(R.drawable.mi_inventory_2); img.setColorFilter(alpha(MUTED, 200)); }
         if (!decodeRealImage || !hasProductImage(r)) return;
         String raw = r.optString("تصویر", "").trim();
