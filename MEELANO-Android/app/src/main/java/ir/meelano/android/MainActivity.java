@@ -1010,6 +1010,10 @@ public class MainActivity extends Activity {
                 ON_PRIMARY = Color.rgb(20, 16, 10);
             }
         }
+        // One accent per theme (G4): the second accent is a lighter shade of the main colour instead of
+        // a different hue (Dark 3 used purple titles on turquoise buttons; Emerald used green on brown).
+        GOLD_2 = mix(GOLD, Color.WHITE, 0.32f);
+        try { readableColorCache.clear(); } catch (Exception ignored) { }
         applySystemBarStyle();
     }
 
@@ -1960,6 +1964,23 @@ public class MainActivity extends Activity {
         return t.isEmpty() ? "Meelano Visit" : t;
     }
 
+    /** One label everywhere for "add to cart with price tier N" (G2/G3). */
+    private static final String PRICE1_BUTTON = "قیمت ۱";
+    private static final String PRICE2_BUTTON = "قیمت ۲";
+
+    /** Shows ASCII digits as Persian digits (product codes, barcodes) — display only. */
+    /** True when the user picked a large system font or the app's large text size (G7). */
+    private boolean largeFontScale() {
+        try { return getResources().getConfiguration().fontScale >= 1.15f; } catch (Exception e) { return false; }
+    }
+
+    private static String faDigits(String v) {
+        if (v == null) return "";
+        StringBuilder b = new StringBuilder(v.length());
+        for (int k = 0; k < v.length(); k++) { char ch = v.charAt(k); b.append(ch >= '0' && ch <= '9' ? (char) ('\u06F0' + (ch - '0')) : ch); }
+        return b.toString();
+    }
+
     private EditText input(String hint, String value, boolean password) {
         EditText e = new EditText(this);
         e.setSingleLine(true);
@@ -1979,7 +2000,19 @@ public class MainActivity extends Activity {
         e.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         e.setMinHeight(dp(48));
         if (password) attachPasswordToggle(e);
+        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !latinFieldHint(hint)) {
+            // Search/name/address fields: ask the keyboard for Persian first (G6).
+            try { e.setImeHintLocales(new android.os.LocaleList(new Locale("fa", "IR"), Locale.US)); } catch (Exception ignored) { }
+        }
         return e;
+    }
+
+    /** Fields that normally hold Latin text (user names, server addresses, ports, IDs). */
+    private static boolean latinFieldHint(String hint) {
+        String h = hint == null ? "" : hint.toLowerCase(Locale.US);
+        for (String k : new String[]{"کاربری", "user", "سرور", "آدرس سرویس", "دامنه", "ip", "پورت", "port", "ایمیل", "email", "url", "http", "client", "شناسه", "رمز", "کلید", "token"})
+            if (h.contains(k)) return true;
+        return false;
     }
 
     /** Eye icon on the left edge of a password field that shows/hides the password. */
@@ -2044,6 +2077,13 @@ public class MainActivity extends Activity {
             }
         });
         e.setText(value == 0 && hint != null && hint.contains("تخفیف") ? "" : plainNumber(value));
+        return e;
+    }
+
+    /** Quantity field: same Persian-digit numeric field as the cart edit form (G5). */
+    private EditText qtyInput(String hint, String value) {
+        EditText e = numberInput(hint, 0, true);
+        e.setText(value == null ? "" : value);
         return e;
     }
 
@@ -8729,7 +8769,7 @@ public class MainActivity extends Activity {
         head.addView(avatar, new LinearLayout.LayoutParams(dp(54), dp(54)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         TextView name = text(r.optString("نام", "مشتری"), 15.5f, TEXT, Typeface.BOLD); name.setSingleLine(true); name.setEllipsize(TextUtils.TruncateAt.END); copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("کد " + r.optString("کد", "—") + " • آخرین خرید: " + stringOr(r.optString("آخرین_خرید", ""), "—"), 10.2f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("کد " + faDigits(r.optString("کد", "—")) + " • آخرین خرید: " + stringOr(r.optString("آخرین_خرید", ""), "—"), 10.2f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         head.addView(pill(balance > 0 ? "بدهکار" : (balance < 0 ? "بستانکار" : "پایدار"), accent, false), new LinearLayout.LayoutParams(-2, -2));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
@@ -8793,7 +8833,7 @@ public class MainActivity extends Activity {
         TextView nameView = text(name, 15.8f, TEXT, Typeface.BOLD);
         nameView.setSingleLine(true); nameView.setEllipsize(TextUtils.TruncateAt.END);
         copy.addView(nameView, new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("کد " + r.optString("کد", "-") + " • آخرین خرید: " + stringOr(r.optString("آخرین_خرید", ""), "—"), 10.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("کد " + faDigits(r.optString("کد", "-")) + " • آخرین خرید: " + stringOr(r.optString("آخرین_خرید", ""), "—"), 10.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         TextView chip = pill(statusText, accent, false);
         head.addView(chip, new LinearLayout.LayoutParams(-2, -2));
@@ -9533,7 +9573,7 @@ public class MainActivity extends Activity {
         addVisitorSimpleLuxuryHero(data);
         addVisitorTodayOverview(data);
         addVisitorHomeCharts(data);
-        addVisitorCartSnapshotCard();
+        if (cartHasItems()) addVisitorCartSnapshotCard(); // an empty cart card only repeated the cart page (G8)
         addVisitorQuietOpportunitiesCard(data);
         addVisitorMoreGatewayCard();
     }
@@ -9628,22 +9668,10 @@ public class MainActivity extends Activity {
         c.addView(hint, new LinearLayout.LayoutParams(-1, -2));
         addVisitorOverviewVisual(c, amount, prefCount, visits, target, remain);
 
+        // Visits, pre-invoice count and the remaining goal are already in the visual above; show each number once (G8).
         LinearLayout row1 = new LinearLayout(this); row1.setOrientation(LinearLayout.HORIZONTAL);
-        row1.addView(visitorMetricBox("پیش‌فاکتور", formatNumber(prefCount), navAccent("cart")), weightedMiniLp());
-        row1.addView(visitorMetricBox("مبلغ امروز", money(amount), GOLD_2), weightedMiniLp());
+        row1.addView(visitorMetricBox("مبلغ پیش‌فاکتورهای امروز", money(amount), accent), weightedMiniLp());
         LinearLayout.LayoutParams r1p = new LinearLayout.LayoutParams(-1, -2); r1p.setMargins(0, dp(10), 0, 0); c.addView(row1, r1p);
-
-        LinearLayout row2 = new LinearLayout(this); row2.setOrientation(LinearLayout.HORIZONTAL);
-        row2.addView(visitorMetricBox("سبد فعلی", cartCountSummary(), cartHasItems() ? SUCCESS : INFO), weightedMiniLp());
-        row2.addView(visitorMetricBox("مانده تا هدف", target > 0 ? money(remain) : "ثبت نشده", target > 0 && remain <= 0 ? SUCCESS : WARNING), weightedMiniLp());
-        LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(-1, -2); r2p.setMargins(0, dp(7), 0, 0); c.addView(row2, r2p);
-
-        LinearLayout row3 = new LinearLayout(this); row3.setOrientation(LinearLayout.HORIZONTAL);
-        row3.addView(visitorMetricBox("ویزیت ثبت‌شده", formatNumber(visits), accent), weightedMiniLp());
-        row3.addView(visitorMetricBox("مبلغ سبد", cartHasItems() ? money(cartTotal()) : "۰", navAccent("cart")), weightedMiniLp());
-        LinearLayout.LayoutParams r3p = new LinearLayout.LayoutParams(-1, -2); r3p.setMargins(0, dp(7), 0, 0); c.addView(row3, r3p);
-
-        if (target > 0) addVisitorProgressLine(c, "فقط اطلاع‌رسانی هدف", money(amount) + " ثبت‌شده / " + money(target), Math.min(1d, amount / Math.max(1d, target)), target > 0 && remain <= 0 ? SUCCESS : GOLD_2);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
     }
 
@@ -9687,8 +9715,11 @@ public class MainActivity extends Activity {
         int accent = navAccent("visitor_dashboard");
         panel.setBackground(gradient(new int[]{alpha(accent, isLightTheme() ? 24 : 38), alpha(GOLD_2, isLightTheme() ? 20 : 34), alpha(SURFACE, 246)}, GradientDrawable.Orientation.TL_BR, 26));
         double progress = target > 0 ? Math.min(1d, amount / Math.max(1d, target)) : (amount > 0 ? .62d : .18d);
-        String pct = target > 0 ? formatNumber(Math.round(progress * 100)) + "٪" : formatNumber(prefCount);
-        VisitorGoalRingView ring = new VisitorGoalRingView(this, progress, pct, target > 0 ? "هدف" : "پیش‌فاکتور");
+        // Without a goal the ring shows the visit→pre-invoice conversion, so it never repeats the chip counts (G8).
+        double conversion = visits > 0 ? Math.min(1d, prefCount / (double) visits) : 0d;
+        if (target <= 0) progress = conversion;
+        String pct = formatNumber(Math.round(progress * 100)) + "٪";
+        VisitorGoalRingView ring = new VisitorGoalRingView(this, progress, pct, target > 0 ? "هدف" : "تبدیل");
         panel.addView(ring, new LinearLayout.LayoutParams(dp(132), dp(132)));
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.VERTICAL);
@@ -9704,7 +9735,7 @@ public class MainActivity extends Activity {
         chips.addView(overviewCountChip("پیش‌فاکتور", prefCount, navAccent("cart")), chip2);
         LinearLayout.LayoutParams chipsLp = new LinearLayout.LayoutParams(-1, -2); chipsLp.setMargins(0, dp(8), 0, 0);
         right.addView(chips, chipsLp);
-        if (visits > 0) {
+        if (visits > 0 && target > 0) {
             float conv = Math.max(0f, Math.min(1f, prefCount / (float) visits));
             LinearLayout convRow = new LinearLayout(this);
             convRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -9729,7 +9760,7 @@ public class MainActivity extends Activity {
     private void addVisitorHomeCharts(JSONObject data) {
         LinearLayout c = card();
         c.setBackground(themedSectionBg("visitor_dashboard", 30));
-        c.addView(visitorSectionTitle("نمودارهای سریع و دقیق", "◈", GOLD_2), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(visitorSectionTitle("نمودارهای سریع و دقیق", "◈", navAccent("visitor_dashboard")), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("نمودارها سبک هستند و فقط با بروزرسانی دستی دوباره خوانده می‌شوند.", 10.1f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout trendPanel = visitorChartPanel("روند ۷ روزه پیش‌فاکتور", "جمع مبلغ ثبت‌شده هر روز", navAccent("visit"));
@@ -9738,22 +9769,40 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams lcp = new LinearLayout.LayoutParams(-1, dp(174)); lcp.setMargins(0, dp(8), 0, 0); trendPanel.addView(line, lcp);
         c.addView(trendPanel, chartPanelLp());
 
-        LinearLayout two = new LinearLayout(this); two.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout status = visitorChartPanel("وضعیت پیش‌فاکتور", "۳۰ روز اخیر", navAccent("cart"));
+        // Empty charts are hidden instead of showing a blank box (G9); price tiers use the theme accent (G4).
         JSONArray statusRows = data == null ? null : data.optJSONArray("prefactorStatus");
-        VisitorDonutChartView donut = new VisitorDonutChartView(this, statusRows, "پیش‌فاکتور");
-        status.addView(donut, new LinearLayout.LayoutParams(-1, dp(154)));
-        addVisitorStatusLegend(status, statusRows);
-        two.addView(status, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        LinearLayout price = visitorChartPanel("قیمت ۱ / ۲", "مبلغ امروز", WARNING);
         JSONArray tiers = data == null ? null : data.optJSONArray("priceTiers");
-        price.addView(new BarChartView(this, tiers, WARNING), new LinearLayout.LayoutParams(-1, dp(154)));
-        addVisitorPriceTierLegend(price, tiers);
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, -2, 1f); plp.setMargins(dp(6), 0, 0, 0); two.addView(price, plp);
-        LinearLayout.LayoutParams twop = new LinearLayout.LayoutParams(-1, -2); twop.setMargins(0, dp(8), 0, 0); c.addView(two, twop);
+        boolean statusOk = hasPositiveRow(statusRows), tiersOk = hasPositiveRow(tiers);
+        if (statusOk || tiersOk) {
+            LinearLayout two = new LinearLayout(this); two.setOrientation(LinearLayout.HORIZONTAL);
+            if (statusOk) {
+                LinearLayout status = visitorChartPanel("وضعیت پیش‌فاکتور", "۳۰ روز اخیر", navAccent("cart"));
+                VisitorDonutChartView donut = new VisitorDonutChartView(this, statusRows, "پیش‌فاکتور");
+                status.addView(donut, new LinearLayout.LayoutParams(-1, dp(154)));
+                addVisitorStatusLegend(status, statusRows);
+                two.addView(status, new LinearLayout.LayoutParams(0, -2, 1f));
+            }
+            if (tiersOk) {
+                int pa = navAccent("visitor_dashboard");
+                LinearLayout price = visitorChartPanel("قیمت ۱ / ۲", "مبلغ امروز", pa);
+                price.addView(new BarChartView(this, tiers, pa), new LinearLayout.LayoutParams(-1, dp(154)));
+                addVisitorPriceTierLegend(price, tiers);
+                LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, -2, 1f); if (statusOk) plp.setMargins(dp(6), 0, 0, 0); two.addView(price, plp);
+            }
+            LinearLayout.LayoutParams twop = new LinearLayout.LayoutParams(-1, -2); twop.setMargins(0, dp(8), 0, 0); c.addView(two, twop);
+        }
 
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
+    }
+
+    /** True when at least one row has a positive number in any field (used to hide empty charts). */
+    private boolean hasPositiveRow(JSONArray rows) {
+        for (int i = 0; rows != null && i < rows.length(); i++) {
+            JSONObject o = rows.optJSONObject(i); if (o == null) continue;
+            java.util.Iterator<String> it = o.keys();
+            while (it.hasNext()) { Object v = o.opt(it.next()); if (v instanceof Number && ((Number) v).doubleValue() > 0) return true; }
+        }
+        return false;
     }
 
     private LinearLayout visitorChartPanel(String title, String sub, int accent) {
@@ -9872,7 +9921,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams r1p = new LinearLayout.LayoutParams(-1, -2); r1p.setMargins(0, dp(9), 0, 0); grid.addView(r1, r1p);
         LinearLayout r2 = new LinearLayout(this); r2.setOrientation(LinearLayout.HORIZONTAL);
         addVisitorVisitTile(r2, "سبد", "فقط پیش‌فاکتور", "🛒", navAccent("cart"), () -> showApp("cart"));
-        addVisitorVisitTile(r2, "ثبت نتیجه", "یادداشت بازدید اختیاری", "✓", SUCCESS, () -> { if (visitorCartCustomer != null) showVisitResultDialog(visitorCartCustomer); else showNotice("اول مشتری را انتخاب کن.", false); });
+        addVisitorVisitTile(r2, "ثبت نتیجه", "یادداشت بازدید اختیاری", "✓", navAccent("visitor_more"), () -> { if (visitorCartCustomer != null) showVisitResultDialog(visitorCartCustomer); else showNotice("اول مشتری را انتخاب کن.", false); });
         LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(-1, -2); r2p.setMargins(0, dp(7), 0, 0); grid.addView(r2, r2p);
         LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(-1, -2); gp.setMargins(0, 0, 0, dp(12)); content.addView(grid, gp);
     }
@@ -9899,19 +9948,19 @@ public class MainActivity extends Activity {
         addVisitorMoreGroup("گزارش‌ها و پیش‌فاکتور", "گزارش‌های لازم بدون شلوغ کردن خانه", new VisitorToolSpec[]{
                 new VisitorToolSpec("گزارش‌ها", "امروز/هفته/ماه", "↗", navAccent("visitor_reports"), () -> showApp("visitor_reports"), canOpenPage("visitor_reports")),
                 new VisitorToolSpec("پیش‌فاکتورهای من", "لیست و وضعیت", "▤", navAccent("cart"), () -> loadMyPrefactors(), canUsePermission("prefactor_list")),
-                new VisitorToolSpec("پایان روز", "جمع‌بندی اختیاری", "◎", GOLD_2, () -> showEndOfDayReportDialog(), canUsePermission("day_report")),
-                new VisitorToolSpec("صف آفلاین", formatNumber(offlineQueue().length()) + " مورد", "⇅", offlineQueue().length() > 0 ? DANGER : SUCCESS, () -> trySendOfflineQueue(), canUsePermission("offline_queue"))
+                new VisitorToolSpec("پایان روز", "جمع‌بندی اختیاری", "◎", navAccent("visitor_more"), () -> showEndOfDayReportDialog(), canUsePermission("day_report")),
+                new VisitorToolSpec("صف آفلاین", formatNumber(offlineQueue().length()) + " مورد", "⇅", offlineQueue().length() > 0 ? DANGER : navAccent("visitor_more"), () -> trySendOfflineQueue(), canUsePermission("offline_queue"))
         });
         addVisitorMoreGroup("مشتری و کالا", "ابزارهای فروش سریع", new VisitorToolSpec[]{
                 new VisitorToolSpec("مشتریان", "جستجو و پیگیری", "♙", navAccent("customers"), () -> showApp("customers"), canOpenPage("customers")),
                 new VisitorToolSpec("انتخاب مشتری", "برای سبد فعلی", "+", navAccent("customers"), () -> showCartCustomerPicker(""), canUsePermission("customer_select")),
                 new VisitorToolSpec("کالا", "قیمت ۱ و ۲", "◈", navAccent("showcase"), () -> showApp("showcase"), canOpenPage("showcase")),
-                new VisitorToolSpec("کدخوان", "جستجوی کالا", "⌕", INFO, () -> showBarcodeSearchDialog(), canOpenPage("showcase"))
+                new VisitorToolSpec("کدخوان", "جستجوی کالا", "⌕", navAccent("visitor_more"), () -> showBarcodeSearchDialog(), canOpenPage("showcase"))
         });
         addVisitorMoreGroup("ابزارهای کمکی", "چیزهایی که هر روز لازم نیستند", new VisitorToolSpec[]{
-                new VisitorToolSpec("پیش‌نویس‌ها", formatNumber(localDrafts().length()) + " ذخیره", "✎", WARNING, () -> showSavedDraftsDialog(), canUsePermission("cart_draft")),
-                new VisitorToolSpec("حضور", "ورود و خروج", "◷", SUCCESS, () -> showApp("attendance"), canOpenPage("attendance")),
-                new VisitorToolSpec("گفتگو", "پیام‌ها", "✉", INFO, () -> showApp("chat"), canOpenPage("chat")),
+                new VisitorToolSpec("پیش‌نویس‌ها", formatNumber(localDrafts().length()) + " ذخیره", "✎", navAccent("visitor_more"), () -> showSavedDraftsDialog(), canUsePermission("cart_draft")),
+                new VisitorToolSpec("حضور", "ورود و خروج", "◷", navAccent("visitor_more"), () -> showApp("attendance"), canOpenPage("attendance")),
+                new VisitorToolSpec("گفتگو", "پیام‌ها", "✉", navAccent("visitor_more"), () -> showApp("chat"), canOpenPage("chat")),
                 new VisitorToolSpec("تنظیمات", "تم و دسترسی", "⚙", accent, () -> showApp("settings"), canOpenPage("settings"))
         });
     }
@@ -10316,7 +10365,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(-1, -2); r2p.setMargins(0, dp(7), 0, 0); c.addView(row2, r2p);
         LinearLayout row3 = new LinearLayout(this); row3.setOrientation(LinearLayout.HORIZONTAL);
         addVisitorLaunchTile(row3, "پیش‌فاکتورها", "لیست و تبدیل", "▤", navAccent("visitor_reports"), () -> loadMyPrefactors());
-        addVisitorLaunchTile(row3, "کدخوان", "جستجوی کالا", "⌕", INFO, () -> showBarcodeSearchDialog());
+        addVisitorLaunchTile(row3, "کدخوان", "جستجوی کالا", "⌕", navAccent("visitor_more"), () -> showBarcodeSearchDialog());
         LinearLayout.LayoutParams r3p = new LinearLayout.LayoutParams(-1, -2); r3p.setMargins(0, dp(7), 0, 0); c.addView(row3, r3p);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
     }
@@ -10564,14 +10613,14 @@ public class MainActivity extends Activity {
         head.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         copy.addView(text("کالا", 17.4f, tc(GOLD_2), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + " • " + formatNumber(p2) + " با قیمت ۲", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + (visitorCartItems != null && visitorCartItems.length() > 0 ? " • " + formatNumber(visitorCartItems.length()) + " قلم در سبد" : ""), 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         ImageView cart = new ImageView(this); cart.setImageResource(R.drawable.mi_shopping_cart); cart.setColorFilter(onColorFor(navAccent("cart"))); cart.setScaleType(ImageView.ScaleType.CENTER_INSIDE); cart.setPadding(dp(12), dp(12), dp(12), dp(12)); cart.setBackground(luxuryButtonBg(navAccent("cart"), true, 999)); cart.setContentDescription("سبد خرید، " + cartCountText() + " قلم"); cart.setClickable(true); applyTouchFeedback(cart); cart.setOnClickListener(v -> showApp("cart"));
         head.addView(cart, new LinearLayout.LayoutParams(dp(46), dp(46)));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout search = new LinearLayout(this); search.setOrientation(LinearLayout.HORIZONTAL); search.setGravity(Gravity.CENTER_VERTICAL);
-        EditText input = input("جستجوی نام، کد یا بارکد…", q, false);
+        EditText input = input(largeFontScale() ? "نام، کد یا بارکد" : "جستجوی نام، کد یا بارکد…", q, false); input.setEllipsize(TextUtils.TruncateAt.END);
         input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         search.addView(input, new LinearLayout.LayoutParams(0, dp(48), 1f));
         Button go = themedActionButton("جستجو", GOLD, true); go.setTextSize(fs(9.2f)); go.setOnClickListener(v -> loadShowcase(input.getText().toString().trim(), f));
@@ -10584,7 +10633,7 @@ public class MainActivity extends Activity {
         HorizontalScrollView hs = new HorizontalScrollView(this); styleHorizontalScroll(hs); hs.setHorizontalScrollBarEnabled(false);
         hs.setHorizontalFadingEdgeEnabled(true); hs.setFadingEdgeLength(dp(28));
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setGravity(Gravity.CENTER_VERTICAL);
-        String[][] filters = {{"all","همه"},{"stock","موجود"},{"price2","قیمت ۲"},{"top","پرفروش"},{"low","کمبود"},{"priced","قیمت‌دار"},{"image","تصویردار"},{"package","بسته‌بندی"}};
+        String[][] filters = {{"all","همه"},{"stock","موجود"},{"top","پرفروش"},{"low","کمبود"},{"priced","قیمت‌دار"},{"image","تصویردار"},{"package","بسته‌بندی"}};
         for (String[] opt : filters) addVisitorFilterChip(chips, q, f, opt[0], opt[1]);
         Button addLocal = themedActionButton("کالای دستی", navAccent("cart"), false); addLocal.setTextSize(fs(8.4f)); addLocal.setOnClickListener(v -> showVisitorAddProductDialog(q, f));
         LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(dp(92), dp(44)); alp.setMargins(dp(3), 0, dp(3), 0); chips.addView(addLocal, alp);
@@ -10638,12 +10687,12 @@ public class MainActivity extends Activity {
     private void addVisitorSmartOfferBar(JSONArray rows, String query, String filter) {
         if (rows == null || rows.length() == 0) return;
         String suggestion = smartCartSuggestionText();
-        if (suggestion == null || suggestion.trim().isEmpty()) suggestion = "برای افزایش سبد، کالاهای دارای قیمت ۲ یا پرفروش همین فیلتر را اول معرفی کن.";
+        if (suggestion == null || suggestion.trim().isEmpty()) suggestion = "برای افزایش سبد، کالاهای پرفروش همین فیلتر را اول معرفی کن.";
         LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.HORIZONTAL); c.setGravity(Gravity.CENTER_VERTICAL); c.setPadding(dp(10), dp(8), dp(10), dp(8));
         c.setBackground(roundedStroke(alpha(GOLD, 18), 20, alpha(GOLD_2, 82)));
         TextView icon = text("💡", 18, tc(GOLD_2), Typeface.BOLD); icon.setGravity(Gravity.CENTER); c.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
         TextView t = text("پیشنهاد فروش: " + suggestion, 10.2f, alpha(TEXT, 225), Typeface.BOLD); t.setMaxLines(2); t.setEllipsize(TextUtils.TruncateAt.END); c.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
-        Button p2 = themedActionButton("قیمت ۲", WARNING, "price2".equals(filter)); p2.setTextSize(fs(8.4f)); p2.setOnClickListener(v -> loadShowcase(query, "price2"));
+        Button p2 = themedActionButton("پرفروش", navAccent("showcase"), "top".equals(filter)); p2.setTextSize(fs(8.4f)); p2.setOnClickListener(v -> loadShowcase(query, "top"));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(78), dp(44)); bp.setMargins(dp(6), 0, 0, 0); c.addView(p2, bp);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(10)); content.addView(c, cp);
     }
@@ -10651,7 +10700,7 @@ public class MainActivity extends Activity {
     private void addShowcaseFilters(String query, String active) {
         HorizontalScrollView scroll = new HorizontalScrollView(this); styleHorizontalScroll(scroll);
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
-        String[][] filters = {{"all","همه"},{"stock","موجود"},{"price2","قیمت ۲ دار"},{"top","پرفروش"},{"low","اتمام/کمبود"},{"idle","کم‌گردش"},{"priced","قیمت‌دار"},{"image","تصویردار"},{"package","بسته‌بندی"}};
+        String[][] filters = {{"all","همه"},{"stock","موجود"},{"top","پرفروش"},{"low","اتمام/کمبود"},{"idle","کم‌گردش"},{"priced","قیمت‌دار"},{"image","تصویردار"},{"package","بسته‌بندی"}};
         for (String[] f : filters) {
             Button b = f[0].equals(active) ? primaryButton(f[1]) : secondaryButton(f[1]);
             b.setTextSize(fs(9.5f)); b.setOnClickListener(v -> loadShowcase(query, f[0]));
@@ -10774,7 +10823,7 @@ public class MainActivity extends Activity {
         EditText unit = input("واحد شمارش", "عدد", false);
         EditText stock = numberInput("موجودی تقریبی", 0, true);
         EditText price1 = numberInput("قیمت فروش ۱ (ریال)", 0, true); price1.setText("");
-        EditText qty = input("تعداد برای افزودن به سبد", "1", false); qty.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText qty = qtyInput("تعداد برای افزودن به سبد", "1"); 
         for (EditText e : new EditText[]{name, code, unit, stock, price1}) { LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(48)); ep.setMargins(0, dp(7), 0, 0); box.addView(e, ep); }
         box.addView(price2AutoLine(price1), price2AutoLp());
         LinearLayout.LayoutParams qtyLp = new LinearLayout.LayoutParams(-1, dp(48)); qtyLp.setMargins(0, dp(7), 0, 0); box.addView(qty, qtyLp);
@@ -10858,7 +10907,6 @@ public class MainActivity extends Activity {
             addSearchBox("جستجوی کالا، کد یا بارکد…", query, q -> loadShowcase(q, filter));
             addShowcaseFilters(query, filter);
             addShowcaseIntelligencePanel(rows, query, filter);
-            addShowcasePrice2Panel(rows, query, filter);
         }
         LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); content.addView(list, new LinearLayout.LayoutParams(-1, -2));
         if (rows == null || rows.length() == 0) { addEmptyTo(list, "کالایی برای این فیلتر پیدا نشد."); addShowcaseFloatingCartBar(); return; }
@@ -10901,12 +10949,12 @@ public class MainActivity extends Activity {
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout metrics = new LinearLayout(this); metrics.setOrientation(LinearLayout.HORIZONTAL);
         metrics.addView(showcaseMetric("کالا", formatNumber(rows == null ? 0 : rows.length()), accent, false), showcaseCellLp(1f, 56));
-        metrics.addView(showcaseMetric("قیمت ۲", formatNumber(price2Count), WARNING, true), showcaseCellLp(1f, 56));
+        metrics.addView(showcaseMetric("قیمت‌دار", formatNumber(countPositive(rows, "قیمت_فروش")), accent, false), showcaseCellLp(1f, 56));
         metrics.addView(showcaseMetric("سبد", cartCountSummary(), navAccent("cart"), false), showcaseCellLp(1f, 56));
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(9), 0, 0); c.addView(metrics, mp);
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
         Button scan = themedActionButton("بارکد/کد", accent, false); scan.setTextSize(fs(9.2f)); scan.setOnClickListener(v -> showBarcodeSearchDialog());
-        Button p2 = themedActionButton("فقط قیمت ۲", WARNING, "price2".equals(filter)); p2.setTextSize(fs(9.2f)); p2.setOnClickListener(v -> loadShowcase(query, "price2"));
+        Button p2 = themedActionButton("پرفروش", accent, "top".equals(filter)); p2.setTextSize(fs(9.2f)); p2.setOnClickListener(v -> loadShowcase(query, "top"));
         Button cart = themedActionButton("رفتن به سبد", navAccent("cart"), true); cart.setTextSize(fs(9.2f)); cart.setOnClickListener(v -> showApp("cart"));
         actions.addView(scan, showcaseButtonLp(1f)); actions.addView(p2, showcaseButtonLp(1f)); actions.addView(cart, showcaseButtonLp(1f));
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(9), 0, 0); c.addView(actions, ap);
@@ -11022,7 +11070,6 @@ public class MainActivity extends Activity {
         row.addView(showcaseMetric("فیلتر", showcaseFilterLabel(filter), accent, false), showcaseCellLp(1f, 54));
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(8), 0, 0); c.addView(row, rp);
         LinearLayout priceRow = new LinearLayout(this); priceRow.setOrientation(LinearLayout.HORIZONTAL);
-        priceRow.addView(showcaseMetric("دارای قیمت ۲", formatNumber(countPositive(rows, "قیمت_فروش۲")), WARNING, true), showcaseCellLp(1f, 52));
         priceRow.addView(showcaseMetric("آماده فروش", formatNumber(countPositive(rows, "قیمت_فروش")), SUCCESS, false), showcaseCellLp(1f, 52));
         priceRow.addView(showcaseMetric("رندر سریع", compactUi() ? "سبک" : "مرحله‌ای", INFO, false), showcaseCellLp(1f, 52));
         LinearLayout.LayoutParams prp2 = new LinearLayout.LayoutParams(-1, -2); prp2.setMargins(0, dp(7), 0, 0); c.addView(priceRow, prp2);
@@ -11094,7 +11141,7 @@ public class MainActivity extends Activity {
         boolean selected = cartFindIndex(safeDisplayText(r.opt("کد"), "")) >= 0;
         boolean price1Ok = hasPositiveNumber(r, "قیمت_فروش");
         boolean price2Ok = hasPositiveNumber(r, "قیمت_فروش۲");
-        int accent = price2Ok ? GOLD_2 : vp.accent;
+        int accent = vp.accent;
         LinearLayout c = card();
         c.setPadding(dp(8), dp(7), dp(8), dp(7));
         c.setBackground(unifiedCardBg(selected ? SUCCESS : accent, 22, selected));
@@ -11120,21 +11167,18 @@ public class MainActivity extends Activity {
         name.setMaxLines(1);
         name.setEllipsize(TextUtils.TruncateAt.END);
         copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        TextView meta = text("موجودی: " + stockWithUnit(r) + "  •  کد: " + safeDisplayText(r.opt("کد"), "—"), 9.2f, MUTED, Typeface.BOLD);
+        TextView meta = text("موجودی: " + stockWithUnit(r) + "  •  کد: " + faDigits(safeDisplayText(r.opt("کد"), "—")), 9.2f, MUTED, Typeface.BOLD);
         meta.setSingleLine(true);
         meta.setEllipsize(TextUtils.TruncateAt.END);
         copy.addView(meta, new LinearLayout.LayoutParams(-1, -2));
-        TextView saleLine = text("قیمت فروش ۱: " + (price1Ok ? moneyOrDash(r, "قیمت_فروش") : "—") + "  •  قیمت فروش ۲: " + (price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—"), 9.3f, TEXT, Typeface.BOLD);
-        saleLine.setSingleLine(false); saleLine.setMaxLines(2); saleLine.setEllipsize(TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2); slp.setMargins(0, dp(4), 0, 0); copy.addView(saleLine, slp);
         LinearLayout prices = new LinearLayout(this);
         prices.setOrientation(LinearLayout.HORIZONTAL);
         prices.setGravity(Gravity.CENTER_VERTICAL);
-        TextView p1 = pill("فروش۱: " + (price1Ok ? moneyOrDash(r, "قیمت_فروش") : "—"), price1Ok ? SUCCESS : MUTED, false);
-        p1.setTextSize(fs(8.0f)); p1.setSingleLine(false); p1.setMaxLines(2); p1.setEllipsize(TextUtils.TruncateAt.END);
+        TextView p1 = pill("\u200Fقیمت ۱: " + (price1Ok ? moneyOrDash(r, "قیمت_فروش") : "—"), price1Ok ? navAccent("cart") : MUTED, false);
+        p1.setTextSize(fs(8.6f)); p1.setSingleLine(true); p1.setEllipsize(TextUtils.TruncateAt.END);
         prices.addView(p1, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView p2 = pill("\u200Fفروش ۲: " + (price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—"), price2Ok ? WARNING : MUTED, price2Ok);
-        p2.setTextSize(fs(8.0f)); p2.setSingleLine(false); p2.setMaxLines(2); p2.setEllipsize(TextUtils.TruncateAt.END);
+        TextView p2 = pill("\u200Fقیمت ۲: " + (price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—"), price2Ok ? navAccent("cart") : MUTED, false);
+        p2.setTextSize(fs(8.6f)); p2.setSingleLine(true); p2.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams p2p = new LinearLayout.LayoutParams(0, -2, 1f); p2p.setMargins(dp(5), 0, 0, 0); prices.addView(p2, p2p);
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(5), 0, 0); copy.addView(prices, prp);
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -11142,18 +11186,18 @@ public class MainActivity extends Activity {
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.VERTICAL);
         actions.setGravity(Gravity.CENTER);
-        Button add2 = themedActionButton(price2Ok ? "+۲" : "۲—", WARNING, price2Ok);
-        add2.setTextSize(fs(9.0f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .42f);
+        Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", navAccent("cart"), false);
+        add2.setTextSize(fs(8.8f)); add2.setContentDescription("افزودن یک عدد با قیمت ۲"); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .42f);
         add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-        Button add1 = themedActionButton("+۱", navAccent("cart"), true);
-        add1.setTextSize(fs(9.0f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
+        Button add1 = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true);
+        add1.setTextSize(fs(8.8f)); add1.setContentDescription("افزودن یک عدد با قیمت ۱"); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
         add1.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-        actions.addView(add2, new LinearLayout.LayoutParams(dp(52), dp(44)));
-        LinearLayout.LayoutParams a1p = new LinearLayout.LayoutParams(dp(52), dp(44)); a1p.setMargins(0, dp(5), 0, 0); actions.addView(add1, a1p);
-        row.addView(actions, new LinearLayout.LayoutParams(dp(54), -2));
+        actions.addView(add1, new LinearLayout.LayoutParams(dp(74), dp(44)));
+        LinearLayout.LayoutParams a2p = new LinearLayout.LayoutParams(dp(74), dp(44)); a2p.setMargins(0, dp(5), 0, 0); actions.addView(add2, a2p);
+        row.addView(actions, new LinearLayout.LayoutParams(dp(76), -2));
         c.addView(row, new LinearLayout.LayoutParams(-1, -2));
         if (selected) {
-            TextView chosen = pill("✓ در سبد • تعداد " + visitorCardQty(r), SUCCESS, false);
+            TextView chosen = pill("✓ در سبد: " + visitorCardQty(r), SUCCESS, false);
             LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(6), 0, 0); c.addView(chosen, cp);
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -11168,7 +11212,7 @@ public class MainActivity extends Activity {
         boolean price1Ok = hasPositiveNumber(r, "قیمت_فروش");
         boolean price2Ok = hasPositiveNumber(r, "قیمت_فروش۲");
         boolean inStock = jsonDouble(r, "موجودی", 0) > 0;
-        int accent = price2Ok ? GOLD_2 : vp.accent;
+        int accent = vp.accent;
         LinearLayout c = card();
         c.setPadding(dp(10), dp(10), dp(10), dp(10));
         c.setBackground(unifiedCardBg(selected ? SUCCESS : accent, 30, selected));
@@ -11203,21 +11247,20 @@ public class MainActivity extends Activity {
         name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
         copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        TextView group = text(safeDisplayText(r.opt("گروه"), vp.title) + " • کد " + safeDisplayText(r.opt("کد"), "—"), 9.8f, MUTED, Typeface.BOLD);
+        TextView group = text(safeDisplayText(r.opt("گروه"), vp.title) + " • کد " + faDigits(safeDisplayText(r.opt("کد"), "—")), 9.8f, MUTED, Typeface.BOLD);
         group.setMaxLines(1); group.setEllipsize(TextUtils.TruncateAt.END);
         copy.addView(group, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setGravity(Gravity.CENTER_VERTICAL);
         chips.addView(pill(inStock ? "موجود" : "ناموجود", inStock ? SUCCESS : DANGER, false), new LinearLayout.LayoutParams(-2, -2));
         TextView unit = pill("واحد " + unitOrDash(r), INFO, false); LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-2, -2); up.setMargins(dp(5), 0, 0, 0); chips.addView(unit, up);
-        if (price2Ok) { TextView p = pill("\u200Fقیمت ۲", WARNING, true); LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-2, -2); pp.setMargins(dp(5), 0, 0, 0); chips.addView(p, pp); }
         LinearLayout.LayoutParams chp = new LinearLayout.LayoutParams(-1, -2); chp.setMargins(0, dp(7), 0, 0); copy.addView(chips, chp);
         top.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         c.addView(top, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout priceRow = new LinearLayout(this);
         priceRow.setOrientation(LinearLayout.HORIZONTAL);
-        priceRow.addView(showcaseMetric("فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", WARNING, true), showcaseCellLp(1f, 58));
-        priceRow.addView(showcaseMetric("فروش ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 58));
+        priceRow.addView(showcaseMetric("قیمت ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", WARNING, true), showcaseCellLp(1f, 58));
+        priceRow.addView(showcaseMetric("قیمت ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 58));
         priceRow.addView(showcaseMetric("موجودی", stockWithUnit(r), inStock ? SUCCESS : DANGER, false), showcaseCellLp(1f, 58));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(9), 0, 0); c.addView(priceRow, prp);
         String p2q = "";
@@ -11231,18 +11274,18 @@ public class MainActivity extends Activity {
         if (canOpenPage("cart")) {
             LinearLayout actions = new LinearLayout(this);
             actions.setOrientation(LinearLayout.HORIZONTAL);
-            Button detail = themedActionButton("جزئیات/تعداد", accent, false); detail.setTextSize(fs(8.9f)); detail.setOnClickListener(v -> showShowcaseProductDialog(r, query, filter));
-            Button add2 = themedActionButton(price2Ok ? "افزودن قیمت ۲" : "قیمت ۲ ندارد", WARNING, price2Ok); add2.setTextSize(fs(8.8f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f);
+            Button detail = themedActionButton("جزئیات", accent, false); detail.setTextSize(fs(8.9f)); detail.setOnClickListener(v -> showShowcaseProductDialog(r, query, filter));
+            Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", navAccent("cart"), false); add2.setTextSize(fs(8.8f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f);
             add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-            Button add1 = themedActionButton(selected ? "بروزرسانی ۱" : "افزودن ۱", navAccent("cart"), true); add1.setTextSize(fs(8.9f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
+            Button add1 = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true); add1.setTextSize(fs(8.9f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
             add1.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-            actions.addView(detail, showcaseButtonLp(.92f));
-            actions.addView(add2, showcaseButtonLp(1.04f));
             actions.addView(add1, showcaseButtonLp(1f));
+            actions.addView(add2, showcaseButtonLp(1f));
+            actions.addView(detail, showcaseButtonLp(.92f));
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(9), 0, 0); c.addView(actions, ap);
         }
         if (selected) {
-            TextView chosen = pill("✓ داخل سبد • تعداد فعلی " + visitorCardQty(r), SUCCESS, false);
+            TextView chosen = pill("✓ در سبد: " + visitorCardQty(r), SUCCESS, false);
             LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(7), 0, 0); c.addView(chosen, cp);
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -11274,7 +11317,7 @@ public class MainActivity extends Activity {
         top.addView(img, new LinearLayout.LayoutParams(dp(imageDp), dp(imageDp)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(12), 0, dp(6), 0);
         TextView name = text(safeDisplayText(r.opt("نام"), "کالا"), 18.0f, TEXT, Typeface.BOLD); name.setMaxLines(2); copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("کد: " + safeDisplayText(r.opt("کد"), "—") + "  |  " + safeDisplayText(r.opt("گروه"), vp.title), 10.5f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("کد: " + faDigits(safeDisplayText(r.opt("کد"), "—")) + "  |  " + safeDisplayText(r.opt("گروه"), vp.title), 10.5f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout status = new LinearLayout(this); status.setOrientation(LinearLayout.HORIZONTAL);
         status.addView(pill(stockStatusLabel(r), stockStatusColor(r), false), new LinearLayout.LayoutParams(-2, -2));
         TextView unit = pill("واحد: " + unitOrDash(r), GOLD, false); LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-2, -2); up.setMargins(dp(6), 0, 0, 0); status.addView(unit, up);
@@ -11287,25 +11330,25 @@ public class MainActivity extends Activity {
         pricePanel.setBackground(unifiedInnerBg(price2Ok ? GOLD_2 : navAccent("showcase"), 22));
         pricePanel.addView(text("🏷  قیمت‌های کالا (ریال)", 14.0f, tc(GOLD_2), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout priceRow = new LinearLayout(this); priceRow.setOrientation(LinearLayout.HORIZONTAL);
-        priceRow.addView(showcaseMetric("فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD, true), showcaseCellLp(1f, 74));
-        priceRow.addView(showcaseMetric("فروش ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 74));
+        priceRow.addView(showcaseMetric("قیمت ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD, true), showcaseCellLp(1f, 74));
+        priceRow.addView(showcaseMetric("قیمت ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 74));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(8), 0, 0); pricePanel.addView(priceRow, prp);
         TextView profit = text("قیمت ۲ = قیمت ۱ + ۶٪  •  موجودی: " + stockWithUnit(r), 10.0f, tc(GOLD_2), Typeface.BOLD); profit.setGravity(Gravity.CENTER); profit.setPadding(dp(8), dp(7), dp(8), dp(7)); profit.setBackground(roundedStroke(alpha(GOLD, 24), 999, alpha(GOLD, 72)));
         LinearLayout.LayoutParams pfp = new LinearLayout.LayoutParams(-1, -2); pfp.setMargins(0, dp(8), 0, 0); pricePanel.addView(profit, pfp);
         LinearLayout.LayoutParams panelLp = new LinearLayout.LayoutParams(-1, -2); panelLp.setMargins(0, dp(11), 0, 0); c.addView(pricePanel, panelLp);
 
         if (canOpenPage("cart")) {
-            EditText qty = input("تعداد/وزن", cartQtyFor(safeDisplayText(r.opt("کد"), "")), false);
-            qty.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+            EditText qty = qtyInput("تعداد/وزن", cartQtyFor(safeDisplayText(r.opt("کد"), "")));
+            
             LinearLayout qtyRow = new LinearLayout(this); qtyRow.setOrientation(LinearLayout.HORIZONTAL); qtyRow.setGravity(Gravity.CENTER_VERTICAL);
             qtyRow.addView(qty, new LinearLayout.LayoutParams(0, dp(48), 1f));
             Button detail = themedActionButton("📷", GOLD, false); detail.setTextSize(fs(18)); detail.setOnClickListener(v -> showShowcaseProductDialog(r, query, filter));
             LinearLayout.LayoutParams dpLp = new LinearLayout.LayoutParams(dp(70), dp(48)); dpLp.setMargins(dp(8), 0, 0, 0); qtyRow.addView(detail, dpLp);
             LinearLayout.LayoutParams qrp = new LinearLayout.LayoutParams(-1, -2); qrp.setMargins(0, dp(11), 0, 0); c.addView(qtyRow, qrp);
             LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
-            Button add2 = themedActionButton(price2Ok ? "فروش ۲" : "قیمت ۲ ندارد", GOLD, price2Ok); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f); add2.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-            Button add1 = themedActionButton("فروش ۱", SUCCESS, true); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f); add1.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-            actions.addView(add2, showcaseButtonLp(1f)); actions.addView(add1, showcaseButtonLp(1f));
+            Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", navAccent("cart"), false); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f); add2.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+            Button add1 = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f); add1.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+            actions.addView(add1, showcaseButtonLp(1f)); actions.addView(add2, showcaseButtonLp(1f));
             if (selected) { Button del = themedActionButton("حذف", DANGER, false); del.setOnClickListener(v -> removeCartItemWithUndo(safeDisplayText(r.opt("کد"), ""), () -> rerenderShowcaseFast(query, filter))); actions.addView(del, showcaseButtonLp(.8f)); }
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(9), 0, 0); c.addView(actions, ap);
         }
@@ -11386,7 +11429,7 @@ public class MainActivity extends Activity {
         TextView name = text(safeDisplayText(r.opt("نام"), "کالا"), 16.2f, TEXT, Typeface.BOLD);
         name.setMaxLines(2);
         copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        TextView code = text("کد: " + safeDisplayText(r.opt("کد"), "—") + "   •   بارکد: " + safeDisplayText(r.opt("بارکد"), "—"), 10.6f, MUTED, Typeface.NORMAL);
+        TextView code = text("کد: " + faDigits(safeDisplayText(r.opt("کد"), "—")) + "   •   بارکد: " + faDigits(safeDisplayText(r.opt("بارکد"), "—")), 10.6f, MUTED, Typeface.NORMAL);
         code.setMaxLines(2);
         copy.addView(code, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setGravity(Gravity.CENTER_VERTICAL);
@@ -11407,7 +11450,7 @@ public class MainActivity extends Activity {
 
         LinearLayout priceRow = new LinearLayout(this); priceRow.setOrientation(LinearLayout.HORIZONTAL);
         priceRow.addView(showcaseMetric("قیمت فروش ۱", moneyOrDash(r, "قیمت_فروش"), GOLD, true), showcaseCellLp(1f, 64));
-        priceRow.addView(showcaseMetric("قیمت فروش ۲ ✦", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", WARNING, true), showcaseCellLp(1.12f, 64));
+        priceRow.addView(showcaseMetric("قیمت فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", WARNING, true), showcaseCellLp(1.12f, 64));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(11), 0, 0); c.addView(priceRow, prp);
         TextView price2Ribbon = text(price2Ok ? "قیمت فروش ۲ برای افزودن مستقیم آماده است" : "قیمت فروش ۲ برای این کالا ثبت نشده است", 9.6f, tc(price2Ok ? WARNING : MUTED), Typeface.BOLD);
         price2Ribbon.setGravity(Gravity.CENTER);
@@ -11429,8 +11472,8 @@ public class MainActivity extends Activity {
         if (!compactUi() && index < 8) addMiniInsightBars(c, "نبض کالا", new String[]{"موجودی", "فروش", "قیمت۲"}, new double[]{Math.max(0, jsonDouble(r, "موجودی", 0)), Math.max(0, jsonDouble(r, "مبلغ_فروش", 0)), Math.max(0, jsonDouble(r, "قیمت_فروش۲", 0))}, new int[]{jsonDouble(r, "موجودی", 0) > 0 ? SUCCESS : DANGER, GOLD, price2Ok ? WARNING : accent});
 
         if (canOpenPage("cart")) {
-            EditText qty = input("تعداد/وزن", cartQtyFor(safeDisplayText(r.opt("کد"), "")), false);
-            qty.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+            EditText qty = qtyInput("تعداد/وزن", cartQtyFor(safeDisplayText(r.opt("کد"), "")));
+            
             LinearLayout qtyRow = new LinearLayout(this); qtyRow.setOrientation(LinearLayout.HORIZONTAL); qtyRow.setGravity(Gravity.CENTER_VERTICAL);
             qtyRow.addView(qty, new LinearLayout.LayoutParams(0, dp(46), 1f));
             Button detail = themedActionButton("نمایش", accent, false); detail.setTextSize(fs(9.2f)); detail.setOnClickListener(v -> showShowcaseProductDialog(r, query, filter));
@@ -11442,11 +11485,11 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams qrp = new LinearLayout.LayoutParams(-1, -2); qrp.setMargins(0, dp(11), 0, 0); c.addView(qtyRow, qrp);
 
             LinearLayout action = new LinearLayout(this); action.setOrientation(LinearLayout.HORIZONTAL);
-            Button add = themedActionButton(selected ? "بروزرسانی با قیمت ۱" : "افزودن با قیمت ۱", navAccent("cart"), true);
+            Button add = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true);
             add.setTextSize(fs(9.4f));
             add.setEnabled(price1Ok); add.setAlpha(price1Ok ? 1f : 0.52f);
             add.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("کالا با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-            Button add2 = themedActionButton(price2Ok ? "افزودن با قیمت ۲ ✦" : "قیمت ۲ ثبت نشده", WARNING, price2Ok);
+            Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", navAccent("cart"), false);
             add2.setTextSize(fs(9.2f));
             add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : 0.52f);
             add2.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("کالا با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
@@ -11549,14 +11592,14 @@ public class MainActivity extends Activity {
         LinearLayout title = new LinearLayout(this); title.setOrientation(LinearLayout.VERTICAL);
         TextView name = text(safeDisplayText(r.opt("نام"), "کالا"), 17.2f, TEXT, Typeface.BOLD); name.setMaxLines(3); title.addView(name, new LinearLayout.LayoutParams(-1, -2));
         title.addView(text(vp.title + " • " + safeDisplayText(r.opt("گروه"), "بدون گروه"), 11.2f, tc(accent), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        title.addView(text("کد: " + safeDisplayText(r.opt("کد"), "—") + "\nبارکد: " + safeDisplayText(r.opt("بارکد"), "—"), 10.6f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        title.addView(text("کد: " + faDigits(safeDisplayText(r.opt("کد"), "—")) + "\nبارکد: " + faDigits(safeDisplayText(r.opt("بارکد"), "—")), 10.6f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         hero.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         box.addView(hero, new LinearLayout.LayoutParams(-1, -2));
 
         boolean price2Ok = hasPositiveNumber(r, "قیمت_فروش۲");
         LinearLayout prices = new LinearLayout(this); prices.setOrientation(LinearLayout.HORIZONTAL);
         prices.addView(showcaseMetric("قیمت فروش ۱", moneyOrDash(r, "قیمت_فروش"), accent, true), showcaseCellLp(1f, 66));
-        prices.addView(showcaseMetric("قیمت فروش ۲ ✦", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD_2, true), showcaseCellLp(1.1f, 66));
+        prices.addView(showcaseMetric("قیمت فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD_2, true), showcaseCellLp(1.1f, 66));
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, -2); pp.setMargins(0, dp(12), 0, 0); box.addView(prices, pp);
         String p2quality = price2QualityText(r);
         TextView p2Status = text(price2Ok ? (p2quality.isEmpty() ? "این کالا با قیمت فروش ۲ آماده افزودن به سبد است." : p2quality) : "برای این کالا قیمت فروش ۲ ثبت نشده یا مقدار آن صفر است.", 10.0f, tc(price2Ok ? GOLD_2 : MUTED), Typeface.BOLD);
@@ -11584,14 +11627,14 @@ public class MainActivity extends Activity {
         final Button[] photoRef = new Button[1];
         final Button[] editProductRef = new Button[1];
         if (canOpenPage("cart")) {
-            EditText qty = input("تعداد/وزن برای افزودن به سبد", cartQtyFor(safeDisplayText(r.opt("کد"), "")), false);
+            EditText qty = qtyInput("تعداد/وزن برای افزودن به سبد", cartQtyFor(safeDisplayText(r.opt("کد"), "")));
             qtyRef[0] = qty;
-            qty.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+            
             LinearLayout.LayoutParams qlp = new LinearLayout.LayoutParams(-1, dp(48)); qlp.setMargins(0, dp(12), 0, 0); box.addView(qty, qlp);
 
             LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
-            Button add1 = themedActionButton("افزودن قیمت ۱", navAccent("cart"), true); add1Ref[0] = add1;
-            Button add2 = themedActionButton(price2Ok ? "افزودن قیمت ۲ ✦" : "قیمت ۲ ندارد", GOLD_2, price2Ok); add2Ref[0] = add2;
+            Button add1 = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true); add1Ref[0] = add1;
+            Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", navAccent("cart"), false); add2Ref[0] = add2;
             boolean p1 = hasPositiveNumber(r, "قیمت_فروش");
             add1.setEnabled(p1); add1.setAlpha(p1 ? 1f : 0.52f); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : 0.52f);
             actions.addView(add1, showcaseButtonLp(1f)); actions.addView(add2, showcaseButtonLp(1f));
@@ -11985,7 +12028,7 @@ public class MainActivity extends Activity {
         if (rows == null || rows.length() == 0) c.addView(text("هنوز کالای پرتکرار در پیش‌فاکتورهای ماه ثبت نشده است.", 10.5f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         for (int i = 0; rows != null && i < rows.length(); i++) {
             JSONObject r = rows.optJSONObject(i); if (r == null) continue;
-            addVisitorReportRankLine(c, i + 1, r.optString("name", "کالا"), "کد " + r.optString("code", "—") + " • تعداد " + formatNumber(r.optDouble("qty", 0)) + " • قیمت۲ " + formatNumber(r.optLong("price2", 0)), money(r.optDouble("amount", 0)), navAccent("showcase"));
+            addVisitorReportRankLine(c, i + 1, r.optString("name", "کالا"), "کد " + faDigits(r.optString("code", "—")) + " • تعداد " + formatNumber(r.optDouble("qty", 0)) + (r.optLong("price2", 0) > 0 ? " • " + formatNumber(r.optLong("price2", 0)) + " بار با قیمت ۲" : ""), money(r.optDouble("amount", 0)), navAccent("showcase"));
         }
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
     }
@@ -11996,7 +12039,7 @@ public class MainActivity extends Activity {
         if (rows == null || rows.length() == 0) c.addView(text("هنوز مشتری کلیدی از پیش‌فاکتورهای ماه استخراج نشده است.", 10.5f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         for (int i = 0; rows != null && i < rows.length(); i++) {
             JSONObject r = rows.optJSONObject(i); if (r == null) continue;
-            addVisitorReportRankLine(c, i + 1, r.optString("name", "مشتری"), "کد " + r.optString("code", "—") + " • " + formatNumber(r.optLong("count", 0)) + " پیش‌فاکتور • آخرین: " + stringOr(r.optString("last", ""), "—"), money(r.optDouble("amount", 0)), navAccent("customers"));
+            addVisitorReportRankLine(c, i + 1, r.optString("name", "مشتری"), "کد " + faDigits(r.optString("code", "—")) + " • " + formatNumber(r.optLong("count", 0)) + " پیش‌فاکتور • آخرین: " + stringOr(r.optString("last", ""), "—"), money(r.optDouble("amount", 0)), navAccent("customers"));
         }
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
     }
@@ -12307,7 +12350,7 @@ public class MainActivity extends Activity {
         TextView idx = cart3dIcon(formatNumber(index + 1), accent, 10.4f); head.addView(idx, new LinearLayout.LayoutParams(dp(36), dp(36)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(8), 0, dp(8), 0);
         copy.addView(text(item.optString("name", "کالا"), 12.4f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("کد " + item.optString("code", "—") + " • موجودی " + formatNumber(item.optDouble("stock", 0)) + " • بسته " + formatNumber(item.optDouble("pack", 1)), 9.7f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("کد " + faDigits(item.optString("code", "—")) + " • موجودی " + formatNumber(item.optDouble("stock", 0)) + " • بسته " + formatNumber(item.optDouble("pack", 1)), 9.7f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout buttons = new LinearLayout(this); buttons.setOrientation(LinearLayout.VERTICAL);
         Button edit = themedActionButton("✎ ویرایش", accent, false); edit.setTextSize(fs(7.6f)); edit.setOnClickListener(v -> showEditCartItemDialog(index));
@@ -12346,12 +12389,12 @@ public class MainActivity extends Activity {
         LinearLayout head = new LinearLayout(this); head.setOrientation(LinearLayout.HORIZONTAL); head.setGravity(Gravity.CENTER_VERTICAL);
         TextView idx = text(formatNumber(index + 1), 10.2f, onColorFor(accent), Typeface.BOLD); idx.setGravity(Gravity.CENTER); idx.setBackground(luxuryButtonBg(accent, true, 999)); head.addView(idx, new LinearLayout.LayoutParams(dp(32), dp(32)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(8), 0, dp(8), 0);
-        TextView name = text(item.optString("name", "کالا"), 12.6f, TEXT, Typeface.BOLD); name.setSingleLine(true); name.setEllipsize(TextUtils.TruncateAt.END); copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        String tier = "2".equals(item.optString("priceTier", "1")) ? "قیمت فروش ۲" : "قیمت فروش ۱";
+        TextView name = text(item.optString("name", "کالا"), 12.6f, TEXT, Typeface.BOLD); name.setSingleLine(false); name.setMaxLines(2); name.setEllipsize(TextUtils.TruncateAt.END); copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        String tier = "2".equals(item.optString("priceTier", "1")) ? "قیمت ۲" : "قیمت ۱";
         TextView meta = text(formatNumber(item.optDouble("qty", 0)) + " " + item.optString("unit", "") + " × " + money(item.optDouble("price", 0)) + " • " + tier, 9.8f, MUTED, Typeface.BOLD);
-        meta.setSingleLine(true); meta.setEllipsize(TextUtils.TruncateAt.END); copy.addView(meta, new LinearLayout.LayoutParams(-1, -2));
+        meta.setSingleLine(false); meta.setMaxLines(2); meta.setEllipsize(TextUtils.TruncateAt.END); copy.addView(meta, new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView total = text(money(cartItemNet(item)), 10.5f, tc(accent), Typeface.BOLD); total.setGravity(Gravity.CENTER); total.setMaxLines(2); head.addView(total, new LinearLayout.LayoutParams(dp(104), -2));
+        TextView total = text(money(cartItemNet(item)), 10.5f, tc(accent), Typeface.BOLD); total.setGravity(Gravity.CENTER); total.setMaxLines(2); head.addView(total, new LinearLayout.LayoutParams(dp(largeFontScale() ? 118 : 104), -2));
         row.addView(head, new LinearLayout.LayoutParams(-1, -2));
         String warn = cartStockWarning(item);
         if (!warn.isEmpty()) {
@@ -12395,7 +12438,7 @@ public class MainActivity extends Activity {
     private void addCartComplementarySuggestionCard() {
         if (visitorCartItems == null || visitorCartItems.length() == 0) return;
         String suggestion = smartCartSuggestionText();
-        if (suggestion == null || suggestion.trim().isEmpty()) suggestion = "برای کامل‌تر شدن سفارش، یک کالای مکمل از همان گروه یا کالاهای قیمت ۲ پیشنهاد بده.";
+        if (suggestion == null || suggestion.trim().isEmpty()) suggestion = "برای کامل‌تر شدن سفارش، یک کالای مکمل از همان گروه یا از کالاهای پرفروش پیشنهاد بده.";
         LinearLayout c = card();
         c.setPadding(dp(11), dp(10), dp(11), dp(10));
         c.setBackground(unifiedCardBg(navAccent("cart"), 24, false));
@@ -12405,7 +12448,7 @@ public class MainActivity extends Activity {
         Button go = themedActionButton("کالا", navAccent("showcase"), true); go.setTextSize(fs(9.0f)); go.setOnClickListener(v -> showApp("showcase")); row.addView(go, new LinearLayout.LayoutParams(dp(86), dp(42)));
         c.addView(row, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
-        Button p2 = themedActionButton("مکمل قیمت ۲", WARNING, true); p2.setTextSize(fs(8.8f)); p2.setOnClickListener(v -> loadShowcase("", "price2"));
+        Button p2 = themedActionButton("کالاهای موجود", navAccent("showcase"), true); p2.setTextSize(fs(8.8f)); p2.setOnClickListener(v -> loadShowcase("", "stock"));
         Button top = themedActionButton("پرفروش‌ها", GOLD, false); top.setTextSize(fs(8.8f)); top.setOnClickListener(v -> loadShowcase("", "top"));
         Button add = themedActionButton("کالای دستی", navAccent("showcase"), false); add.setTextSize(fs(8.8f)); add.setOnClickListener(v -> showVisitorAddProductDialog("", "all"));
         actions.addView(p2, weightedButtonLp()); actions.addView(top, weightedButtonLp()); actions.addView(add, weightedButtonLp());
@@ -12625,7 +12668,7 @@ public class MainActivity extends Activity {
             LinearLayout names = new LinearLayout(this); names.setOrientation(LinearLayout.VERTICAL); names.setPadding(dp(8), 0, dp(8), 0);
             TextView name = text(r.optString("name", "مشتری"), 12.6f, TEXT, Typeface.BOLD); name.setSingleLine(true); name.setEllipsize(TextUtils.TruncateAt.END); names.addView(name, new LinearLayout.LayoutParams(-1, -2));
             String riskText = r.optBoolean("blocked", false) ? " • مسدود" : (r.optDouble("balance", 0) > 0 ? " • مانده " + money(r.optDouble("balance", 0)) : "");
-            TextView meta = text((isCurrent ? "مشتری فعلی سبد • " : "") + "کد " + r.optString("code", "—") + (r.optString("phone", "").trim().isEmpty() ? "" : " • " + r.optString("phone", "")) + riskText, 9.4f, isCurrent ? tc(GOLD) : MUTED, Typeface.BOLD); meta.setSingleLine(true); meta.setEllipsize(TextUtils.TruncateAt.END); names.addView(meta, new LinearLayout.LayoutParams(-1, -2));
+            TextView meta = text((isCurrent ? "مشتری فعلی سبد • " : "") + "کد " + faDigits(r.optString("code", "—")) + (r.optString("phone", "").trim().isEmpty() ? "" : " • " + r.optString("phone", "")) + riskText, 9.4f, isCurrent ? tc(GOLD) : MUTED, Typeface.BOLD); meta.setSingleLine(true); meta.setEllipsize(TextUtils.TruncateAt.END); names.addView(meta, new LinearLayout.LayoutParams(-1, -2));
             top.addView(names, new LinearLayout.LayoutParams(0, -2, 1f));
             Button choose = themedActionButton(isCurrent ? "✓ فعلی" : "انتخاب", GOLD, !isCurrent);
             choose.setTextSize(fs(8.4f));
@@ -14693,7 +14736,7 @@ public class MainActivity extends Activity {
         copy.setOrientation(LinearLayout.VERTICAL);
         copy.setPadding(dp(10), 0, dp(10), 0);
         copy.addView(text(safeDisplayText(r.opt("نام"), "بدون نام"), 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("کد: " + safeDisplayText(r.opt("کد"), "-") + "   |   بارکد: " + safeDisplayText(r.opt("بارکد"), "-"), 11.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("کد: " + faDigits(safeDisplayText(r.opt("کد"), "-")) + "   |   بارکد: " + faDigits(safeDisplayText(r.opt("بارکد"), "-")), 11.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text("گروه: " + safeDisplayText(r.opt("گروه"), "-") + "   |   " + (hasProductImage(r) ? "تصویر کالا متصل" : "تصویر پیش‌فرض"), 10.8f, tc(accent), Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
@@ -15052,8 +15095,17 @@ public class MainActivity extends Activity {
         return "product_visual_override_" + normalizeDigits(code).replace(" ", "_");
     }
 
+    /** Product type is decided by the NAME first; the group is only a fallback (e.g. «ماکارونی» in group «خشکبار و حبوبات»). */
     private ProductVisualProfile productVisualProfile(String name, String group) {
-        String t = productKeyText((name == null ? "" : name) + " " + (group == null ? "" : group));
+        ProductVisualProfile byName = productVisualProfileMatch(productKeyText(name == null ? "" : name));
+        if (byName != null) return byName;
+        ProductVisualProfile byGroup = productVisualProfileMatch(productKeyText(group == null ? "" : group));
+        if (byGroup != null) return byGroup;
+        return visual("generic_box", "کالای عمومی", "کالا", Color.rgb(126, 87, 255), isLightTheme() ? 14 : 22);
+    }
+
+    private ProductVisualProfile productVisualProfileMatch(String t) {
+        if (t == null || t.trim().isEmpty()) return null;
         int themeMixRatio = isLightTheme() ? 14 : 22;
         if (productHas(t, "دستمال", "حوله", "کاغذ توالت", "نوار بهداشتی", "پوشک")) return visual("tissue", "بهداشتی سلولزی", "دستمال", Color.rgb(92, 170, 210), themeMixRatio);
         if (productHas(t, "شیر کاکائو", "شیرکاکائو", "شیر موز", "شیرموز")) return visual("milk_carton", "نوشیدنی لبنی", "شیر", Color.rgb(75, 164, 240), themeMixRatio);
@@ -15082,7 +15134,7 @@ public class MainActivity extends Activity {
         if (productHas(t, "گوشت", "مرغ", "ماهی", "میگو", "سوسیس", "کالباس", "ژامبون")) return visual("meat_tray", "پروتئینی", "پروتئین", Color.rgb(218, 82, 100), themeMixRatio);
         if (productHas(t, "شامپو", "نرم کننده", "خمیر دندان", "مسواک", "کرم", "لوسیون", "مام", "اسپری")) return visual("care_bottle", "آرایشی بهداشتی", "بهداشت", Color.rgb(111, 100, 226), themeMixRatio);
         if (productHas(t, "صابون", "مایع دست", "مایع ظرف", "مایع لباس", "شوینده", "پودر لباس", "وایتکس", "جرمگیر", "پاک کننده", "پاک‌کننده", "سفید کننده")) return visual(productHas(t, "پودر") ? "detergent_box" : "detergent_bottle", "شوینده", "شوینده", Color.rgb(66, 193, 155), themeMixRatio);
-        return visual("generic_box", "کالای عمومی", "کالا", Color.rgb(126, 87, 255), themeMixRatio);
+        return null;
     }
 
     private ProductVisualProfile productVisualProfileForType(String type) {

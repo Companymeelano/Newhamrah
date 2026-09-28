@@ -8,8 +8,8 @@ android {
         applicationId 'ir.meelano.visitor'
         minSdk 24
         targetSdk 35
-        versionCode 91
-        versionName '4.6.3-atiran-e2e'
+        versionCode 92
+        versionName '4.6.4-ui-polish'
     }
 
     compileOptions {
