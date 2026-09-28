@@ -667,8 +667,9 @@ public class MainActivity extends Activity {
     private float fs(float size) {
         if (size <= 1.5f || size >= 12f) return size;
         boolean compact = prefs != null && prefs.getBoolean(KEY_COMPACT_UI, false);
-        float lifted = size + (12f - size) * (compact ? 0.25f : 0.45f);
-        return Math.max(lifted, compact ? 9f : 10f);
+        // Small captions are lifted toward 12sp so nothing on screen is too tiny to read outdoors.
+        float lifted = size + (12f - size) * (compact ? 0.3f : 0.5f);
+        return Math.max(lifted, compact ? 9.5f : 10.5f);
     }
 
     private int dp(float value) {
@@ -746,7 +747,7 @@ public class MainActivity extends Activity {
     private boolean isLightThemeId(String id) {
         String v = id == null ? "" : id.trim();
         return "azure_diamond".equals(v) || "crystal_lagoon".equals(v) || "ivory_sunrise".equals(v) ||
-                "pearl_platinum".equals(v) || "rose_quartz_lux".equals(v) || "emerald_silk".equals(v);
+                "pearl_platinum".equals(v) || "rose_quartz_lux".equals(v) || "emerald_silk".equals(v) || "hazelnut_gold".equals(v);
     }
 
     private boolean motionAllowedCache = true;
@@ -799,7 +800,7 @@ public class MainActivity extends Activity {
         String id = themeId == null ? DEFAULT_THEME : themeId.trim();
         if (id.isEmpty()) return DEFAULT_THEME;
         if ("pearl_platinum".equals(id) || "rose_quartz_lux".equals(id) || "emerald_silk".equals(id) ||
-                "royal_amethyst".equals(id) || "ivory_sunrise".equals(id) || "crystal_lagoon".equals(id) || "azure_diamond".equals(id) || "noir_aurora".equals(id) || "onyx_gold".equals(id) || THEME_AUTO.equals(id)) return id;
+                "royal_amethyst".equals(id) || "ivory_sunrise".equals(id) || "crystal_lagoon".equals(id) || "azure_diamond".equals(id) || "noir_aurora".equals(id) || "onyx_gold".equals(id) || "hazelnut_gold".equals(id) || THEME_AUTO.equals(id)) return id;
         return DEFAULT_THEME;
     }
 
@@ -939,6 +940,25 @@ public class MainActivity extends Activity {
             HEADER_END = Color.rgb(202, 236, 247);
             HERO_START = Color.rgb(219, 248, 251);
             HERO_END = Color.rgb(245, 253, 255);
+            ON_PRIMARY = Color.WHITE;
+        } else if ("hazelnut_gold".equals(id)) {
+            // «فندقی طلایی»: cream + caramel, the same palette as the gold «D» app icon.
+            NAVY = Color.rgb(250, 244, 234);
+            SURFACE = Color.rgb(255, 252, 246);
+            SURFACE_2 = Color.rgb(241, 226, 202);
+            GOLD = Color.rgb(150, 92, 38);
+            GOLD_2 = Color.rgb(201, 145, 58);
+            SUCCESS = Color.rgb(46, 139, 87);
+            INFO = Color.rgb(122, 86, 52);
+            WARNING = Color.rgb(196, 120, 32);
+            DANGER = Color.rgb(190, 58, 62);
+            TEXT = Color.rgb(54, 33, 16);
+            MUTED = Color.rgb(120, 92, 66);
+            BORDER = Color.argb(90, 170, 115, 50);
+            HEADER_START = Color.rgb(255, 250, 241);
+            HEADER_END = Color.rgb(240, 222, 192);
+            HERO_START = Color.rgb(244, 228, 202);
+            HERO_END = Color.rgb(255, 252, 246);
             ON_PRIMARY = Color.WHITE;
         } else if ("azure_diamond".equals(id)) {
             NAVY = Color.rgb(244, 251, 255);
@@ -1109,6 +1129,7 @@ public class MainActivity extends Activity {
         if ("royal_amethyst".equals(id)) return "شب آمتیست سلطنتی";
         if ("ivory_sunrise".equals(id)) return "طلوع عاجی لوکس";
         if ("crystal_lagoon".equals(id)) return "لاگون کریستالی روشن";
+        if ("hazelnut_gold".equals(id)) return "فندقی طلایی";
         if ("azure_diamond".equals(id)) return "الماس آبی روشن";
         if ("noir_aurora".equals(id)) return "نوآر شفق لوکس";
         if ("onyx_gold".equals(id)) return "اونیکس طلایی Meelano";
@@ -1776,6 +1797,7 @@ public class MainActivity extends Activity {
                 .create();
         addThemeOption(box, dialog, THEME_AUTO, "خودکار", "روشن در روز، تیره در شب — هماهنگ با گوشی", new int[]{Color.rgb(244, 251, 255), Color.rgb(0, 126, 255), Color.rgb(5, 8, 18)});
         if (VISITOR_EDITION) addThemeOption(box, dialog, "azure_diamond", "الماس آبی", "تم پیش‌فرض Meelano Visit", new int[]{Color.rgb(244, 251, 255), Color.rgb(0, 126, 255), Color.rgb(24, 190, 255)});
+        addThemeOption(box, dialog, "hazelnut_gold", "فندقی طلایی", "هم‌رنگ آیکون برنامه", new int[]{Color.rgb(250, 244, 234), Color.rgb(150, 92, 38), Color.rgb(201, 145, 58)});
         addThemeOption(box, dialog, "pearl_platinum", "روشن ۱", "مروارید پلاتینیوم", new int[]{Color.rgb(245, 247, 251), Color.rgb(168, 122, 44), Color.rgb(48, 96, 176)});
         addThemeOption(box, dialog, "rose_quartz_lux", "روشن ۲", "رز کوارتز لاکچری", new int[]{Color.rgb(255, 247, 248), Color.rgb(177, 102, 82), Color.rgb(111, 90, 174)});
         addThemeOption(box, dialog, "emerald_silk", "روشن ۳", "زمرد ابریشمی", new int[]{Color.rgb(241, 249, 245), Color.rgb(16, 132, 91), Color.rgb(160, 128, 55)});
@@ -10913,6 +10935,53 @@ public class MainActivity extends Activity {
         dlg.show();
     }
 
+    /** Sales amount from which a product counts as «پرفروش» (top 20% of the loaded list). */
+    private double showcaseTopSalesThreshold = Double.MAX_VALUE;
+    private static final double LOW_STOCK_LIMIT = 5;
+
+    private void computeShowcaseBadges(JSONArray rows) {
+        List<Double> sales = new ArrayList<>();
+        if (rows != null) for (int i = 0; i < rows.length(); i++) {
+            JSONObject o = rows.optJSONObject(i);
+            double v = o == null ? 0 : jsonDouble(o, "مبلغ_فروش", 0);
+            if (v > 0) sales.add(v);
+        }
+        if (sales.size() < 3) { showcaseTopSalesThreshold = Double.MAX_VALUE; return; }
+        Collections.sort(sales, Collections.reverseOrder());
+        showcaseTopSalesThreshold = sales.get(Math.max(0, Math.min(sales.size() - 1, sales.size() / 5)));
+    }
+
+    /** One short status label for a product photo: «ناموجود», «کم‌موجودی» or «پرفروش» (or empty). */
+    private String productStatusBadge(JSONObject r) {
+        if (r == null) return "";
+        double stock = jsonDouble(r, "موجودی", 0);
+        if (stock <= 0) return "ناموجود";
+        if (stock <= LOW_STOCK_LIMIT) return "کم‌موجودی";
+        if (jsonDouble(r, "مبلغ_فروش", 0) >= showcaseTopSalesThreshold) return "پرفروش";
+        return "";
+    }
+
+    private int productStatusColor(String badge) {
+        if ("ناموجود".equals(badge)) return DANGER;
+        if ("کم‌موجودی".equals(badge)) return WARNING;
+        return SUCCESS;
+    }
+
+    /** Adds the status label to the top corner of a product photo frame. */
+    private void addProductStatusBadge(FrameLayout art, JSONObject r, boolean small) {
+        String b = productStatusBadge(r);
+        if (art == null || b.isEmpty()) return;
+        int color = productStatusColor(b);
+        TextView t = text(("پرفروش".equals(b) ? "★ " : "") + b, small ? 8f : 8.8f, Color.WHITE, Typeface.BOLD);
+        t.setGravity(Gravity.CENTER); t.setSingleLine(true);
+        t.setPadding(dp(small ? 4 : 6), dp(1), dp(small ? 4 : 6), dp(1));
+        t.setBackground(roundedStroke(color, 999, alpha(Color.WHITE, 150)));
+        t.setContentDescription(b);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, dp(small ? 18 : 22), Gravity.LEFT | Gravity.TOP);
+        lp.setMargins(dp(3), dp(3), dp(3), dp(3));
+        art.addView(t, lp);
+    }
+
     private void renderShowcaseProducts(JSONArray rows, String query, String filter) {
         int initialLimit = VISITOR_EDITION ? visitorShowcasePageSize() : (compactUi() ? 18 : 24);
         renderShowcaseProducts(rows, query, filter, initialLimit);
@@ -10925,6 +10994,7 @@ public class MainActivity extends Activity {
             rows = visitorProductSearchFilteredRows(rows, query, filter);
         }
         else normalizeVisitorExactPrices(rows);
+        computeShowcaseBadges(rows);
         content.removeAllViews();
         if (VISITOR_EDITION) {
             addVisitorShowcaseSmartControls(rows, query, filter, false);
@@ -11195,6 +11265,7 @@ public class MainActivity extends Activity {
             img.setScaleType(ImageView.ScaleType.CENTER_CROP);
             applyProductImage(img, r, false);
             art.addView(img, new FrameLayout.LayoutParams(-1, -1));
+            addProductStatusBadge(art, r, true);
             LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(dp(72), dp(72)); alp.setMargins(0, 0, dp(10), 0);
             row.addView(art, alp);
         }
@@ -11207,6 +11278,13 @@ public class MainActivity extends Activity {
         meta.setSingleLine(true); meta.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, -2); mlp.setMargins(0, dp(2), 0, 0); copy.addView(meta, mlp);
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+        String statusBadge = productStatusBadge(r);
+        if (ultra && !statusBadge.isEmpty()) {
+            TextView st = pill(statusBadge, productStatusColor(statusBadge), false);
+            st.setSingleLine(true);
+            LinearLayout.LayoutParams stp = new LinearLayout.LayoutParams(-2, -2); stp.setMargins(dp(6), 0, 0, 0);
+            row.addView(st, stp);
+        }
         c.addView(row, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout prices = new LinearLayout(this);
@@ -11292,6 +11370,7 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams tagLp = new FrameLayout.LayoutParams(-2, dp(24), Gravity.RIGHT | Gravity.BOTTOM);
         tagLp.setMargins(dp(5), dp(5), dp(5), dp(5));
         art.addView(tag, tagLp);
+        addProductStatusBadge(art, r, false);
         LinearLayout.LayoutParams artLp = new LinearLayout.LayoutParams(dp(112), dp(112));
         artLp.setMargins(0, 0, dp(10), 0);
         top.addView(art, artLp);
