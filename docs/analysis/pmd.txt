@@ -274,7 +274,7 @@ MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2651:	Avo
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2672:	DoNotUseThreads:	To be compliant to J2EE, a webapp should not use any thread.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2703:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2729:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2795:	AvoidDuplicateLiterals:	The String literal "cart" appears 136 times in this file; the first occurrence is on line 2,795
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2795:	AvoidDuplicateLiterals:	The String literal "cart" appears 145 times in this file; the first occurrence is on line 2,795
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2815:	AvoidDuplicateLiterals:	The String literal "attendance" appears 33 times in this file; the first occurrence is on line 2,815
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2815:	AvoidDuplicateLiterals:	The String literal "chat" appears 28 times in this file; the first occurrence is on line 2,815
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2817:	AvoidDuplicateLiterals:	The String literal "\u062f\u0627\u0634\u0628\u0648\u0631\u062f" appears 6 times in this file; the first occurrence is on line 2,817
@@ -312,7 +312,7 @@ MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3063:	Avo
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3070:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3081:	AvoidDuplicateLiterals:	The String literal "\u062b\u0628\u062a \u0646\u0634\u062f\u0647" appears 13 times in this file; the first occurrence is on line 3,081
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3096:	AvoidDuplicateLiterals:	The String literal "\u0622\u062e\u0631\u06cc\u0646 \u0628\u0631\u0648\u0632\u0631\u0633\u0627\u0646\u06cc: " appears 9 times in this file; the first occurrence is on line 3,096
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3096:	AvoidDuplicateLiterals:	The String literal " \u2022 " appears 66 times in this file; the first occurrence is on line 3,096
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3096:	AvoidDuplicateLiterals:	The String literal " \u2022 " appears 65 times in this file; the first occurrence is on line 3,096
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3123:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3124:	AvoidDuplicateLiterals:	The String literal "today" appears 21 times in this file; the first occurrence is on line 3,124
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3141:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
