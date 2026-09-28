@@ -239,7 +239,7 @@ jobs:
           cp shots/logcat.txt docs/screenshots/logcat.txt || true
           cp shots/checks.txt docs/screenshots/checks.txt || true
           if [ -d review ]; then
-            rm -rf docs/ui-review && mkdir -p docs/ui-review/xml
+            rm -rf docs/ui-review-current && mkdir -p docs/ui-review-current/xml
             python3 - <<'PY'
           import glob, os
           from PIL import Image
@@ -247,13 +247,13 @@ jobs:
               im = Image.open(f).convert("RGB")
               w, h = im.size
               im = im.resize((432, int(h * 432 / w)), Image.LANCZOS)
-              im.save("docs/ui-review/" + os.path.basename(f)[:-4] + ".jpg", "JPEG", quality=80, optimize=True)
+              im.save("docs/ui-review-current/" + os.path.basename(f)[:-4] + ".jpg", "JPEG", quality=80, optimize=True)
           PY
-            cp review/xml/*.xml docs/ui-review/xml/ || true
-            cp review/env.txt review/logcat.txt docs/ui-review/ || true
+            cp review/xml/*.xml docs/ui-review-current/xml/ || true
+            cp review/env.txt review/logcat.txt docs/ui-review-current/ || true
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
-          git add docs/screenshots docs/ui-review 2>/dev/null || git add docs/screenshots
+          git add docs/screenshots docs/ui-review-current 2>/dev/null || git add docs/screenshots
           git commit -m "Update design screenshots [skip ci]" || echo "No changes"
           for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
