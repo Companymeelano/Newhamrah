@@ -568,6 +568,14 @@ public class MainActivity extends Activity {
             visitorCartItems = new JSONArray(); visitorCartDraftId = "";
             selfTestStoreReceipts(shmoT, ref, r1);
         } catch (Throwable ex) { selfTestLog("STEP store_invoice FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+        String winStart = "", winEnd = "";
+        try (Connection c = openConnection()) {
+            // The manager's attendance hours (e.g. 07:15–15:30) would reject a test run at night; lift them for the test only.
+            ensureMeelanoCollabTables(c);
+            winStart = chatSetting(c, "attendance_start", ""); winEnd = chatSetting(c, "attendance_end", "");
+            selfTestLog("STORE attendance window=" + winStart + "-" + winEnd);
+            setChatSetting(c, "attendance_start", ""); setChatSetting(c, "attendance_end", "");
+        } catch (Throwable ex) { selfTestLog("STORE attendance window read failed " + ex.getMessage()); }
         try {
             selfTestLog("STORE location " + saveStoreLocation(31.3183, 48.6706, 120));
             try { saveStoreAttendance("out", 31.3300, 48.7000, 10); selfTestLog("STEP store_att_far FAIL accepted"); }
@@ -580,6 +588,8 @@ public class MainActivity extends Activity {
             selfTestLog("STEP store_att_out OK " + saveStoreAttendance("out", 31.31822, 48.67049, 9));
             try (Connection c = openConnection()) { selfTestLog("STORE attendance rows=" + queryStoreAttendance(c).length()); }
         } catch (Throwable ex) { selfTestLog("STEP store_attendance FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+        try (Connection c = openConnection()) { setChatSetting(c, "attendance_start", stringOr(winStart, "")); setChatSetting(c, "attendance_end", stringOr(winEnd, "")); }
+        catch (Throwable ex) { selfTestLog("STORE attendance window restore failed " + ex.getMessage()); }
     }
 
     /**
@@ -610,15 +620,28 @@ public class MainActivity extends Activity {
             selfTestLog("STORE RECEIPT1_DUP " + b);
             selfTestLog("STEP store_receipt " + (a.optLong("ghno") > 0 && Math.abs(a.optDouble("total") - sum) < 1 && b.optBoolean("duplicate") && b.optLong("ghno") == a.optLong("ghno") ? "OK" : "FAIL"));
 
-            JSONObject ref2 = queryStoreCheckoutRef(shmo);
-            JSONArray open = ref2.optJSONArray("invoices");
-            if (open == null || open.length() < 2) { selfTestLog("STORE RECEIPT2 SKIP open=" + (open == null ? 0 : open.length())); return; }
+            // Receipt without a new invoice for a debtor that has at least two unsettled invoices.
+            long shmo2 = 0; JSONArray open = null;
+            JSONObject d = storeData(false);
+            JSONArray groups = d.optJSONArray("debtGroups");
+            int tried = 0;
+            for (int gi = 0; groups != null && gi < groups.length() && shmo2 == 0 && tried < 25; gi++) {
+                JSONArray rowsG = groups.optJSONObject(gi).optJSONArray("rows");
+                for (int ri = 0; rowsG != null && ri < rowsG.length() && tried < 25; ri++) {
+                    long code = rowsG.optJSONObject(ri).optLong("code");
+                    if (code <= 0 || code == shmo) continue;
+                    tried++;
+                    JSONArray o = queryStoreCheckoutRef(code).optJSONArray("invoices");
+                    if (o != null && o.length() >= 2) { shmo2 = code; open = o; break; }
+                }
+            }
+            if (shmo2 == 0) { selfTestLog("STORE RECEIPT2 SKIP tried=" + tried); return; }
             double two = open.optJSONObject(0).optDouble("open") + open.optJSONObject(1).optDouble("open");
             JSONObject rs2 = newStoreReceiptState();
             rs2.put("cash", Math.round(two));
             JSONArray alloc2 = storeAllocate(open, 0, two, false);
-            selfTestLog("STORE RECEIPT2_SPEC sum=" + Math.round(two) + " alloc=" + alloc2);
-            JSONObject c2 = submitStoreReceipt(shmo, rs2, alloc2, 0, "تسویه دو فاکتور قدیمی");
+            selfTestLog("STORE RECEIPT2_SPEC shmo=" + shmo2 + " sum=" + Math.round(two) + " alloc=" + alloc2);
+            JSONObject c2 = submitStoreReceipt(shmo2, rs2, alloc2, 0, "تسویه دو فاکتور قدیمی");
             selfTestLog("STORE RECEIPT2 " + c2);
             selfTestLog("STEP store_receipt_multi " + (c2.optLong("ghno") > 0 && c2.optInt("settled") >= 2 ? "OK" : "FAIL"));
         } catch (Throwable ex) { selfTestLog("STEP store_receipt FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
