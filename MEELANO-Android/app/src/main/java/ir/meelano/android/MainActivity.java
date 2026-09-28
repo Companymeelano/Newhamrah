@@ -330,6 +330,7 @@ public class MainActivity extends Activity {
         buildFrame();
         showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید.");
         maybeStartDesignPreview(getIntent());
+        maybeStartDbSelfTest(getIntent());
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -359,6 +360,90 @@ public class MainActivity extends Activity {
         try { seedDesignPreviewData(); } catch (Exception ignored) { }
         session = new UserSession(1, 7, "سارا رحیمی", "visitor", "");
         showApp(page.trim());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Database self-test (debug builds only, and only against an explicitly given TEST server).
+    // CI restores a copy of the Atiran backup into a private SQL Server container, then runs:
+    //   am start -S -n <pkg>/.MainActivity --es meelano_test_db 10.0.2.2 --es meelano_selftest user:pass
+    // The real login, product/customer queries and pre-invoice submission run against that copy and
+    // report to logcat (tag MEELANO_SELFTEST). Without meelano_test_db nothing happens, so the
+    // production server can never be used by this test. Release builds ignore all of it.
+    // ---------------------------------------------------------------------------------------------
+    private volatile String debugDbHost = null;
+
+    private void selfTestLog(String msg) { android.util.Log.i("MEELANO_SELFTEST", msg == null ? "" : msg.replace('\n', ' ')); }
+
+    private void selfTestStep(String name, DbJob job) {
+        long t0 = System.currentTimeMillis();
+        try {
+            String body = job.run(); String size = "";
+            try { size = " rows=" + new JSONArray(body).length(); } catch (Exception notArray) { try { size = " keys=" + new JSONObject(body).length(); } catch (Exception ignored) { size = " chars=" + (body == null ? 0 : body.length()); } }
+            selfTestLog("STEP " + name + " OK" + size + " ms=" + (System.currentTimeMillis() - t0));
+        } catch (Throwable ex) {
+            selfTestLog("STEP " + name + " FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+        }
+    }
+
+    private void maybeStartDbSelfTest(Intent intent) {
+        if (intent == null || !isDebuggableBuild()) return;
+        String host = intent.getStringExtra("meelano_test_db");
+        if (host == null || host.trim().isEmpty()) return;
+        debugDbHost = host.trim();
+        String login = intent.getStringExtra("meelano_selftest");
+        if (login == null || !login.contains(":")) return;
+        String customer = stringOr(intent.getStringExtra("meelano_selftest_customer"), "412");
+        String itemSpec = stringOr(intent.getStringExtra("meelano_selftest_items"), "1796:70,667:2");
+        executor.execute(() -> {
+            selfTestLog("START host=" + debugDbHost + " version=" + BuildConfigSafe.versionName(this));
+            String user = login.substring(0, login.indexOf(':')); String pass = login.substring(login.indexOf(':') + 1);
+            try {
+                UserSession s = authenticate(user, pass);
+                session = s; prefs.edit().putString(KEY_LAST_USER, user).apply();
+                selfTestLog("STEP login OK visitorId=" + s.visitorId + " userId=" + s.userId + " role=" + s.accessRole);
+            } catch (Throwable ex) { selfTestLog("STEP login FAIL " + ex.getMessage()); selfTestLog("DONE"); return; }
+            selfTestStep("products", () -> queryProducts("", "all"));
+            selfTestStep("customers", () -> queryCustomers("", "all"));
+            selfTestStep("cart_customers", () -> queryCartCustomers(""));
+            selfTestStep("visitor_dashboard", this::queryVisitorDashboardSql);
+            selfTestStep("visitor_reports", this::queryVisitorReportsSql);
+            selfTestStep("dashboard", this::queryDashboard);
+            selfTestStep("analytics", this::queryAnalytics);
+            selfTestStep("tax_invoices", () -> queryTaxInvoices("month", "all"));
+            selfTestStep("checks_in", () -> queryCheckList(true, ""));
+            selfTestStep("customer_ledger", () -> queryCustomerLedger(customer, "all"));
+            selfTestStep("my_prefactors_repair", this::queryMyPrefactorsSql);
+            try {
+                JSONArray products = new JSONArray(queryProducts("", "all"));
+                visitorCartItems = new JSONArray(); visitorCartDraftId = "";
+                JSONObject cust = new JSONObject(); cust.put("code", customer); cust.put("name", "آزمون");
+                try { JSONArray cs = new JSONArray(queryCartCustomers(customer)); for (int i = 0; i < cs.length(); i++) { JSONObject o = cs.optJSONObject(i); if (o != null && customer.equals(o.optString("code", o.optString("کد", "")))) { cust = o; break; } } } catch (Exception ignored) { }
+                if (!cust.has("code")) cust.put("code", customer);
+                visitorCartCustomer = cust;
+                for (String part : itemSpec.split(",")) {
+                    String[] kv = part.split(":"); if (kv.length < 2) continue;
+                    JSONObject product = null;
+                    for (int i = 0; i < products.length(); i++) { JSONObject o = products.optJSONObject(i); if (o != null && kv[0].trim().equals(safeDisplayText(o.opt("کد"), ""))) { product = o; break; } }
+                    if (product == null) { selfTestLog("STEP cart item " + kv[0] + " NOT_IN_PRODUCT_LIST"); product = new JSONObject(); product.put("کد", kv[0].trim()); product.put("نام", "کالا " + kv[0].trim()); }
+                    mergeCartItem(product, kv[1].trim(), 1, false);
+                }
+                for (int i = 0; i < visitorCartItems.length(); i++) { JSONObject it = visitorCartItems.optJSONObject(i); if (it != null && it.optDouble("price", 0) <= 0) { it.put("price", 65000); it.put("price1", 65000); it.put("amount", cartItemNet(it)); } selfTestLog("CART item code=" + (it == null ? "" : it.optString("code")) + " qty=" + (it == null ? 0 : it.optDouble("qty")) + " price=" + (it == null ? 0 : it.optDouble("price")) + " pack=" + (it == null ? 0 : it.optDouble("pack"))); }
+                visitorCartNotes = "آزمون خودکار میلانو";
+                JSONObject snap = buildCartSnapshot("sent");
+                selfTestLog("SUBMIT total=" + snap.optDouble("grandTotal") + " customer=" + snap.optString("customerCode") + " visitorId=" + snap.optString("visitorId"));
+                String first = insertPrefactorSnapshot(snap, "sent");
+                selfTestLog("RESULT1 " + first);
+                String second = insertPrefactorSnapshot(snap, "sent");
+                selfTestLog("RESULT2 " + second);
+            } catch (Throwable ex) { selfTestLog("STEP submit FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+            selfTestStep("my_prefactors_after", this::queryMyPrefactorsSql);
+            selfTestLog("DONE");
+        });
+    }
+
+    /** versionName without BuildConfig (buildConfig generation is off). */
+    private static final class BuildConfigSafe {
+        static String versionName(android.content.Context c) { try { return c.getPackageManager().getPackageInfo(c.getPackageName(), 0).versionName; } catch (Exception e) { return "?"; } }
     }
 
     private void seedDesignPreviewData() throws Exception {
@@ -3626,7 +3711,8 @@ public class MainActivity extends Activity {
         if (designPreview) throw new DbException("حالت پیش‌نمایش طراحی: اتصال به پایگاه داده غیرفعال است.");
         bindSqlNetworkForVpnIfNeeded();
         Class.forName("net.sourceforge.jtds.jdbc.Driver");
-        String url = "jdbc:jtds:sqlserver://" + hidden(S_HOST) + ":" + SQL_PORT + "/" + hidden(S_DB)
+        String host = (debugDbHost != null && isDebuggableBuild()) ? debugDbHost : hidden(S_HOST);
+        String url = "jdbc:jtds:sqlserver://" + host + ":" + SQL_PORT + "/" + hidden(S_DB)
                 + ";loginTimeout=10;socketTimeout=30;appName=MEELANOAndroid;";
         Properties props = new Properties();
         props.setProperty("user", hidden(S_USER));
