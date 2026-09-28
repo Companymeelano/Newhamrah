@@ -470,7 +470,9 @@ public class MainActivity extends Activity {
                 {"1005", "ماکارونی فرمی ۵۰۰ گرمی", "6260000100059", "412000", "398000", "260", "بسته", "خشکبار و حبوبات"},
                 {"1006", "پنیر سفید ایرانی ۴۰۰ گرمی", "6260000100066", "1350000", "1310000", "18", "عدد", "لبنیات"},
                 {"1007", "آب معدنی ۱٫۵ لیتری (بسته ۶ عددی)", "6260000100073", "720000", "700000", "95", "بسته", "نوشیدنی"},
-                {"1008", "مایع ظرفشویی ۱ لیتری", "6260000100080", "690000", "0", "4", "بطری", "شوینده"}
+                {"1008", "مایع ظرفشویی ۱ لیتری", "6260000100080", "690000", "0", "4", "بطری", "شوینده"},
+                {"1009", "پسته اکبری ۵۰۰ گرمی", "6260000100097", "4850000", "0", "22", "بسته", "خشکبار و حبوبات"},
+                {"1010", "شکر سفید ۹۰۰ گرمی", "6260000100103", "610000", "0", "140", "بسته", "خشکبار و حبوبات"}
         };
         JSONArray rows = new JSONArray();
         for (String[] p : products) {
@@ -2357,6 +2359,7 @@ public class MainActivity extends Activity {
         if (session != null) autosaveCart(true);
         activePage = "login";
         session = null;
+        updateBackCallback();
         cartAutosaveRestoreChecked = false;
         if (visitorCartItems != null) resetCartState();
         setConnectionStatus("idle");
@@ -3096,6 +3099,7 @@ public class MainActivity extends Activity {
 
     private void renderActivePage() {
         clearPageDock();
+        updateBackCallback();
         if (!canOpenPage(activePage)) { activePage = firstAllowedPage(); buildNav(); if (!canOpenPage(activePage)) { content.removeAllViews(); addEmptyTo(content, "بخشی برای نمایش در دسترس نیست."); return; } }
         switch (activePage) {
             case "command": loadCommandCenter(); break;
@@ -15776,36 +15780,9 @@ public class MainActivity extends Activity {
         return key;
     }
 
-    /** Photo for a visual type the visitor picked by hand ("اصلاح هوشمندی تصویر"); null keeps the drawn picture. */
-    private String productPhotoKeyForType(String type) {
-        if ("rice_bag".equals(type)) return "rice";
-        if ("oil_bottle".equals(type)) return "cooking_oil";
-        if ("tea_box".equals(type)) return "black_tea";
-        if ("pasta_pack".equals(type)) return "pasta";
-        if ("cheese".equals(type)) return "white_cheese";
-        if ("water_bottle".equals(type)) return "mineral_water";
-        if ("milk_carton".equals(type)) return "milk";
-        if ("dairy_cup".equals(type)) return "yogurt";
-        return null;
-    }
+    private String productPhotoKeyForType(String type) { return MeelanoProductPhotos.keyForType(type); }
 
-    private String productPhotoKeyFor(String text) {
-        if (text == null || text.trim().isEmpty()) return null;
-        String t = productKeyText(text);
-        if (productHas(t, "شیر کاکائو", "شیرکاکائو", "شیر موز", "شیرموز")) return "milk";
-        if (productHas(t, "شیرینی", "شیرین", "شیره", "شیر خشک", "شیرخشک", "شیر برنج", "بستنی", "کیک", "بیسکویت", "بیسکوییت", "شکلات")) return null;
-        if (productHas(t, "ماست")) return "yogurt";
-        if (productHas(t, "پنیر")) return "white_cheese";
-        if (productHas(t, "شیر")) return "milk";
-        if (productHas(t, "آب معدنی", "اب معدنی", "آب آشامیدنی", "اب اشامیدنی")) return "mineral_water";
-        if (productHas(t, "مایع ظرف", "ظرفشویی", "ظرف شویی")) return productHas(t, "پودر", "قرص", "ماشین") ? null : "dish_soap";
-        if (productHas(t, "چای")) return productHas(t, "چای سبز", "چای ساز", "چایساز", "دمنوش", "لیوان", "قوری") ? null : "black_tea";
-        if (productHas(t, "برنج")) return "rice";
-        if (productHas(t, "ماکارونی", "ماکارانی", "پاستا")) return "pasta";
-        if (productHas(t, "رب")) return productHas(t, "انار", "آلو", "الو", "لیمو") ? null : "tomato_paste";
-        if (productHas(t, "روغن")) return productHas(t, "موتور", "ترمز", "بدن", "بچه", "ماساژ", "مو", "آرایشی", "ارایشی") ? null : "cooking_oil";
-        return null;
-    }
+    private String productPhotoKeyFor(String text) { return MeelanoProductPhotos.keyFor(text); }
 
     private Bitmap bundledProductPhoto(JSONObject r) {
         String key = productPhotoKey(r);
@@ -19999,6 +19976,27 @@ public class MainActivity extends Activity {
     private String homePage() {
         String home = VISITOR_EDITION ? "visitor_dashboard" : "dashboard";
         return canOpenPage(home) ? home : firstAllowedPage();
+    }
+
+    // Android 13+ (and required from targetSdk 36): Back is delivered through OnBackInvokedCallback.
+    // The callback is registered only while an inner page is open, so on the home page the system
+    // plays its own "back to home screen" animation (predictive back).
+    private Object innerPageBackCallback;
+
+    private void updateBackCallback() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        try {
+            boolean needed = session != null && !homePage().equals(activePage);
+            android.window.OnBackInvokedDispatcher d = getOnBackInvokedDispatcher();
+            if (needed && innerPageBackCallback == null) {
+                android.window.OnBackInvokedCallback cb = () -> { if (session != null) showApp(homePage()); };
+                d.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb);
+                innerPageBackCallback = cb;
+            } else if (!needed && innerPageBackCallback != null) {
+                d.unregisterOnBackInvokedCallback((android.window.OnBackInvokedCallback) innerPageBackCallback);
+                innerPageBackCallback = null;
+            }
+        } catch (Exception ignored) { }
     }
 
     @Override
