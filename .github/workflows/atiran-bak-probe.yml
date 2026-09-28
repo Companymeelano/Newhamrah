@@ -1,0 +1,57 @@
+name: Atiran backup probe
+
+# Runs only when the commit message contains [atiran-bak-probe]. Restores the Atiran2 backup into a
+# private SQL Server container on the runner and reads its structure (SELECT only). The live
+# Atiran server is never contacted. The result is committed ENCRYPTED (public repository).
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    if: contains(github.event.head_commit.message, '[atiran-bak-probe]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the Atiran backup from main
+        run: |
+          git fetch --depth=1 origin main
+          git show origin/main:Atiran2.zip > "$RUNNER_TEMP/atiran.zip"
+          unzip -o -q "$RUNNER_TEMP/atiran.zip" -d "$RUNNER_TEMP/bak"
+      - name: Start private SQL Server and copy the backup in
+        run: |
+          SA="Sa1!$(openssl rand -hex 12)"; echo "::add-mask::$SA"; echo "SA_PASS=$SA" >> "$GITHUB_ENV"
+          E2E="E2e7$(openssl rand -hex 6)"; echo "::add-mask::$E2E"; echo "E2E_PASS=$E2E" >> "$GITHUB_ENV"
+          docker run -d --name mssql -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$SA" -e MSSQL_COLLATION=Arabic_CI_AS -e MSSQL_PID=Developer -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+          docker exec -u 0 mssql mkdir -p /var/opt/mssql/backup
+          docker cp "$RUNNER_TEMP/bak/Atiran2" mssql:/var/opt/mssql/backup/Atiran2.bak
+          docker exec -u 0 mssql chown -R mssql /var/opt/mssql/backup
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Atiran2
+        run: |
+          pip install --quiet python-tds
+          python3 .github/scripts/atiran_e2e.py restore "$RUNNER_TEMP/restore.json"
+      - name: Probe (read-only)
+        run: python3 .github/scripts/atiran_bak_probe.py "$RUNNER_TEMP/bak-probe.json"
+      - name: Encrypt and commit
+        if: always()
+        run: |
+          set -e
+          mkdir -p tools/atiran-bak-probe
+          test -s "$RUNNER_TEMP/bak-probe.json" || echo '{"errors":["no output"]}' > "$RUNNER_TEMP/bak-probe.json"
+          gzip -9 -c "$RUNNER_TEMP/bak-probe.json" > "$RUNNER_TEMP/p.gz"
+          openssl rand -out "$RUNNER_TEMP/k.bin" 32
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in "$RUNNER_TEMP/p.gz" -out tools/atiran-bak-probe/probe.json.gz.enc -pass file:"$RUNNER_TEMP/k.bin"
+          openssl pkeyutl -encrypt -pubin -inkey tools/atiran-probe/probe-public-key.pem -pkeyopt rsa_padding_mode:oaep -in "$RUNNER_TEMP/k.bin" -out tools/atiran-bak-probe/probe.key.enc
+          rm -f "$RUNNER_TEMP/k.bin" "$RUNNER_TEMP/p.gz" "$RUNNER_TEMP/bak-probe.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add tools/atiran-bak-probe
+          git commit -m "Atiran backup probe result (encrypted) [skip ci]" || echo "No changes"
+          for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
