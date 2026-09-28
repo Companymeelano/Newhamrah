@@ -1365,7 +1365,13 @@ public class MainActivity extends Activity {
         shell.setPadding(dp(3), dp(3), dp(3), dp(3));
         shell.setBackground(roundedStroke(alpha(Color.WHITE, isLightTheme() ? 70 : 18), 20, alpha(GOLD, isLightTheme() ? 95 : 120)));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) shell.setElevation(dp(7));
-        View logo = liveMeelanoLogo(true);
+        // App mark = the same gold «D» as the launcher icon, so header, login and home-screen icon match.
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.meelano_3d);
+        logo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        logo.setContentDescription("Meelano Visit");
+        logo.setBackground(roundedStroke(Color.TRANSPARENT, 14, Color.TRANSPARENT));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) logo.setClipToOutline(true);
         shell.addView(logo, new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER));
         return shell;
     }
@@ -2407,6 +2413,7 @@ public class MainActivity extends Activity {
         sp.setMargins(0, dp(7), 0, dp(14));
         loginCard.addView(sub, sp);
 
+        if (message != null && message.contains("نام کاربری و رمز Meelano را وارد کنید")) message = message.replace("برای ورود، نام کاربری و رمز Meelano را وارد کنید.", "").trim();
         if (message != null && !message.trim().isEmpty()) {
             TextView msg = text(message, 12, alpha(TEXT, 215), Typeface.NORMAL);
             msg.setGravity(Gravity.CENTER);
@@ -2432,7 +2439,7 @@ public class MainActivity extends Activity {
         pp.setMargins(0, dp(6), 0, dp(16));
         loginCard.addView(password, pp);
 
-        Button login = primaryButton("اتصال و ورود ✦");
+        Button login = primaryButton("ورود");
         loginCard.addView(login, new LinearLayout.LayoutParams(-1, dp(54)));
 
         TextView note = text("طراحی و برنامه‌نویسی: " + DEVELOPER_NAME, 10.5f, MUTED, Typeface.BOLD);
@@ -2463,7 +2470,7 @@ public class MainActivity extends Activity {
                         prefs.edit().putString(KEY_LAST_USER, u).apply();
                         if (!VISITOR_EDITION) storeQuickSession(s);
                         login.setEnabled(true);
-                        login.setText("اتصال و ورود ✦");
+                        login.setText("ورود");
                         setConnectionStatus("connected");
                         showNotice(VISITOR_EDITION ? "اطلاعات اولیه آماده شد" : "اتصال موفق بود", false);
                         showApp("dashboard");
@@ -2472,7 +2479,7 @@ public class MainActivity extends Activity {
                 } catch (Exception ex) {
                     runOnUiThread(() -> {
                         login.setEnabled(true);
-                        login.setText("اتصال و ورود ✦");
+                        login.setText("ورود");
                         setConnectionStatus("offline");
                         showLoginError(readableError(ex), () -> doLogin[0].onClick(login));
                     });
@@ -4180,7 +4187,7 @@ public class MainActivity extends Activity {
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
         if (alerts.length() == 0) {
-            TextView ok = text("فعلاً هشدار بحرانی دیده نمی‌شود؛ فقط مراقب باش، دیتابیس همیشه سورپرایز دارد!", 11.2f, MUTED, Typeface.NORMAL);
+            TextView ok = text("فعلاً هشدار مهمی وجود ندارد.", 11.2f, MUTED, Typeface.NORMAL);
             ok.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(-1, -2); op.setMargins(0, dp(10), 0, 0); c.addView(ok, op);
         } else {
@@ -9770,8 +9777,8 @@ public class MainActivity extends Activity {
     private void addVisitorHomeCharts(JSONObject data) {
         LinearLayout c = card();
         c.setBackground(themedSectionBg("visitor_dashboard", 30));
-        c.addView(visitorSectionTitle("نمودارهای سریع و دقیق", "◈", navAccent("visitor_dashboard")), new LinearLayout.LayoutParams(-1, -2));
-        c.addView(text("روند فروش هفت روز اخیر.", 10.1f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(visitorSectionTitle("روند فروش", "◈", navAccent("visitor_dashboard")), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("فروش هفت روز اخیر.", 10.1f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout trendPanel = visitorChartPanel("روند ۷ روزه پیش‌فاکتور", "جمع مبلغ ثبت‌شده هر روز", navAccent("visit"));
         JSONArray trend = data == null ? null : data.optJSONArray("weekTrend");
@@ -13374,7 +13381,7 @@ public class MainActivity extends Activity {
         boolean startedTx = false;
         try {
             NativePrefactorTarget target = discoverNativePrefactorTarget(c);
-            if (target == null) { updateNativePrefactorSync(c, id, "", "", "هیچ جدول/ساختار قابل اطمینان پیش‌فاکتور آتیران در دیتابیس تشخیص داده نشد؛ رکورد اختصاصی Meelano آماده تبدیل باقی ماند."); return; }
+            if (target == null) { updateNativePrefactorSync(c, id, "", "", "پیش‌فاکتور در میلانو ذخیره شد، اما محل ثبت پیش‌فاکتور در آتیران پیدا نشد."); return; }
             String existingNo = currentNativePrefactorNo(c, id).trim();
             String existingTable = currentNativePrefactorTable(c, id).trim();
             if (!existingNo.isEmpty() && existingTable.equalsIgnoreCase(target.headerTable) && nativeHeaderRowExists(c, target, existingNo, id)) return;
