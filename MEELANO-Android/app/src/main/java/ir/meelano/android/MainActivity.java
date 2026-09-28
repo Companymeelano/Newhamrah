@@ -237,6 +237,7 @@ public class MainActivity extends Activity {
     private Typeface MEELANO_REGULAR = Typeface.DEFAULT;
     private Typeface MEELANO_BOLD = Typeface.DEFAULT_BOLD;
     private FrameLayout stage;
+    private LinearLayout pageDock;
     private TextView status;
     private TextView subtitle;
     private TextView connectionIndicator;
@@ -330,6 +331,7 @@ public class MainActivity extends Activity {
         initSpeechEngine();
         initNotificationChannel();
         buildFrame();
+        MeelanoA11y.install(getWindow().getDecorView());
         showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید.");
         maybeStartDesignPreview(getIntent());
         maybeStartDbSelfTest(getIntent());
@@ -2790,6 +2792,13 @@ public class MainActivity extends Activity {
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
         shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
+        // Fixed bar above the bottom menu (used by the cart: total + send button always visible).
+        pageDock = new LinearLayout(this);
+        pageDock.setOrientation(LinearLayout.HORIZONTAL);
+        pageDock.setGravity(Gravity.CENTER_VERTICAL);
+        pageDock.setVisibility(View.GONE);
+        shell.addView(pageDock, new LinearLayout.LayoutParams(-1, -2));
+
         navStrip = new LinearLayout(this);
         navStrip.setOrientation(LinearLayout.VERTICAL);
         navStrip.setGravity(Gravity.CENTER_VERTICAL);
@@ -3071,6 +3080,7 @@ public class MainActivity extends Activity {
     private boolean visitorEditionRuntime() { return VISITOR_EDITION; }
 
     private void renderActivePage() {
+        clearPageDock();
         if (!canOpenPage(activePage)) { activePage = firstAllowedPage(); buildNav(); if (!canOpenPage(activePage)) { content.removeAllViews(); addEmptyTo(content, "بخشی برای نمایش در دسترس نیست."); return; } }
         switch (activePage) {
             case "command": loadCommandCenter(); break;
@@ -8812,9 +8822,25 @@ public class MainActivity extends Activity {
         metrics.addView(customerMiniMetric("فروش", money(r.opt("جمع_فروش")), GOLD_2), weightedMiniLp());
         metrics.addView(customerMiniMetric("تماس", firstPhone(r), INFO), weightedMiniLp());
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(9), 0, 0); c.addView(metrics, mp);
+        double credit = r.optDouble("اعتبار", 0);
+        if (credit > 0) {
+            // Credit used = debt / credit limit; green < 70%, orange < 100%, red when over the limit.
+            double used = Math.max(0, balance) / credit;
+            int barColor = used >= 1 ? DANGER : (used >= .7 ? WARNING : SUCCESS);
+            TextView cl = text("اعتبار مصرف‌شده: " + faDigits(String.valueOf(Math.round(used * 100))) + "٪ از " + money(credit), 10.2f, tc(barColor), Typeface.BOLD);
+            LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2); clp.setMargins(0, dp(8), 0, dp(3)); c.addView(cl, clp);
+            FrameLayout track = new FrameLayout(this); track.setBackground(roundedStroke(alpha(barColor, 30), 999, Color.TRANSPARENT));
+            View fill = new View(this); fill.setBackground(roundedStroke(barColor, 999, Color.TRANSPARENT));
+            track.addView(fill, new FrameLayout.LayoutParams(-1, -1));
+            final float frac = (float) Math.min(1, used);
+            track.post(() -> { ViewGroup.LayoutParams flp = fill.getLayoutParams(); flp.width = Math.max(dp(6), (int) (track.getWidth() * frac)); fill.setLayoutParams(flp); });
+            track.setContentDescription(cl.getText());
+            c.addView(track, new LinearLayout.LayoutParams(-1, dp(7)));
+        }
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
         Button visit = themedActionButton("ثبت ویزیت", navAccent("visitor_dashboard"), false); visit.setOnClickListener(v -> loadVisitRoutePage(r.optString("کد", "")));
-        Button showcase = themedActionButton("کالا", navAccent("showcase"), true); showcase.setOnClickListener(v -> showApp("showcase"));
+        Button showcase = themedActionButton("فروش", navAccent("showcase"), true); showcase.setContentDescription("شروع فروش به " + r.optString("نام", "این مشتری"));
+        showcase.setOnClickListener(v -> { JSONObject cust = cartCustomerFromRow(r); visitorCartCustomer = cust; if (visitorCartAddress.trim().isEmpty()) visitorCartAddress = cust.optString("address", ""); autosaveCart(false); showNotice("مشتری سبد: " + cust.optString("name", ""), false); showApp("showcase"); });
         Button call = themedActionButton("تماس", SUCCESS, false); call.setOnClickListener(v -> { if (ensurePermission("customer_call", "تماس مشتری")) openPhoneDialer(firstPhone(r)); });
         actions.addView(visit, weightedButtonLp()); actions.addView(showcase, weightedButtonLp()); actions.addView(call, weightedButtonLp());
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(9), 0, 0); c.addView(actions, ap);
@@ -9606,6 +9632,7 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         // The big "start visit" greeting was removed from home; visiting starts from the «ویزیت» tab.
         addVisitorTodayOverview(data);
+        addVisitorNextCustomerCard();
         addVisitorHomeCharts(data);
         if (cartHasItems()) addVisitorCartSnapshotCard(); // an empty cart card only repeated the cart page (G8)
         addVisitorQuietOpportunitiesCard(data);
@@ -12248,7 +12275,46 @@ public class MainActivity extends Activity {
         addCartFastSubmitPanel();
         addCartItemsCard();
         addVisitorCartSimpleFinalCard();
+        showCartDock();
         if ((canUsePermission("cart_draft") && localDrafts().length() > 0) || (canUsePermission("offline_queue") && offlineQueue().length() > 0)) addCartDraftsAndOfflineCard();
+    }
+
+    private void clearPageDock() {
+        if (pageDock == null) return;
+        pageDock.removeAllViews();
+        pageDock.setVisibility(View.GONE);
+    }
+
+    /** Sticky cart bar: total amount and the one next step (pick customer / add products / send). */
+    private void showCartDock() {
+        if (pageDock == null) return;
+        pageDock.removeAllViews();
+        int accent = navAccent("cart");
+        boolean hasCustomer = visitorCartCustomer != null;
+        boolean hasItems = cartHasItems();
+        pageDock.setPadding(dp(16), dp(8), dp(16), dp(8));
+        pageDock.setBackground(gradient(new int[]{alpha(SURFACE, 250), alpha(mix(SURFACE, accent, 0.10f), 250)}, GradientDrawable.Orientation.TOP_BOTTOM, 0));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) pageDock.setElevation(dp(10));
+        LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL);
+        TextView label = text("جمع سبد • " + cartCountText(), 10.2f, MUTED, Typeface.BOLD); label.setSingleLine(true);
+        copy.addView(label, new LinearLayout.LayoutParams(-1, -2));
+        TextView total = text(money(cartTotal()), 15f, tc(accent), Typeface.BOLD); total.setSingleLine(true);
+        copy.addView(total, new LinearLayout.LayoutParams(-1, -2));
+        pageDock.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button next;
+        if (!hasItems) {
+            next = themedActionButton("افزودن کالا", navAccent("showcase"), true);
+            next.setOnClickListener(v -> showApp("showcase"));
+        } else if (!hasCustomer) {
+            next = themedActionButton("انتخاب مشتری", navAccent("customers"), true);
+            next.setOnClickListener(v -> { if (ensurePermission("customer_select", "انتخاب مشتری")) showCartCustomerPicker(""); });
+        } else if (canUsePermission("cart_submit")) {
+            next = themedActionButton("ارسال پیش‌فاکتور", SUCCESS, true);
+            next.setOnClickListener(v -> { syncCartFormInputs(); showPrefactorPreviewDialog(); });
+        } else { pageDock.setVisibility(View.VISIBLE); return; }
+        next.setTextSize(fs(10.4f));
+        pageDock.addView(next, new LinearLayout.LayoutParams(dp(150), dp(48)));
+        pageDock.setVisibility(View.VISIBLE);
     }
 
     private void addCartFastSubmitPanel() {
@@ -12723,22 +12789,112 @@ public class MainActivity extends Activity {
             JSONArray filtered = customerSearchFilteredRows(cached, search);
             for (int i = 0; i < filtered.length(); i++) {
                 JSONObject r = filtered.optJSONObject(i); if (r == null) continue;
-                JSONObject o = new JSONObject();
-                o.put("code", safeDisplayText(r.opt("کد"), ""));
-                o.put("name", safeDisplayText(r.opt("نام"), "مشتری"));
-                o.put("balance", r.optDouble("مانده", 0));
-                o.put("phone", firstPhone(r));
-                o.put("invoiceCount", r.optInt("تعداد_فاکتور", 0));
-                o.put("totalSales", r.optDouble("جمع_فروش", 0));
-                o.put("lastSale", r.optString("آخرین_خرید", ""));
-                o.put("creditLimit", r.optDouble("اعتبار", 0));
-                o.put("address", cleanCustomerAddress(r.optString("نشانی", "")));
-                o.put("blocked", false);
-                o.put("route", r.optString("مسیر", ""));
-                out.put(o);
+                out.put(cartCustomerFromRow(r));
             }
         } catch (Exception ignored) { }
         return out;
+    }
+
+    /** Converts a row of the customer list into the customer object used by the cart. */
+    private JSONObject cartCustomerFromRow(JSONObject r) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("code", safeDisplayText(r.opt("کد"), ""));
+            o.put("name", safeDisplayText(r.opt("نام"), "مشتری"));
+            o.put("balance", r.optDouble("مانده", 0));
+            o.put("phone", firstPhone(r));
+            o.put("invoiceCount", r.optInt("تعداد_فاکتور", 0));
+            o.put("totalSales", r.optDouble("جمع_فروش", 0));
+            o.put("lastSale", r.optString("آخرین_خرید", ""));
+            o.put("creditLimit", r.optDouble("اعتبار", 0));
+            o.put("address", cleanCustomerAddress(r.optString("نشانی", "")));
+            o.put("blocked", false);
+            o.put("route", r.optString("مسیر", ""));
+        } catch (Exception ignored) { }
+        return o;
+    }
+
+    private final Set<String> skippedNextCustomers = new HashSet<>();
+
+    /**
+     * Suggests the next customer to visit: not visited today, not the current cart customer, not skipped;
+     * customers with purchase history whose last purchase is oldest come first.
+     */
+    private JSONObject nextCustomerSuggestion() {
+        try {
+            JSONArray rows = new JSONArray(customersCacheJson == null || customersCacheJson.trim().isEmpty() ? "[]" : customersCacheJson);
+            Set<String> visitedToday = new HashSet<>();
+            String today = todayDateText();
+            JSONArray visits = localVisitResults();
+            for (int i = 0; i < visits.length(); i++) {
+                JSONObject v = visits.optJSONObject(i);
+                if (v != null && v.optString("createdLocal", "").startsWith(today)) visitedToday.add(v.optString("customerCode", ""));
+            }
+            String current = visitorCartCustomer == null ? "" : visitorCartCustomer.optString("code", "");
+            JSONObject best = null; String bestKey = null;
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject r = rows.optJSONObject(i); if (r == null) continue;
+                String code = safeDisplayText(r.opt("کد"), "");
+                if (code.isEmpty() || code.equals(current) || visitedToday.contains(code) || skippedNextCustomers.contains(code)) continue;
+                boolean hasHistory = r.optInt("تعداد_فاکتور", 0) > 0;
+                String last = r.optString("آخرین_خرید", "");
+                // "0" sorts before "1": buyers first, then the oldest last purchase.
+                String key = (hasHistory ? "0" : "1") + (last.isEmpty() ? "0000" : toLatinDigits(last));
+                if (bestKey == null || key.compareTo(bestKey) < 0) { best = r; bestKey = key; }
+            }
+            return best;
+        } catch (Exception ignored) { return null; }
+    }
+
+    private String toLatinDigits(String s) {
+        if (s == null) return "";
+        StringBuilder b = new StringBuilder(s.length());
+        for (char ch : s.toCharArray()) {
+            if (ch >= '۰' && ch <= '۹') b.append((char) ('0' + (ch - '۰')));
+            else if (ch >= '٠' && ch <= '٩') b.append((char) ('0' + (ch - '٠')));
+            else b.append(ch);
+        }
+        return b.toString();
+    }
+
+    /** Home card: the next customer with «شروع ویزیت», call, route and skip. */
+    private void addVisitorNextCustomerCard() {
+        JSONObject r = nextCustomerSuggestion();
+        if (r == null) return;
+        JSONObject cust = cartCustomerFromRow(r);
+        int accent = navAccent("visit");
+        LinearLayout c = card(); c.setBackground(themedSectionBg("visit", 28));
+        c.addView(visitorSectionTitle("مشتری بعدی", "➜", accent), new LinearLayout.LayoutParams(-1, -2));
+        TextView name = text(cust.optString("name", "مشتری"), 16f, TEXT, Typeface.BOLD);
+        name.setMaxLines(2); name.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-1, -2); np.setMargins(0, dp(6), 0, 0); c.addView(name, np);
+        String last = cust.optString("lastSale", "").trim();
+        double bal = cust.optDouble("balance", 0);
+        LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.addView(pill(last.isEmpty() ? "هنوز خرید نداشته" : "آخرین خرید: " + faDigits(last), INFO, false), new LinearLayout.LayoutParams(-2, -2));
+        TextView balPill = pill(bal > 0 ? "بدهکار: " + money(bal) : "بدون بدهی", bal > 0 ? WARNING : SUCCESS, false);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-2, -2); bp.setMargins(dp(6), 0, 0, 0); chips.addView(balPill, bp);
+        LinearLayout.LayoutParams chp = new LinearLayout.LayoutParams(-1, -2); chp.setMargins(0, dp(6), 0, 0); c.addView(chips, chp);
+        String addr = cust.optString("address", "");
+        if (!addr.isEmpty()) {
+            TextView a = text("نشانی: " + addr, 10.4f, MUTED, Typeface.BOLD); a.setMaxLines(2); a.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(6), 0, 0); c.addView(a, ap);
+        }
+        Button start = themedActionButton("شروع ویزیت این مشتری", accent, true);
+        start.setOnClickListener(v -> { visitorCartCustomer = cust; if (visitorCartAddress.trim().isEmpty()) visitorCartAddress = addr; autosaveCart(false); showNotice("مشتری سبد: " + cust.optString("name", ""), false); showApp("showcase"); });
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(50)); sp.setMargins(0, dp(10), 0, 0); c.addView(start, sp);
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+        Button call = themedActionButton("تماس", SUCCESS, false); call.setContentDescription("تماس با " + cust.optString("name", "مشتری"));
+        call.setEnabled(!cust.optString("phone", "").trim().isEmpty() && !"—".equals(cust.optString("phone", ""))); call.setAlpha(call.isEnabled() ? 1f : .45f);
+        call.setOnClickListener(v -> openPhoneDialer(cust.optString("phone", "")));
+        Button route = themedActionButton("مسیریابی", INFO, false); route.setContentDescription("مسیریابی تا " + cust.optString("name", "مشتری"));
+        route.setEnabled(!addr.isEmpty()); route.setAlpha(addr.isEmpty() ? .45f : 1f);
+        route.setOnClickListener(v -> openAddressInMap(addr));
+        Button skip = themedActionButton("بعدی", MUTED, false); skip.setContentDescription("پیشنهاد مشتری بعدی");
+        skip.setOnClickListener(v -> { skippedNextCustomers.add(cust.optString("code", "")); loadVisitorDashboard(false); });
+        row.addView(call, weightedButtonLp()); row.addView(route, weightedButtonLp()); row.addView(skip, weightedButtonLp());
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(8), 0, 0); c.addView(row, rp);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12)); content.addView(c, lp);
     }
 
     private void renderCartCustomerPicker(String search, JSONArray rows) { renderCartCustomerPicker(search, rows, "all"); }

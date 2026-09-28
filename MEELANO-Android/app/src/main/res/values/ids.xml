@@ -2,4 +2,6 @@
 <resources>
     <!-- View tag used by MeelanoIcons to remember which label text has already been scanned for glyphs. -->
     <item name="meelano_icon_scan" type="id"/>
+    <!-- View tag used by MeelanoA11y to remember the screen-reader label it set itself. -->
+    <item name="meelano_a11y_label" type="id"/>
 </resources>
