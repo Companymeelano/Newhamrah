@@ -67,8 +67,28 @@ def safe_rows(cur, out, sql, params=None):
         return {"cols": [], "rows": []}
 
 
+def wait_ready():
+    """SQL Server finishes its own upgrade scripts after it first accepts logins; restoring during
+    that window made the server drop the connection. Wait for three clean answers in a row."""
+    ok = 0
+    for _ in range(60):
+        try:
+            c = connect(tries=5)
+            cur = c.cursor()
+            cur.execute("SELECT COUNT(*) FROM sys.databases WHERE state_desc='ONLINE'")
+            cur.fetchall()
+            c.close()
+            ok += 1
+            if ok >= 3:
+                return
+        except Exception:
+            ok = 0
+        time.sleep(5)
+
+
 def restore(out_path):
     out = {"errors": []}
+    wait_ready()
     c = connect()
     cur = c.cursor()
     files = rows(cur, "RESTORE FILELISTONLY FROM DISK = N'/var/opt/mssql/backup/Atiran2.bak'")
@@ -218,6 +238,50 @@ def verify(out_path):
             cur.execute("IF @@TRANCOUNT>0 ROLLBACK TRANSACTION")
         except Exception:
             pass
+    # New in v5.2.0: customers by name tag, and new customer request -> approval -> Atiran.
+    try:
+        like = lambda tag: "(MONAME LIKE N'%" + tag + "%' OR MONAME LIKE N'%" + tag.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")) + "%')"
+        test_names = "MONAME LIKE N'%" + "آزمون خودكار" + "%'"
+        db08 = rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS WHERE " + like("08") + " AND NOT (" + test_names + ")")["rows"][0][0]
+        db07 = rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS WHERE " + like("07") + " AND NOT (" + test_names + ")")["rows"][0][0]
+        out["db_tag_counts"] = {"08": db08, "07": db07}
+        scope = {m.group(1): (int(m.group(2)), int(m.group(3))) for m in re.finditer(r"SCOPE login=(\w+) tag=\d+ customers=(\d+) tagged=(\d+)", joined)}
+        out["app_scope"] = scope
+        checks["latifi_sees_all_08_customers"] = scope.get("latifi") == (db08, db08)
+        checks["khodayar_sees_only_07_customers"] = scope.get("khodayar") == (db07, db07)
+        pc = re.findall(r"PRODUCTS count=(\d+)", joined)
+        inv = rows(cur, "SELECT COUNT(*) FROM dbo.inventory")["rows"][0][0]
+        out["products"] = {"app": int(pc[0]) if pc else None, "inventory_rows": inv}
+        checks["products_not_capped_at_320"] = bool(pc) and (int(pc[0]) > 320 or int(pc[0]) >= inv)
+        checks["custreq_duplicate_blocked"] = "CUSTREQ duplicate BLOCKED" in joined
+        checks["custreq_double_approve_blocked"] = "CUSTREQ double_approve BLOCKED" in joined
+        m = re.search(r"CUSTREQ RESULT id=(\d+) status=(\w+) shmo=(\d+) code=(\S*) visibleToVisitor=(\w+)", joined)
+        checks["custreq_approved"] = bool(m) and m.group(2) == "approved" and int(m.group(3)) > 0
+        checks["custreq_visible_to_visitor"] = bool(m) and m.group(5) == "true"
+        shmo = int(m.group(3)) if m else 0
+        new = rows(cur, "SELECT SHMO, MONAME, code, vis_rdf, defi_vis, RDF_masir, group_rdf, sh_i_m, user_d, [date], Lat, Lng, TafsilCode, TafsilID, active, kind, CustomerTypeTtmsId, cell, addre FROM dbo.CUSTOMERS WHERE SHMO=%s", (shmo,))
+        out["new_customer"] = new
+        r = dict(zip(new["cols"], new["rows"][0])) if new["rows"] else {}
+        checks["atiran_row_exists"] = bool(r)
+        checks["atiran_row_visitor_is_latifi"] = r.get("vis_rdf") == 6 and r.get("defi_vis") == 6
+        checks["atiran_name_arabic_letters_and_tag"] = bool(r) and "08" in r["MONAME"] and "ی" not in r["MONAME"] and "ک" not in r["MONAME"]
+        prev = rows(cur, "SELECT TOP (1) code, sh_i_m FROM dbo.CUSTOMERS WHERE RDF_masir=%s AND SHMO<>%s AND sh_i_m IS NOT NULL ORDER BY sh_i_m DESC", (r.get("RDF_masir", 0), shmo))["rows"]
+        out["route_previous"] = prev
+        checks["atiran_code_continues_route"] = bool(r) and bool(prev) and r["sh_i_m"] == prev[0][1] + 1 and len(r["code"]) == len(prev[0][0])
+        checks["atiran_cus_image_row"] = rows(cur, "SELECT COUNT(*) FROM dbo.cus_image WHERE shmo=%s", (shmo,))["rows"][0][0] == 1
+        checks["atiran_cust_act_row"] = rows(cur, "SELECT COUNT(*) FROM dbo.cust_act WHERE shmo=%s", (shmo,))["rows"][0][0] >= 1
+        checks["atiran_sys_cus_row"] = rows(cur, "SELECT COUNT(*) FROM dbo.sys_cus WHERE Shmo=%s", (shmo,))["rows"][0][0] == 1
+        checks["atiran_region_chain"] = rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS cu JOIN dbo.masir m ON cu.RDF_masir=m.rdf_masir JOIN dbo.[Quarter] qq ON m.QuarterID=qq.ID JOIN dbo.regions rg ON qq.RegionId=rg.rdf_region JOIN dbo.CITYS ct ON rg.rdf_city=ct.RDF WHERE cu.SHMO=%s", (shmo,))["rows"][0][0] == 1
+        out["new_customer_requests"] = safe_rows(cur, out, "SELECT id, status, visitor_username, visitor_id, customer_name, masir_rdf, group_rdf, atiran_shmo, atiran_code, decided_by FROM dbo.meelano_customer_requests ORDER BY id")
+        views = {}
+        for v, key in (("VW_ListCustomer", "shmo"), ("vw_customer", "shmo"), ("moshtari", "shmo")):
+            try:
+                views[v] = rows(cur, "SELECT COUNT(*) FROM dbo.[%s] WHERE [%s]=%s" % (v, key, "%s"), (shmo,))["rows"][0][0]
+            except Exception as ex:
+                views[v] = "error: " + str(ex)[:120]
+        out["new_customer_in_views"] = views
+    except Exception as ex:
+        out["errors"].append("customer checks: %s" % str(ex)[:300])
     json.dump(out, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, default=str)
     for k, v in checks.items():
         print(("PASS " if v else "FAIL ") + k)

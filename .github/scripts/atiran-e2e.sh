@@ -17,7 +17,7 @@ adb shell ip route | head -5 || true
 sleep 5
 adb logcat -c
 adb shell am start -S -W -n "$PKG/$ACT" --es meelano_test_db 10.0.2.2 --es meelano_selftest "latifi:${E2E_PASS}" --es meelano_selftest_customer 412 --es meelano_selftest_items "1796:70,667:2"
-for i in $(seq 1 100); do
+for i in $(seq 1 200); do
   sleep 4
   adb logcat -d -s MEELANO_SELFTEST:I > "$OUT/selftest.txt" 2>/dev/null
   if grep -q "MEELANO_SELFTEST.*DONE" "$OUT/selftest.txt"; then echo "self-test finished after $((i*4))s"; break; fi

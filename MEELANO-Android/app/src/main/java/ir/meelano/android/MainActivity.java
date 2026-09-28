@@ -41,6 +41,8 @@ import android.net.wifi.WifiManager;
 import android.net.wifi.WifiInfo;
 import android.os.Bundle;
 import android.os.Looper;
+import android.os.Handler;
+import android.os.SystemClock;
 import android.os.CancellationSignal;
 import android.os.PowerManager;
 import android.provider.Settings;
@@ -415,7 +417,7 @@ public class MainActivity extends Activity {
                 }
             }
             if (s == null) { selfTestLog("STEP login FAIL " + (loginError == null ? "" : loginError.getMessage())); selfTestLog("DONE"); return; }
-            session = s; prefs.edit().putString(KEY_LAST_USER, user).apply();
+            session = s; sessionLoginName = user; prefs.edit().putString(KEY_LAST_USER, user).apply();
             selfTestLog("STEP login OK visitorId=" + s.visitorId + " userId=" + s.userId + " role=" + s.accessRole);
             selfTestStep("products", () -> queryProducts("", "all"));
             selfTestStep("customers", () -> queryCustomers("", "all"));
@@ -452,8 +454,55 @@ public class MainActivity extends Activity {
                 selfTestLog("RESULT2 " + second);
             } catch (Throwable ex) { selfTestLog("STEP submit FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
             selfTestStep("my_prefactors_after", this::queryMyPrefactorsSql);
+            selfTestCustomerScopesAndRequest(s, user);
             selfTestLog("DONE");
         });
+    }
+
+    /** Customer rule by name tag, full product load, and the new-customer request → approval → Atiran path. */
+    private void selfTestCustomerScopesAndRequest(UserSession visitor, String visitorLogin) {
+        try {
+            selfTestLog("PRODUCTS count=" + jsonArrayLength(queryProducts("", "all")));
+            for (String login : new String[]{"latifi", "khodayar"}) {
+                sessionLoginName = login;
+                String tag = customerNameTagForAccount();
+                JSONArray rows = new JSONArray(queryCustomers("", "all"));
+                int tagged = 0;
+                for (int i = 0; i < rows.length(); i++) { String n = normalizeDigits(rows.optJSONObject(i).optString("نام", "")); if (n.contains(tag)) tagged++; }
+                selfTestLog("SCOPE login=" + login + " tag=" + tag + " customers=" + rows.length() + " tagged=" + tagged);
+            }
+            sessionLoginName = visitorLogin;
+            String tag = customerNameTagForAccount();
+            String name = customerNameWithVisitorTag("آزمون خودکار ميلانو", tag); // no digits, so it cannot match another tag
+            JSONObject req = new JSONObject();
+            req.put("name", name); req.put("mobile", "09120000000"); req.put("phone", "06133000000");
+            req.put("address", atiranText("اهواز، خیابان آزمون")); req.put("national", ""); req.put("note", "آزمون خودکار");
+            req.put("lat", 31.3183); req.put("lng", 48.6706);
+            selfTestLog("CUSTREQ submit " + submitCustomerRequest(req));
+            try { submitCustomerRequest(req); selfTestLog("CUSTREQ duplicate NOT_BLOCKED"); } catch (Exception dup) { selfTestLog("CUSTREQ duplicate BLOCKED " + dup.getMessage()); }
+            long id = 0;
+            JSONArray pending = queryCustomerRequests(true, false);
+            for (int i = 0; i < pending.length(); i++) if (name.equals(pending.optJSONObject(i).optString("name"))) id = pending.optJSONObject(i).optLong("id");
+            session = new UserSession(1, null, "Admin");
+            sessionLoginName = "Admin";
+            selfTestLog("CUSTREQ approver canApprove=" + canApproveCustomerRequests());
+            String msg = approveCustomerRequest(id, name, 3, 1);
+            selfTestLog("CUSTREQ approve " + msg);
+            try { approveCustomerRequest(id, name, 3, 1); selfTestLog("CUSTREQ double_approve NOT_BLOCKED"); } catch (Exception again) { selfTestLog("CUSTREQ double_approve BLOCKED"); }
+            session = visitor; sessionLoginName = visitorLogin;
+            JSONArray mine = queryCustomerRequests(false, true);
+            JSONObject mineRow = null;
+            for (int i = 0; i < mine.length(); i++) if (mine.optJSONObject(i).optLong("id") == id) mineRow = mine.optJSONObject(i);
+            int shmo = mineRow == null ? 0 : mineRow.optInt("shmo");
+            JSONArray rows = new JSONArray(queryCustomers("", "all"));
+            boolean visible = false;
+            for (int i = 0; i < rows.length(); i++) if (String.valueOf(shmo).equals(rows.optJSONObject(i).optString("کد"))) visible = true;
+            selfTestLog("CUSTREQ RESULT id=" + id + " status=" + (mineRow == null ? "?" : mineRow.optString("status")) + " shmo=" + shmo + " code=" + (mineRow == null ? "" : mineRow.optString("code")) + " visibleToVisitor=" + visible + " name=" + name);
+        } catch (Throwable ex) {
+            selfTestLog("STEP customer_request FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+        } finally {
+            session = visitor; sessionLoginName = visitorLogin;
+        }
     }
 
     /** versionName without BuildConfig (buildConfig generation is off). */
@@ -2005,6 +2054,7 @@ public class MainActivity extends Activity {
     /** One label everywhere for "add to cart with price tier N" (G2/G3). */
     private static final String PRICE1_BUTTON = "قیمت ۱";
     private static final String PRICE2_BUTTON = "قیمت ۲";
+    private static final String MANUAL_PRICE_BUTTON = "قیمت دستی";
 
     /** Shows ASCII digits as Persian digits (product codes, barcodes) — display only. */
     /** True when the user picked a large system font or the app's large text size (G7). */
@@ -2497,10 +2547,14 @@ public class MainActivity extends Activity {
                 try {
                     UserSession s = authenticate(u, p);
                     session = s;
+                    // The customer scope (latifi → «08», khodayar → «07») depends on the login name,
+                    // so it must be known before the first customer list is loaded.
+                    sessionLoginName = u;
+                    prefs.edit().putString(KEY_LAST_USER, u).apply();
                     clearUserScopedCaches();
-                    if (VISITOR_EDITION) runOnUiThread(() -> login.setText("دریافت یکباره اطلاعات…"));
+                    if (VISITOR_EDITION) runOnUiThread(() -> { login.setText("دریافت اطلاعات…"); showLoginLoadingOverlay(s.userName); });
                     preloadVisitorInitialDataBlocking();
-                    runOnUiThread(() -> {
+                    runOnUiThread(() -> finishLoginLoadingOverlay(() -> {
                         session = s;
                         prefs.edit().putString(KEY_LAST_USER, u).apply();
                         lastUserInteractionAt = System.currentTimeMillis();
@@ -2512,9 +2566,10 @@ public class MainActivity extends Activity {
                         showApp("dashboard");
                         if (!VISITOR_EDITION) maybePromptQuickPinSetup();
                         else afterVisitorPasswordLogin(u, p);
-                    });
+                    }));
                 } catch (Exception ex) {
                     runOnUiThread(() -> {
+                        removeLoginLoadingOverlay();
                         login.setEnabled(true);
                         login.setText("ورود");
                         setConnectionStatus("offline");
@@ -5899,7 +5954,11 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Login name of the signed-in account (set right after the password check). */
+    private volatile String sessionLoginName = "";
+
     private String currentAccountName() {
+        if (session != null && sessionLoginName != null && !sessionLoginName.trim().isEmpty()) return sessionLoginName.trim();
         String u = prefs == null ? "" : prefs.getString(KEY_LAST_USER, "");
         if (u == null || u.trim().isEmpty()) u = session == null ? "" : session.userName;
         return u == null || u.trim().isEmpty() ? "user" : u.trim();
@@ -6256,20 +6315,47 @@ public class MainActivity extends Activity {
         return session == null ? null : session.visitorId;
     }
 
-    private boolean isLatifiCustomer08Account() {
+    /**
+     * Some visitors see their customers by a tag written inside the Atiran customer name instead of
+     * by the visitor field: latifi → every customer whose name contains «08», khodayar → «07».
+     * (In the Atiran database 215 names contain 08 and 318 contain 07; the tag can be anywhere.)
+     */
+    private String customerNameTagForAccount() {
         String login = currentAccountName();
-        String display = session == null ? "" : session.userName;
-        return "latifi".equalsIgnoreCase(login == null ? "" : login.trim())
-                || "latifi".equalsIgnoreCase(display == null ? "" : display.trim());
+        return customerNameTagFor(login, session == null ? "" : session.userName);
+    }
+
+    static String customerNameTagFor(String login, String display) {
+        String l = login == null ? "" : login.trim().toLowerCase(Locale.US);
+        String d = display == null ? "" : display.trim();
+        if ("latifi".equals(l) || "latifi".equalsIgnoreCase(d) || d.contains("لطيفي") || d.contains("لطیفی")) return "08";
+        if ("khodayar".equals(l) || "khodayar".equalsIgnoreCase(d) || d.contains("خدايار") || d.contains("خدایار")) return "07";
+        return "";
+    }
+
+    private boolean isLatifiCustomer08Account() {
+        return !customerNameTagForAccount().isEmpty();
+    }
+
+    /** Persian and Arabic-Indic forms of the tag, e.g. 08 → ۰۸ and ٠٨. */
+    private static String[] customerTagForms(String tag) {
+        StringBuilder fa = new StringBuilder(), ar = new StringBuilder();
+        for (char ch : tag.toCharArray()) {
+            fa.append(ch >= '0' && ch <= '9' ? (char) ('۰' + (ch - '0')) : ch);
+            ar.append(ch >= '0' && ch <= '9' ? (char) ('٠' + (ch - '0')) : ch);
+        }
+        return new String[]{tag, fa.toString(), ar.toString()};
     }
 
     private String customerName08RestrictionCondition(Set<String> cols, String alias) {
-        if (!isLatifiCustomer08Account()) return "";
+        String tag = customerNameTagForAccount();
+        if (tag.isEmpty()) return "";
         String name = resolveFlexible(cols, "MONAME", "Name", "CusName", "CustomerName", "customer_name", "نام", "نام_مشتری", "نام مشتری");
         if (name == null) return "1=0";
         String p = alias == null || alias.trim().isEmpty() ? "" : alias.trim() + ".";
         String expr = "TRY_CONVERT(nvarchar(500)," + p + "[" + name + "])";
-        return "(" + expr + " LIKE N'%08%' OR " + expr + " LIKE N'%۰۸%' OR " + expr + " LIKE N'%٠٨%')";
+        String[] forms = customerTagForms(tag);
+        return "(" + expr + " LIKE N'%" + forms[0] + "%' OR " + expr + " LIKE N'%" + forms[1] + "%' OR " + expr + " LIKE N'%" + forms[2] + "%')";
     }
 
     private boolean restrictCustomerData() {
@@ -6283,6 +6369,8 @@ public class MainActivity extends Activity {
     private String customerScopeCondition(Set<String> cols, String alias, List<Object> params) {
         List<String> conditions = new ArrayList<>();
         String p = alias == null || alias.trim().isEmpty() ? "" : alias.trim() + ".";
+        String latifiNameScope = customerName08RestrictionCondition(cols, alias);
+        if (!latifiNameScope.isEmpty()) return latifiNameScope; // name tag replaces the visitor filter
         if (restrictCustomerData()) {
             Integer vid = currentVisitorScopeId();
             String vis = resolveFlexible(cols, "vis_rdf", "VisitorID", "visid", "visitor", "shvis");
@@ -6292,8 +6380,6 @@ public class MainActivity extends Activity {
                 conditions.add("TRY_CONVERT(nvarchar(100)," + p + "[" + vis + "])=?");
             }
         }
-        String latifiNameScope = customerName08RestrictionCondition(cols, alias);
-        if (!latifiNameScope.isEmpty()) conditions.add(latifiNameScope);
         return join(conditions, " AND ");
     }
 
@@ -6361,8 +6447,10 @@ public class MainActivity extends Activity {
         visitorPreloadSummary = "";
         CountDownLatch latch = new CountDownLatch(4);
         preloadExecutor.execute(() -> {
+            preloadStep("products", "run", "");
             try {
                 String body = queryProducts("", "all");
+                preloadStep("products", "ok", formatNumber(jsonArrayLength(body)) + " کالا");
                 synchronized (MainActivity.this) {
                     showcaseCacheJson = body;
                     showcaseCacheQuery = "";
@@ -6374,12 +6462,15 @@ public class MainActivity extends Activity {
                 }
                 markRefresh("showcase");
                 markRefresh("products");
-            } catch (Exception e) { appendVisitorPreloadIssue("کالا"); }
+            } catch (Exception e) { appendVisitorPreloadIssue("کالا"); preloadStep("products", "fail", "دوباره تلاش می‌شود"); }
             finally { latch.countDown(); }
         });
         preloadExecutor.execute(() -> {
+            preloadStep("customers", "run", "");
             try {
                 String body = queryCustomers("", "all");
+                String tag = customerNameTagForAccount();
+                preloadStep("customers", "ok", formatNumber(jsonArrayLength(body)) + " مشتری" + (tag.isEmpty() ? "" : " (کد " + faDigits(tag) + ")"));
                 synchronized (MainActivity.this) {
                     customersCacheJson = body;
                     customersCacheQuery = "";
@@ -6388,27 +6479,173 @@ public class MainActivity extends Activity {
                     customersSortOrder = defaultCustomerSort("all");
                 }
                 markRefresh("customers");
-            } catch (Exception e) { appendVisitorPreloadIssue("مشتری"); }
+            } catch (Exception e) { appendVisitorPreloadIssue("مشتری"); preloadStep("customers", "fail", "دوباره تلاش می‌شود"); }
             finally { latch.countDown(); }
         });
         preloadExecutor.execute(() -> {
+            preloadStep("dashboard", "run", "");
             try {
                 String body = queryVisitorDashboardSql();
                 synchronized (MainActivity.this) { visitorDashboardCacheJson = body; }
                 markRefresh("visitor_dashboard");
-            } catch (Exception e) { appendVisitorPreloadIssue("خانه"); }
+                preloadStep("dashboard", "ok", "آماده");
+            } catch (Exception e) { appendVisitorPreloadIssue("خانه"); preloadStep("dashboard", "fail", "بعداً"); }
             finally { latch.countDown(); }
         });
         preloadExecutor.execute(() -> {
+            preloadStep("reports", "run", "");
             try {
                 String body = queryVisitorReportsSql();
                 synchronized (MainActivity.this) { reportsCacheJson = body; }
                 markRefresh("visitor_reports");
-            } catch (Exception e) { appendVisitorPreloadIssue("گزارش"); }
+                preloadStep("reports", "ok", "آماده");
+            } catch (Exception e) { appendVisitorPreloadIssue("گزارش"); preloadStep("reports", "fail", "بعداً"); }
             finally { latch.countDown(); }
         });
         try { latch.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); appendVisitorPreloadIssue("توقف"); }
         visitorInitialPreloadDone = true;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Loading screen after login: themed ring with percentage + one row per part being loaded.
+    // ---------------------------------------------------------------------------------------
+    private static final String[][] PRELOAD_STEPS = {
+            {"products", "کالاها", "40"},
+            {"customers", "مشتریان", "35"},
+            {"dashboard", "خانه و فروش امروز", "15"},
+            {"reports", "گزارش‌ها و پیش‌فاکتورها", "10"}};
+    private FrameLayout loginLoadingOverlay;
+    private MeelanoLoadingView loginLoadingRing;
+    private final Map<String, View[]> loginLoadingRows = new HashMap<>();
+    private final Map<String, String> preloadState = new HashMap<>();
+    private final Map<String, Long> preloadStartedAt = new HashMap<>();
+    private final Handler loadingTicker = new Handler(Looper.getMainLooper());
+
+    private int jsonArrayLength(String body) {
+        try { return new JSONArray(body == null ? "[]" : body).length(); } catch (Exception e) { return 0; }
+    }
+
+    /** Called from the preload threads; the screen is updated on the UI thread. */
+    private void preloadStep(String key, String state, String detail) {
+        runOnUiThread(() -> {
+            preloadState.put(key, state);
+            if ("run".equals(state)) preloadStartedAt.put(key, SystemClock.uptimeMillis());
+            View[] row = loginLoadingRows.get(key);
+            if (row != null) {
+                TextView mark = (TextView) row[0], sub = (TextView) row[2];
+                if ("ok".equals(state)) { mark.setText("✓"); mark.setTextColor(onColorFor(SUCCESS)); mark.setBackground(roundedStroke(SUCCESS, 999, SUCCESS)); }
+                else if ("fail".equals(state)) { mark.setText("!"); mark.setTextColor(onColorFor(WARNING)); mark.setBackground(roundedStroke(WARNING, 999, WARNING)); }
+                else { mark.setText("…"); mark.setTextColor(tc(GOLD)); mark.setBackground(roundedStroke(alpha(GOLD, 26), 999, alpha(GOLD, 120))); }
+                sub.setText(detail == null || detail.isEmpty() ? ("run".equals(state) ? "در حال دریافت…" : "") : detail);
+                row[1].setAlpha("ok".equals(state) || "run".equals(state) ? 1f : .85f);
+            }
+            updateLoginLoadingPercent();
+        });
+    }
+
+    private float loginLoadingPercent() {
+        float done = 0f;
+        long now = SystemClock.uptimeMillis();
+        for (String[] st : PRELOAD_STEPS) {
+            float w = Float.parseFloat(st[2]);
+            String state = preloadState.get(st[0]);
+            if ("ok".equals(state) || "fail".equals(state)) done += w;
+            else if ("run".equals(state)) {
+                Long t0 = preloadStartedAt.get(st[0]);
+                float part = t0 == null ? 0f : Math.min(0.88f, (now - t0) / 9000f);
+                done += w * part;
+            }
+        }
+        return Math.min(100f, done);
+    }
+
+    private void updateLoginLoadingPercent() {
+        if (loginLoadingRing == null) return;
+        float p = loginLoadingPercent();
+        loginLoadingRing.setProgress(p);
+        loginLoadingRing.setCaption(p >= 99.5f ? "آماده شد" : "در حال دریافت");
+    }
+
+    private final Runnable loadingTick = new Runnable() {
+        @Override public void run() {
+            if (loginLoadingOverlay == null) return;
+            updateLoginLoadingPercent();
+            loadingTicker.postDelayed(this, 220);
+        }
+    };
+
+    private void showLoginLoadingOverlay(String displayName) {
+        if (stage == null) return;
+        removeLoginLoadingOverlay();
+        preloadState.clear(); preloadStartedAt.clear(); loginLoadingRows.clear();
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setClickable(true); overlay.setFocusable(true);
+        overlay.setBackground(gradient(new int[]{mix(NAVY, GOLD, isLightTheme() ? 0.10f : 0.16f), NAVY, mix(NAVY, INFO, isLightTheme() ? 0.06f : 0.10f)}, GradientDrawable.Orientation.TL_BR, 0));
+        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
+        LinearLayout col = new LinearLayout(this); col.setOrientation(LinearLayout.VERTICAL); col.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.setPadding(dp(24), dp(40), dp(24), dp(28));
+        MeelanoLoadingView ring = new MeelanoLoadingView(this, GOLD, mix(GOLD, INFO, 0.45f), alpha(TEXT, isLightTheme() ? 24 : 34), TEXT, MUTED, MEELANO_BOLD, MEELANO_REGULAR);
+        try { ring.setIcon(BitmapFactory.decodeResource(getResources(), R.drawable.meelano_3d)); } catch (Throwable ignored) { }
+        col.addView(ring, new LinearLayout.LayoutParams(dp(210), dp(210)));
+        TextView title = text("در حال آماده‌سازی اطلاعات", 17f, TEXT, Typeface.BOLD); title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2); tlp.setMargins(0, dp(14), 0, 0); col.addView(title, tlp);
+        String who = displayName == null ? "" : displayName.replace("/ويزيتور", "").replace("/ویزیتور", "").trim();
+        TextView sub = text((who.isEmpty() ? "" : who + " عزیز، ") + "کالاها، مشتریان و گزارش‌ها یک‌بار دریافت می‌شوند تا کار بعدی سریع باشد.", 11f, MUTED, Typeface.BOLD);
+        sub.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2); slp.setMargins(0, dp(6), 0, dp(16)); col.addView(sub, slp);
+        LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(dp(14), dp(10), dp(14), dp(10));
+        list.setBackground(roundedStroke(alpha(SURFACE, isLightTheme() ? 235 : 215), 22, alpha(GOLD, 70)));
+        for (String[] st : PRELOAD_STEPS) {
+            LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(7), 0, dp(7));
+            TextView mark = text("·", 13f, tc(GOLD), Typeface.BOLD); mark.setGravity(Gravity.CENTER);
+            mark.setBackground(roundedStroke(alpha(GOLD, 14), 999, alpha(GOLD, 60)));
+            row.addView(mark, new LinearLayout.LayoutParams(dp(30), dp(30)));
+            LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, 0, 0);
+            copy.addView(text(st[1], 12.5f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+            TextView detail = text("در صف", 10f, MUTED, Typeface.BOLD);
+            copy.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+            row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+            row.setAlpha(.7f);
+            list.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            loginLoadingRows.put(st[0], new View[]{mark, row, detail});
+        }
+        col.addView(list, new LinearLayout.LayoutParams(-1, -2));
+        TextView credit = text("Meelano Visit • " + DEVELOPER_NAME, 9.5f, alpha(MUTED, 200), Typeface.BOLD); credit.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2); clp.setMargins(0, dp(18), 0, 0); col.addView(credit, clp);
+        scroll.addView(col, new FrameLayout.LayoutParams(-1, -2));
+        overlay.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        overlay.setAlpha(0f);
+        stage.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        overlay.animate().alpha(1f).setDuration(220).start();
+        loginLoadingOverlay = overlay;
+        loginLoadingRing = ring;
+        loadingTicker.removeCallbacks(loadingTick);
+        loadingTicker.post(loadingTick);
+    }
+
+    /** Shows 100٪ for a moment, then runs {@code then} and fades the loading screen out. */
+    private void finishLoginLoadingOverlay(Runnable then) {
+        if (loginLoadingOverlay == null) { if (then != null) then.run(); return; }
+        for (String[] st : PRELOAD_STEPS) if (!"ok".equals(preloadState.get(st[0])) && !"fail".equals(preloadState.get(st[0]))) preloadState.put(st[0], "ok");
+        if (loginLoadingRing != null) { loginLoadingRing.setProgress(100f); loginLoadingRing.setCaption("آماده شد"); }
+        final View overlay = loginLoadingOverlay;
+        loadingTicker.postDelayed(() -> {
+            if (then != null) then.run();
+            // showApp() rebuilt the stage; put the overlay back on top just to fade it out.
+            if (overlay.getParent() == null && stage != null) stage.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+            else overlay.bringToFront();
+            overlay.animate().alpha(0f).setDuration(260).withEndAction(this::removeLoginLoadingOverlay).start();
+        }, 650);
+    }
+
+    private void removeLoginLoadingOverlay() {
+        loadingTicker.removeCallbacks(loadingTick);
+        if (loginLoadingOverlay != null && loginLoadingOverlay.getParent() instanceof ViewGroup) ((ViewGroup) loginLoadingOverlay.getParent()).removeView(loginLoadingOverlay);
+        loginLoadingOverlay = null;
+        loginLoadingRing = null;
+        loginLoadingRows.clear();
     }
 
     private synchronized void appendVisitorPreloadIssue(String section) {
@@ -8339,7 +8576,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
         }
         content.removeAllViews();
-        if (!VISITOR_EDITION) addHero("مشتریان", "اطلاعات مشتریان ثابت می‌ماند؛ برای داده جدید از تازه‌سازی دستی استفاده کنید." + (isLatifiCustomer08Account() ? " • محدوده latifi: فقط نام‌های دارای 08" : ""));
+        if (!VISITOR_EDITION) addHero("مشتریان", "اطلاعات مشتریان ثابت می‌ماند؛ برای داده جدید از تازه‌سازی دستی استفاده کنید." + (isLatifiCustomer08Account() ? " • فقط مشتریانی که «" + customerNameTagForAccount() + "» در نامشان است" : ""));
         addManualRefreshPanel("customers", "بروزرسانی دستی مشتریان", "بازگشت از گردش حساب دیگر لیست را دوباره فراخوانی نمی‌کند", () -> loadCustomers(q, f, true));
         addSearchBox("جستجوی مشتری…", q, qq -> loadCustomers(qq, f, false));
         addCustomerFilterChips(q, f, new JSONArray());
@@ -8366,22 +8603,557 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         String activeFilter = filter == null || filter.trim().isEmpty() ? "all" : filter;
         if (VISITOR_EDITION && !("all".equals(activeFilter) || "route_today".equals(activeFilter))) activeFilter = "all";
-        if (!VISITOR_EDITION) addHero("مشتریان", "فیلتر هوشمند بدهکاران، بستانکاران، بدون خرید و پرخریدها" + (isLatifiCustomer08Account() ? " • فقط مشتریان دارای 08 در نام" : ""));
+        if (!VISITOR_EDITION) addHero("مشتریان", "فیلتر هوشمند بدهکاران، بستانکاران، بدون خرید و پرخریدها" + (isLatifiCustomer08Account() ? " • فقط مشتریان دارای «" + customerNameTagForAccount() + "» در نام" : ""));
         final String ff = activeFilter;
         addManualRefreshPanel("customers", "بروزرسانی دستی مشتریان", "آخرین لیست ثابت نگه داشته شده است", () -> loadCustomers(query, ff, true));
         addSearchBox("جستجوی مشتری…", query, q -> loadCustomers(q, ff, false));
         JSONArray allRows = customerSearchFilteredRows(rows == null ? new JSONArray() : rows, query);
         addCustomerFilterChips(query, ff, allRows);
-        if (allRows.length() == 0) { LinearLayout empty = new LinearLayout(this); empty.setOrientation(LinearLayout.VERTICAL); content.addView(empty, new LinearLayout.LayoutParams(-1, -2)); addEmptyTo(empty, "مشتری مطابق جستجو پیدا نشد."); return; }
+        if (allRows.length() == 0) { LinearLayout empty = new LinearLayout(this); empty.setOrientation(LinearLayout.VERTICAL); content.addView(empty, new LinearLayout.LayoutParams(-1, -2)); addEmptyTo(empty, "مشتری مطابق جستجو پیدا نشد."); addCustomerRequestsCard(); return; }
         JSONArray visibleRows = customerFilteredRows(allRows, ff);
         if (visibleRows.length() == 0) { LinearLayout empty = new LinearLayout(this); empty.setOrientation(LinearLayout.VERTICAL); content.addView(empty, new LinearLayout.LayoutParams(-1, -2)); addEmptyTo(empty, "در این دسته مشتری قابل نمایش وجود ندارد."); return; }
         if (VISITOR_EDITION) addVisitorCustomerMissionPanel(query, ff, visibleRows);
         else addCustomerSortPanel(query, ff, visibleRows);
+        if (query == null || query.trim().isEmpty()) addCustomerRequestsCard();
         LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); content.addView(list, new LinearLayout.LayoutParams(-1, -2));
         JSONArray sorted = sortedCustomers(visibleRows, ff, customersSortOrder);
-        int displayLimit = VISITOR_EDITION ? Math.min(5, sorted.length()) : sorted.length();
-        for (int i = 0; i < displayLimit; i++) addCustomerCard(list, sorted.optJSONObject(i));
-        if (VISITOR_EDITION && sorted.length() > displayLimit) addEmptyTo(list, "برای خلوت ماندن صفحه فقط ۵ مشتری نمایش داده شد؛ برای مشتری دیگر نام یا کد را جستجو کنید.");
+        // All customers are loaded; they are drawn page by page so the screen stays fast.
+        appendCustomerPage(list, sorted, 0);
+    }
+
+    private static final int CUSTOMER_PAGE_SIZE = 30;
+
+    private void appendCustomerPage(LinearLayout list, JSONArray sorted, int from) {
+        int to = Math.min(sorted.length(), from + CUSTOMER_PAGE_SIZE);
+        for (int i = from; i < to; i++) addCustomerCard(list, sorted.optJSONObject(i));
+        int left = sorted.length() - to;
+        if (left <= 0) return;
+        Button more = themedActionButton("نمایش " + formatNumber(Math.min(CUSTOMER_PAGE_SIZE, left)) + " مشتری بعدی • " + formatNumber(left) + " مشتری دیگر", navAccent("customers"), false);
+        more.setTextSize(fs(9.6f));
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(46)); mp.setMargins(0, dp(4), 0, dp(12));
+        list.addView(more, mp);
+        more.setOnClickListener(v -> { list.removeView(more); appendCustomerPage(list, sorted, to); });
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // New customer requests: the visitor sends the details, a system user approves them from the
+    // customers page, and only then the customer is written into Atiran (dbo.CUSTOMERS plus the
+    // follow-up rows Atiran itself writes, see res/raw/atiran_new_customer.sql).
+    // ---------------------------------------------------------------------------------------
+    private static final String CUSTOMER_REQUESTS_DDL = "IF OBJECT_ID(N'dbo.meelano_customer_requests',N'U') IS NULL CREATE TABLE dbo.meelano_customer_requests ("
+            + "id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, client_uuid nvarchar(80) NULL, visitor_username nvarchar(160) NULL, visitor_id int NULL, visitor_name nvarchar(250) NULL, "
+            + "customer_name nvarchar(1000) NOT NULL, mobile nvarchar(60) NULL, phone nvarchar(60) NULL, address nvarchar(2000) NULL, national_code nvarchar(40) NULL, note nvarchar(2000) NULL, "
+            + "lat float NULL, lng float NULL, status nvarchar(20) NOT NULL DEFAULT N'pending', created_at datetime NOT NULL DEFAULT GETDATE(), "
+            + "decided_by nvarchar(250) NULL, decided_at datetime NULL, decision_note nvarchar(1000) NULL, masir_rdf int NULL, group_rdf int NULL, atiran_shmo int NULL, atiran_code nvarchar(100) NULL)";
+
+    private void ensureCustomerRequestTable(Connection c) throws Exception {
+        try (Statement st = c.createStatement()) { st.execute(CUSTOMER_REQUESTS_DDL); }
+    }
+
+    /** A system user (sys_users login) or a manager may approve; visitors only send requests. */
+    private boolean canApproveCustomerRequests() {
+        if (session == null) return false;
+        return session.visitorId == null || isFullAccessUser();
+    }
+
+    /** Atiran writes names with Arabic «ي» and «ك» and Latin digits; new names follow the same form. */
+    private String atiranText(String value) {
+        String v = normalizeDigits(value == null ? "" : value).replace('ی', 'ي').replace('ى', 'ي').replace('ک', 'ك').replace('ۀ', 'ه').replace('\u200c', ' ');
+        return v.replaceAll("\\s+", " ").trim();
+    }
+
+    /** Adds the visitor tag (latifi «08», khodayar «07») so the new customer shows in his list. */
+    private String customerNameWithVisitorTag(String name, String tag) {
+        String n = atiranText(name);
+        if (tag == null || tag.isEmpty() || n.contains(tag)) return n;
+        return tag + n;
+    }
+
+    private String atiranRawSql(int resId) throws Exception {
+        try (java.io.InputStream in = getResources().openRawResource(resId)) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096]; int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private void addCustomerRequestsCard() {
+        int accent = navAccent("customers");
+        boolean approver = canApproveCustomerRequests();
+        LinearLayout c = card();
+        c.setPadding(dp(12), dp(11), dp(12), dp(11));
+        c.setBackground(gradient(new int[]{alpha(SUCCESS, isLightTheme() ? 26 : 40), alpha(SURFACE, 248)}, GradientDrawable.Orientation.RIGHT_LEFT, 24));
+        c.addView(text(approver ? "مشتری جدید و تأیید درخواست‌ها" : "افزودن مشتری جدید", 14f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        String tag = customerNameTagForAccount();
+        TextView hint = text(approver
+                ? "درخواست‌های ویزیتورها را بررسی و با یک دکمه در آتیران ثبت کنید."
+                : "مشخصات را بفرستید؛ بعد از تأیید مدیر، مشتری در آتیران ثبت و در لیست شما دیده می‌شود." + (tag.isEmpty() ? "" : " «" + tag + "» خودکار به نام اضافه می‌شود."), 10f, MUTED, Typeface.BOLD);
+        c.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+        Button add = themedActionButton("＋ ثبت مشتری جدید", SUCCESS, true); add.setTextSize(fs(9.4f));
+        add.setOnClickListener(v -> showNewCustomerRequestDialog());
+        row.addView(add, weightedButtonLp());
+        Button mine = themedActionButton(approver ? "منتظر تأیید…" : "درخواست‌های من", approver ? WARNING : accent, false); mine.setTextSize(fs(9.4f));
+        mine.setOnClickListener(v -> { if (approver) showCustomerApprovalDialog(); else showMyCustomerRequestsDialog(); });
+        row.addView(mine, weightedButtonLp());
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(9), 0, 0); c.addView(row, rp);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(10)); content.addView(c, lp);
+        if (!designPreview) executor.execute(() -> {
+            try (Connection con = openConnection()) {
+                ensureCustomerRequestTable(con);
+                String sql = approver ? "SELECT COUNT(*) FROM dbo.meelano_customer_requests WHERE status=N'pending'"
+                        : "SELECT COUNT(*) FROM dbo.meelano_customer_requests WHERE status=N'pending' AND visitor_username=?";
+                try (PreparedStatement ps = con.prepareStatement(sql)) {
+                    if (!approver) ps.setString(1, currentAccountName());
+                    try (ResultSet r = ps.executeQuery()) {
+                        int n = r.next() ? r.getInt(1) : 0;
+                        runOnUiThread(() -> {
+                            if (approver) mine.setText(n > 0 ? "منتظر تأیید • " + formatNumber(n) : "منتظر تأیید • ندارد");
+                            else if (n > 0) mine.setText("درخواست‌های من • " + formatNumber(n) + " در انتظار");
+                        });
+                    }
+                }
+            } catch (Exception ignored) { runOnUiThread(() -> { if (approver) mine.setText("درخواست‌ها"); }); }
+        });
+    }
+
+    private void showNewCustomerRequestDialog() {
+        int accent = SUCCESS;
+        String tag = customerNameTagForAccount();
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10), dp(8), dp(10), dp(4));
+        box.addView(text("مشتری جدید", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        box.addView(text(tag.isEmpty() ? "نام و شماره همراه لازم است." : "نام و شماره همراه لازم است. «" + tag + "» خودکار به ابتدای نام اضافه می‌شود.", 10f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        EditText name = input("نام مشتری یا فروشگاه *", "", false);
+        EditText mobile = input("شماره همراه * (۰۹…)", "", false);
+        mobile.setInputType(InputType.TYPE_CLASS_PHONE);
+        EditText phone = input("تلفن ثابت", "", false);
+        phone.setInputType(InputType.TYPE_CLASS_PHONE);
+        EditText address = input("نشانی", "", false);
+        address.setSingleLine(false); address.setMinLines(2); address.setGravity(Gravity.TOP | Gravity.START);
+        EditText national = input("کد ملی (اختیاری)", "", false);
+        national.setInputType(InputType.TYPE_CLASS_NUMBER);
+        EditText note = input("توضیح برای مدیر (اختیاری)", "", false);
+        for (EditText e : new EditText[]{name, mobile, phone, address, national, note}) {
+            LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, e == address ? dp(76) : dp(48)); ep.setMargins(0, dp(7), 0, 0); box.addView(e, ep);
+        }
+        final double[] loc = lastKnownLatLng();
+        CheckBox useLoc = new CheckBox(this);
+        useLoc.setText(loc == null ? "موقعیت فعلی در دسترس نیست" : "ثبت موقعیت فعلی روی نقشه");
+        useLoc.setEnabled(loc != null); useLoc.setChecked(loc != null);
+        useLoc.setTextColor(TEXT); useLoc.setTypeface(MEELANO_BOLD); useLoc.setTextSize(fs(11));
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(6), 0, 0); box.addView(useLoc, cp);
+        ScrollView sv = new ScrollView(this); sv.addView(box);
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(sv).setNegativeButton("انصراف", null).setPositiveButton("ارسال برای تأیید", null).create();
+        dlg.setOnShowListener(di -> {
+            styleMeelanoDialog(dlg, accent);
+            Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (ok == null) return;
+            ok.setOnClickListener(v -> {
+                String n = atiranText(name.getText().toString());
+                String m = normalizeDigits(mobile.getText().toString()).replaceAll("[^0-9]", "");
+                String ph = normalizeDigits(phone.getText().toString()).replaceAll("[^0-9]", "");
+                String nc = normalizeDigits(national.getText().toString()).replaceAll("[^0-9]", "");
+                if (n.replace(tag, "").trim().length() < 2) { name.setError("نام مشتری را بنویسید"); name.requestFocus(); return; }
+                if (m.startsWith("98") && m.length() == 12) m = "0" + m.substring(2);
+                if (m.length() == 10 && m.startsWith("9")) m = "0" + m;
+                if (!m.matches("09[0-9]{9}")) { mobile.setError("شماره همراه ۱۱ رقمی و با ۰۹ شروع شود"); mobile.requestFocus(); return; }
+                if (!nc.isEmpty() && nc.length() != 10) { national.setError("کد ملی ۱۰ رقم است"); national.requestFocus(); return; }
+                JSONObject req = new JSONObject();
+                try {
+                    req.put("name", customerNameWithVisitorTag(n, tag)); req.put("mobile", m); req.put("phone", ph);
+                    req.put("address", atiranText(address.getText().toString())); req.put("national", nc);
+                    req.put("note", note.getText().toString().trim());
+                    if (useLoc.isChecked() && loc != null) { req.put("lat", loc[0]); req.put("lng", loc[1]); }
+                } catch (Exception ignored) { }
+                ok.setEnabled(false); ok.setText("در حال ارسال…");
+                runDb(() -> submitCustomerRequest(req), new DbCallback() {
+                    @Override public void ok(String body) {
+                        dlg.dismiss();
+                        showNotice(body, true);
+                        if ("customers".equals(activePage)) loadCustomers("", "all", false);
+                    }
+                    @Override public void fail(Exception e) {
+                        ok.setEnabled(true); ok.setText("ارسال برای تأیید");
+                        showNotice("ارسال نشد: " + shortError(e), true);
+                    }
+                });
+            });
+        });
+        dlg.show();
+    }
+
+    /** Stores the request; returns the message shown to the visitor. */
+    private String submitCustomerRequest(JSONObject req) throws Exception {
+        try (Connection c = openConnection()) {
+            ensureCustomerRequestTable(c);
+            String name = req.optString("name", "");
+            boolean existsInAtiran = false;
+            try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) SHMO FROM dbo.CUSTOMERS WHERE MONAME=?")) {
+                ps.setString(1, name);
+                try (ResultSet r = ps.executeQuery()) { existsInAtiran = r.next(); }
+            }
+            if (existsInAtiran) throw new DbException("مشتری‌ای با همین نام در آتیران هست؛ نام را کامل‌تر بنویسید (مثلاً با نام محله).");
+            try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) id FROM dbo.meelano_customer_requests WHERE customer_name=? AND status IN (N'pending',N'approving')")) {
+                ps.setString(1, name);
+                try (ResultSet r = ps.executeQuery()) { if (r.next()) throw new DbException("این مشتری قبلاً فرستاده شده و منتظر تأیید است."); }
+            }
+            String sql = "INSERT INTO dbo.meelano_customer_requests (client_uuid, visitor_username, visitor_id, visitor_name, customer_name, mobile, phone, address, national_code, note, lat, lng) "
+                    + "OUTPUT INSERTED.id VALUES (?,?,?,?,?,?,?,?,?,?,?,?)";
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, java.util.UUID.randomUUID().toString());
+                ps.setString(2, currentAccountName());
+                if (session != null && session.visitorId != null) ps.setInt(3, session.visitorId); else ps.setNull(3, java.sql.Types.INTEGER);
+                ps.setString(4, session == null ? "" : stringOr(session.userName, ""));
+                ps.setString(5, name);
+                ps.setString(6, req.optString("mobile", ""));
+                ps.setString(7, req.optString("phone", ""));
+                ps.setString(8, req.optString("address", ""));
+                ps.setString(9, req.optString("national", ""));
+                ps.setString(10, req.optString("note", ""));
+                if (req.has("lat")) ps.setDouble(11, req.optDouble("lat")); else ps.setNull(11, java.sql.Types.FLOAT);
+                if (req.has("lng")) ps.setDouble(12, req.optDouble("lng")); else ps.setNull(12, java.sql.Types.FLOAT);
+                try (ResultSet r = ps.executeQuery()) {
+                    long id = r.next() ? r.getLong(1) : 0;
+                    return "درخواست «" + name + "» فرستاده شد (شماره " + formatNumber(id) + "). بعد از تأیید مدیر در آتیران ثبت می‌شود.";
+                }
+            }
+        }
+    }
+
+    private JSONArray queryCustomerRequests(boolean pendingOnly, boolean mineOnly) throws Exception {
+        JSONArray out = new JSONArray();
+        try (Connection c = openConnection()) {
+            ensureCustomerRequestTable(c);
+            if (pendingOnly) try (Statement st = c.createStatement()) {
+                // An approval interrupted mid-way (lost connection) becomes pending again after 15 minutes;
+                // the duplicate-name check in the Atiran batch stops a second insert of the same customer.
+                st.executeUpdate("UPDATE dbo.meelano_customer_requests SET status=N'pending' WHERE status=N'approving' AND decided_at < DATEADD(minute,-15,GETDATE())");
+            }
+            String where = pendingOnly ? " WHERE status=N'pending'" : " WHERE 1=1";
+            if (mineOnly) where += " AND visitor_username=?";
+            String sql = "SELECT TOP (200) id, customer_name, mobile, phone, address, national_code, note, status, CONVERT(nvarchar(16), created_at, 120), visitor_name, visitor_username, visitor_id, decided_by, decision_note, atiran_shmo, atiran_code, lat, lng "
+                    + "FROM dbo.meelano_customer_requests" + where + " ORDER BY " + (pendingOnly ? "id" : "id DESC");
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                if (mineOnly) ps.setString(1, currentAccountName());
+                try (ResultSet r = ps.executeQuery()) {
+                    while (r.next()) {
+                        JSONObject o = new JSONObject();
+                        o.put("id", r.getLong(1)); o.put("name", stringOr(r.getString(2), "")); o.put("mobile", stringOr(r.getString(3), ""));
+                        o.put("phone", stringOr(r.getString(4), "")); o.put("address", stringOr(r.getString(5), "")); o.put("national", stringOr(r.getString(6), ""));
+                        o.put("note", stringOr(r.getString(7), "")); o.put("status", stringOr(r.getString(8), "pending")); o.put("created", stringOr(r.getString(9), ""));
+                        o.put("visitor", stringOr(r.getString(10), stringOr(r.getString(11), ""))); o.put("visitorId", r.getObject(12) == null ? 0 : r.getInt(12));
+                        o.put("decidedBy", stringOr(r.getString(13), "")); o.put("decisionNote", stringOr(r.getString(14), ""));
+                        o.put("shmo", r.getObject(15) == null ? 0 : r.getInt(15)); o.put("code", stringOr(r.getString(16), ""));
+                        if (r.getObject(17) != null) { o.put("lat", r.getDouble(17)); o.put("lng", r.getDouble(18)); }
+                        out.put(o);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    private String customerRequestStatusFa(String s) {
+        if ("approved".equals(s)) return "ثبت شد در آتیران";
+        if ("rejected".equals(s)) return "رد شد";
+        if ("approving".equals(s)) return "در حال ثبت";
+        return "منتظر تأیید";
+    }
+
+    private int customerRequestStatusColor(String s) {
+        if ("approved".equals(s)) return SUCCESS;
+        if ("rejected".equals(s)) return DANGER;
+        return WARNING;
+    }
+
+    private LinearLayout customerRequestItem(JSONObject r) {
+        String status = r.optString("status", "pending");
+        int accent = customerRequestStatusColor(status);
+        LinearLayout item = new LinearLayout(this); item.setOrientation(LinearLayout.VERTICAL);
+        item.setPadding(dp(10), dp(9), dp(10), dp(9));
+        item.setBackground(roundedStroke(alpha(accent, 14), 16, alpha(accent, 70)));
+        LinearLayout head = new LinearLayout(this); head.setOrientation(LinearLayout.HORIZONTAL); head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView n = text(r.optString("name"), 12f, TEXT, Typeface.BOLD); n.setMaxLines(2); n.setEllipsize(TextUtils.TruncateAt.END);
+        head.addView(n, new LinearLayout.LayoutParams(0, -2, 1f));
+        head.addView(pill(customerRequestStatusFa(status), accent, "approved".equals(status)), new LinearLayout.LayoutParams(-2, -2));
+        item.addView(head, new LinearLayout.LayoutParams(-1, -2));
+        List<String> lines = new ArrayList<>();
+        lines.add("همراه: " + faDigits(r.optString("mobile")) + (r.optString("phone").isEmpty() ? "" : " • تلفن: " + faDigits(r.optString("phone"))));
+        if (!r.optString("address").isEmpty()) lines.add("نشانی: " + r.optString("address"));
+        if (!r.optString("national").isEmpty()) lines.add("کد ملی: " + faDigits(r.optString("national")));
+        lines.add("ثبت: " + faDigits(r.optString("created")) + (r.optString("visitor").isEmpty() ? "" : " • ویزیتور: " + r.optString("visitor")));
+        if (r.has("lat")) lines.add("موقعیت روی نقشه ثبت شده");
+        if (!r.optString("note").isEmpty()) lines.add("توضیح: " + r.optString("note"));
+        if ("approved".equals(status)) lines.add("کد مشتری در آتیران: " + faDigits(stringOr(r.optString("code"), String.valueOf(r.optInt("shmo")))) + " • تأیید: " + r.optString("decidedBy"));
+        if ("rejected".equals(status) && !r.optString("decisionNote").isEmpty()) lines.add("دلیل: " + r.optString("decisionNote"));
+        TextView body = text(join(lines, "\n"), 10f, MUTED, Typeface.BOLD); body.setLineSpacing(dp(2), 1f);
+        item.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        return item;
+    }
+
+    private void showMyCustomerRequestsDialog() {
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10), dp(8), dp(10), dp(4));
+        box.addView(text("درخواست‌های مشتری جدید من", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);
+        box.addView(list, new LinearLayout.LayoutParams(-1, -2));
+        addLoading(list, "در حال دریافت…");
+        ScrollView sv = new ScrollView(this); sv.addView(box);
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(sv).setNegativeButton("بستن", null).setPositiveButton("＋ مشتری جدید", (d, w) -> showNewCustomerRequestDialog()).create();
+        styleMeelanoDialog(dlg, navAccent("customers"));
+        dlg.show();
+        executor.execute(() -> {
+            try {
+                JSONArray rows = queryCustomerRequests(false, true);
+                runOnUiThread(() -> {
+                    list.removeAllViews();
+                    if (rows.length() == 0) { addEmptyTo(list, "هنوز درخواستی نفرستاده‌اید."); return; }
+                    for (int i = 0; i < rows.length(); i++) {
+                        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1, -2); ip.setMargins(0, dp(7), 0, 0);
+                        list.addView(customerRequestItem(rows.optJSONObject(i)), ip);
+                    }
+                });
+            } catch (Exception e) { runOnUiThread(() -> { list.removeAllViews(); addEmptyTo(list, "دریافت نشد: " + shortError(e)); }); }
+        });
+    }
+
+    private void showCustomerApprovalDialog() {
+        if (!canApproveCustomerRequests()) { showNotice("تأیید مشتری جدید فقط با کاربر سیستم انجام می‌شود.", true); return; }
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10), dp(8), dp(10), dp(4));
+        box.addView(text("مشتریان منتظر تأیید", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        box.addView(text("با تأیید، مشتری با همان روش خود آتیران ثبت می‌شود (کد، مسیر، گروه و حساب).", 10f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);
+        box.addView(list, new LinearLayout.LayoutParams(-1, -2));
+        addLoading(list, "در حال دریافت…");
+        ScrollView sv = new ScrollView(this); sv.addView(box);
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(sv).setNegativeButton("بستن", null).create();
+        styleMeelanoDialog(dlg, WARNING);
+        dlg.show();
+        executor.execute(() -> {
+            try {
+                JSONArray rows = queryCustomerRequests(true, false);
+                runOnUiThread(() -> {
+                    list.removeAllViews();
+                    if (rows.length() == 0) { addEmptyTo(list, "درخواست تازه‌ای نیست."); return; }
+                    for (int i = 0; i < rows.length(); i++) {
+                        JSONObject r = rows.optJSONObject(i);
+                        LinearLayout item = customerRequestItem(r);
+                        LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
+                        Button ok = themedActionButton("✓ تأیید و ثبت در آتیران", SUCCESS, true); ok.setTextSize(fs(9f));
+                        Button no = themedActionButton("× رد", DANGER, false); no.setTextSize(fs(9f));
+                        ok.setOnClickListener(v -> { dlg.dismiss(); showApproveCustomerRequestDialog(r); });
+                        no.setOnClickListener(v -> { dlg.dismiss(); showRejectCustomerRequestDialog(r); });
+                        actions.addView(ok, new LinearLayout.LayoutParams(0, dp(42), 1.6f)); actions.addView(no, new LinearLayout.LayoutParams(0, dp(42), 1f));
+                        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(7), 0, 0); item.addView(actions, ap);
+                        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1, -2); ip.setMargins(0, dp(8), 0, 0);
+                        list.addView(item, ip);
+                    }
+                });
+            } catch (Exception e) { runOnUiThread(() -> { list.removeAllViews(); addEmptyTo(list, "دریافت نشد: " + shortError(e)); }); }
+        });
+    }
+
+    /** Routes (masir → محله → منطقه → شهر) and customer groups of Atiran, for the approve dialog. */
+    private JSONObject queryCustomerApprovalOptions() throws Exception {
+        JSONObject o = new JSONObject(); JSONArray routes = new JSONArray(), groups = new JSONArray();
+        try (Connection c = openConnection(); Statement st = c.createStatement()) {
+            try (ResultSet r = st.executeQuery("SELECT m.rdf_masir, TRY_CONVERT(nvarchar(100), m.name), TRY_CONVERT(nvarchar(100), q.Name), TRY_CONVERT(nvarchar(100), rg.name_region), TRY_CONVERT(nvarchar(100), ct.name), "
+                    + "(SELECT COUNT(*) FROM dbo.CUSTOMERS x WHERE x.RDF_masir = m.rdf_masir) FROM dbo.masir m LEFT JOIN dbo.[Quarter] q ON m.QuarterID = q.ID "
+                    + "LEFT JOIN dbo.regions rg ON q.RegionId = rg.rdf_region LEFT JOIN dbo.CITYS ct ON rg.rdf_city = ct.RDF ORDER BY m.rdf_masir")) {
+                while (r.next()) {
+                    JSONObject m = new JSONObject();
+                    m.put("id", r.getInt(1));
+                    List<String> parts = new ArrayList<>();
+                    for (int i = 2; i <= 5; i++) { String v = r.getString(i); if (v != null && !v.trim().isEmpty() && !parts.contains(v.trim())) parts.add(v.trim()); }
+                    m.put("label", join(parts, " • ") + " (" + formatNumber(r.getInt(6)) + " مشتری)");
+                    routes.put(m);
+                }
+            }
+            try (ResultSet r = st.executeQuery("SELECT * FROM dbo.custgroup")) {
+                java.sql.ResultSetMetaData md = r.getMetaData();
+                int idCol = 0, nameCol = 0;
+                for (int i = 1; i <= md.getColumnCount(); i++) {
+                    String cn = md.getColumnName(i);
+                    if ("group_rdf".equalsIgnoreCase(cn)) idCol = i;
+                    else if (nameCol == 0 && md.getColumnType(i) != java.sql.Types.INTEGER && cn.toLowerCase(Locale.US).contains("name")) nameCol = i;
+                }
+                while (r.next() && idCol > 0) {
+                    JSONObject g = new JSONObject();
+                    g.put("id", r.getInt(idCol));
+                    g.put("label", nameCol > 0 ? stringOr(r.getString(nameCol), "گروه " + r.getInt(idCol)) : "گروه " + r.getInt(idCol));
+                    groups.put(g);
+                }
+            }
+        }
+        o.put("routes", routes); o.put("groups", groups);
+        return o;
+    }
+
+    private void showApproveCustomerRequestDialog(JSONObject req) {
+        runDb(() -> queryCustomerApprovalOptions().toString(), new DbCallback() {
+            @Override public void ok(String body) {
+                JSONObject opts;
+                try { opts = new JSONObject(body); } catch (Exception e) { opts = new JSONObject(); }
+                JSONArray routes = opts.optJSONArray("routes"), groups = opts.optJSONArray("groups");
+                final int[] routeIx = {0}, groupIx = {0};
+                LinearLayout box = new LinearLayout(MainActivity.this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10), dp(8), dp(10), dp(4));
+                box.addView(text("ثبت در آتیران", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+                box.addView(text("ویزیتور: " + stringOr(req.optString("visitor"), "—") + " • همراه: " + faDigits(req.optString("mobile")), 10f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+                EditText name = input("نام مشتری در آتیران", req.optString("name"), false);
+                LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-1, dp(48)); np.setMargins(0, dp(8), 0, 0); box.addView(name, np);
+                Button route = themedActionButton(optionLabel("مسیر", routes, 0), INFO, false); route.setTextSize(fs(9.4f));
+                Button group = themedActionButton(optionLabel("گروه", groups, 0), INFO, false); group.setTextSize(fs(9.4f));
+                route.setOnClickListener(v -> pickOption("مسیر مشتری", routes, routeIx, route, "مسیر"));
+                group.setOnClickListener(v -> pickOption("گروه مشتری", groups, groupIx, group, "گروه"));
+                LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(46)); bp.setMargins(0, dp(8), 0, 0);
+                box.addView(route, bp);
+                LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(-1, dp(46)); gp.setMargins(0, dp(6), 0, 0);
+                box.addView(group, gp);
+                AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("انصراف", null).setPositiveButton("تأیید و ثبت", null).create();
+                dlg.setOnShowListener(di -> {
+                    styleMeelanoDialog(dlg, SUCCESS);
+                    Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+                    if (ok == null) return;
+                    ok.setOnClickListener(v -> {
+                        String n = atiranText(name.getText().toString());
+                        if (n.length() < 2) { name.setError("نام لازم است"); return; }
+                        int masir = routes != null && routes.length() > 0 ? routes.optJSONObject(routeIx[0]).optInt("id", 1) : 1;
+                        int grp = groups != null && groups.length() > 0 ? groups.optJSONObject(groupIx[0]).optInt("id", 1) : 1;
+                        ok.setEnabled(false); ok.setText("در حال ثبت…");
+                        runDb(() -> approveCustomerRequest(req.optLong("id"), n, masir, grp), new DbCallback() {
+                            @Override public void ok(String msg) {
+                                dlg.dismiss();
+                                showNotice(msg, true);
+                                synchronized (MainActivity.this) { customersCacheJson = null; }
+                                if ("customers".equals(activePage)) loadCustomers("", "all", true);
+                            }
+                            @Override public void fail(Exception e) {
+                                ok.setEnabled(true); ok.setText("تأیید و ثبت");
+                                showNotice("ثبت نشد: " + shortError(e), true);
+                            }
+                        });
+                    });
+                });
+                dlg.show();
+            }
+            @Override public void fail(Exception e) { showNotice("مسیرها دریافت نشد: " + shortError(e), true); }
+        });
+    }
+
+    private String optionLabel(String title, JSONArray items, int ix) {
+        if (items == null || items.length() == 0) return title + ": پیش‌فرض آتیران";
+        JSONObject o = items.optJSONObject(Math.max(0, Math.min(ix, items.length() - 1)));
+        return title + ": " + (o == null ? "—" : o.optString("label")) + "  ▾";
+    }
+
+    private void pickOption(String title, JSONArray items, int[] ix, Button target, String prefix) {
+        if (items == null || items.length() == 0) return;
+        String[] labels = new String[items.length()];
+        for (int i = 0; i < labels.length; i++) labels[i] = items.optJSONObject(i).optString("label");
+        AlertDialog d = new MeelanoDialogBuilder().setTitle(title).setSingleChoiceItems(labels, ix[0], (dd, w) -> {
+            ix[0] = w; target.setText(optionLabel(prefix, items, w)); dd.dismiss();
+        }).setNegativeButton("بستن", null).create();
+        d.show();
+    }
+
+    /**
+     * Writes the approved customer into Atiran with the shared SQL batch (same steps as Atiran's own
+     * new-customer form) and marks the request. Two approvers cannot register the same request:
+     * the request is claimed first (pending → approving).
+     */
+    private String approveCustomerRequest(long id, String name, int masir, int group) throws Exception {
+        try (Connection c = openConnection()) {
+            ensureCustomerRequestTable(c);
+            String approver = session == null ? "" : stringOr(session.userName, currentAccountName());
+            JSONObject req = null;
+            try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.meelano_customer_requests SET status=N'approving', decided_by=?, decided_at=GETDATE() OUTPUT INSERTED.visitor_id, INSERTED.mobile, INSERTED.phone, INSERTED.address, INSERTED.national_code, INSERTED.note, INSERTED.lat, INSERTED.lng WHERE id=? AND status=N'pending'")) {
+                ps.setString(1, approver); ps.setLong(2, id);
+                try (ResultSet r = ps.executeQuery()) {
+                    if (r.next()) {
+                        req = new JSONObject();
+                        req.put("vis", r.getObject(1) == null ? 1 : r.getInt(1));
+                        req.put("mobile", stringOr(r.getString(2), "")); req.put("phone", stringOr(r.getString(3), ""));
+                        req.put("address", stringOr(r.getString(4), "")); req.put("national", stringOr(r.getString(5), ""));
+                        req.put("note", stringOr(r.getString(6), ""));
+                        if (r.getObject(7) != null) { req.put("lat", r.getDouble(7)); req.put("lng", r.getDouble(8)); }
+                    }
+                }
+            }
+            if (req == null) throw new DbException("این درخواست قبلاً بررسی شده است.");
+            try {
+                String[] result = insertAtiranCustomer(c, name, req.optString("mobile"), req.optString("phone"), req.optString("address"), req.optString("national"),
+                        req.optString("note"), req.optInt("vis", 1), masir, group, approver, session == null || session.userId == null ? 1 : session.userId,
+                        req.has("lat") ? req.optDouble("lat") : null, req.has("lng") ? req.optDouble("lng") : null);
+                try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.meelano_customer_requests SET status=N'approved', customer_name=?, decided_at=GETDATE(), masir_rdf=?, group_rdf=?, atiran_shmo=?, atiran_code=?, decision_note=NULL WHERE id=?")) {
+                    ps.setString(1, name); ps.setInt(2, masir); ps.setInt(3, group); ps.setInt(4, Integer.parseInt(result[0])); ps.setString(5, result[1]); ps.setLong(6, id);
+                    ps.executeUpdate();
+                }
+                return "«" + name + "» در آتیران ثبت شد • کد مشتری " + faDigits(result[1]);
+            } catch (Exception e) {
+                try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.meelano_customer_requests SET status=N'pending', decided_by=NULL, decided_at=NULL, decision_note=? WHERE id=? AND status=N'approving'")) {
+                    ps.setString(1, "ثبت نشد: " + limitText(shortError(e), 300)); ps.setLong(2, id); ps.executeUpdate();
+                } catch (Exception ignored) { }
+                throw e;
+            }
+        }
+    }
+
+    /** Runs res/raw/atiran_new_customer.sql. Returns {SHMO, code}. */
+    private String[] insertAtiranCustomer(Connection c, String name, String mobile, String phone, String address, String national, String note,
+                                          int vis, int masir, int group, String user, int uid, Double lat, Double lng) throws Exception {
+        String sql = atiranRawSql(R.raw.atiran_new_customer);
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            int i = 1;
+            ps.setString(i++, name);
+            ps.setString(i++, mobile == null ? "" : mobile);
+            ps.setString(i++, phone == null ? "" : phone);
+            ps.setString(i++, address == null ? "" : address);
+            ps.setString(i++, national == null ? "" : national);
+            ps.setString(i++, note == null ? "" : atiranText(note));
+            ps.setInt(i++, vis <= 0 ? 1 : vis);
+            ps.setInt(i++, masir);
+            ps.setInt(i++, group);
+            ps.setString(i++, user == null || user.isEmpty() ? "ميلانو" : atiranText(user));
+            ps.setString(i++, jalaliTodayText());
+            if (lat == null) ps.setNull(i++, java.sql.Types.FLOAT); else ps.setDouble(i++, lat);
+            if (lng == null) ps.setNull(i++, java.sql.Types.FLOAT); else ps.setDouble(i++, lng);
+            ps.setInt(i, uid <= 0 ? 1 : uid);
+            boolean isResult = ps.execute();
+            // The batch runs several statements (procedures may print row counts); walk to the SELECT.
+            for (int guard = 0; guard < 64; guard++) {
+                if (isResult) {
+                    try (ResultSet r = ps.getResultSet()) {
+                        java.sql.ResultSetMetaData md = r.getMetaData();
+                        if (md.getColumnCount() >= 2 && "shmo".equalsIgnoreCase(md.getColumnLabel(1)) && r.next()) return new String[]{String.valueOf(r.getInt(1)), stringOr(r.getString(2), "")};
+                    }
+                } else if (ps.getUpdateCount() == -1) break;
+                isResult = ps.getMoreResults();
+            }
+        }
+        throw new DbException("آتیران شماره مشتری جدید را برنگرداند.");
+    }
+
+    private void showRejectCustomerRequestDialog(JSONObject req) {
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10), dp(8), dp(10), dp(4));
+        box.addView(text("رد درخواست «" + req.optString("name") + "»", 15, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        EditText why = input("دلیل (برای ویزیتور نمایش داده می‌شود)", "", false);
+        LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(48)); wp.setMargins(0, dp(8), 0, 0); box.addView(why, wp);
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("انصراف", null).setPositiveButton("رد درخواست", (d, w) -> {
+            String reason = why.getText().toString().trim();
+            String by = session == null ? "" : stringOr(session.userName, currentAccountName());
+            runDb(() -> {
+                try (Connection c = openConnection(); PreparedStatement ps = c.prepareStatement("UPDATE dbo.meelano_customer_requests SET status=N'rejected', decided_by=?, decided_at=GETDATE(), decision_note=? WHERE id=? AND status=N'pending'")) {
+                    ps.setString(1, by); ps.setString(2, reason); ps.setLong(3, req.optLong("id"));
+                    if (ps.executeUpdate() == 0) throw new DbException("این درخواست قبلاً بررسی شده است.");
+                }
+                return "درخواست رد شد.";
+            }, new DbCallback() {
+                @Override public void ok(String body) { showNotice(body, false); if ("customers".equals(activePage)) loadCustomers("", "all", false); }
+                @Override public void fail(Exception e) { showNotice("انجام نشد: " + shortError(e), true); }
+            });
+        }).create();
+        styleMeelanoDialog(dlg, DANGER);
+        dlg.show();
     }
 
     private void addVisitorCustomerMissionPanel(String query, String filter, JSONArray rows) {
@@ -8706,7 +9478,7 @@ public class MainActivity extends Activity {
         copy.setOrientation(LinearLayout.VERTICAL);
         copy.setPadding(dp(10), 0, dp(10), 0);
         copy.addView(text(VISITOR_EDITION ? "جستجوی سریع مشتری" : "فیلترهای هوشمند مشتری", 13.5f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text(VISITOR_EDITION ? "ابتدا فقط ۵ مشتری نمایش داده می‌شود؛ نام مشتری را بزنید تا از لیست ذخیره‌شده سریع پیدا شود." : "مشتری‌ها بر اساس مانده و وضعیت خرید دسته‌بندی می‌شوند.", 10.2f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text(VISITOR_EDITION ? "همه مشتریان شما دریافت شده‌اند؛ نام یا کد را بزنید تا سریع پیدا شود." : "مشتری‌ها بر اساس مانده و وضعیت خرید دسته‌بندی می‌شوند.", 10.2f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         titleRow.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         panel.addView(titleRow, new LinearLayout.LayoutParams(-1, -2));
 
@@ -11001,11 +11773,14 @@ public class MainActivity extends Activity {
         showcaseTopSalesThreshold = sales.get(Math.max(0, Math.min(sales.size() - 1, sales.size() / 5)));
     }
 
-    /** One short status label for a product photo: «ناموجود», «کم‌موجودی» or «پرفروش» (or empty). */
+    /**
+     * One short status label for a product photo: «کم‌موجودی» or «پرفروش» (or empty).
+     * «ناموجود» is shown only once, at the top of the card (markOutOfStock), not on the photo too.
+     */
     private String productStatusBadge(JSONObject r) {
         if (r == null) return "";
         double stock = jsonDouble(r, "موجودی", 0);
-        if (stock <= 0) return "ناموجود";
+        if (stock <= 0) return "";
         if (stock <= LOW_STOCK_LIMIT) return "کم‌موجودی";
         if (jsonDouble(r, "مبلغ_فروش", 0) >= showcaseTopSalesThreshold) return "پرفروش";
         return "";
@@ -11356,8 +12131,13 @@ public class MainActivity extends Activity {
         add2.setTextSize(fs(9.4f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .42f);
         add2.setContentDescription("افزودن یک عدد با قیمت فروش ۲");
         add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+        Button addM = themedActionButton(MANUAL_PRICE_BUTTON, GOLD_2, false);
+        addM.setTextSize(fs(9.0f));
+        addM.setContentDescription("افزودن با قیمت دستی");
+        addM.setOnClickListener(v -> confirmStockThen(r, () -> showManualPriceDialog(r, () -> rerenderShowcaseFast(query, filter))));
         actions.addView(add1, new LinearLayout.LayoutParams(0, dp(44), 1f));
         LinearLayout.LayoutParams a2 = new LinearLayout.LayoutParams(0, dp(44), 1f); a2.setMargins(dp(6), 0, 0, 0); actions.addView(add2, a2);
+        LinearLayout.LayoutParams am = new LinearLayout.LayoutParams(0, dp(44), 1f); am.setMargins(dp(6), 0, 0, 0); actions.addView(addM, am);
         if (selected) {
             TextView chosen = pill("✓ در سبد: " + visitorCardQty(r), SUCCESS, false);
             chosen.setSingleLine(true); chosen.setGravity(Gravity.CENTER);
@@ -11435,8 +12215,8 @@ public class MainActivity extends Activity {
         group.setMaxLines(1); group.setEllipsize(TextUtils.TruncateAt.END);
         copy.addView(group, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setGravity(Gravity.CENTER_VERTICAL);
-        chips.addView(pill(inStock ? "موجود" : "ناموجود", inStock ? SUCCESS : DANGER, false), new LinearLayout.LayoutParams(-2, -2));
-        TextView unit = pill("واحد " + unitOrDash(r), INFO, false); LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-2, -2); up.setMargins(dp(5), 0, 0, 0); chips.addView(unit, up);
+        if (inStock) chips.addView(pill("موجود", SUCCESS, false), new LinearLayout.LayoutParams(-2, -2));
+        TextView unit = pill("واحد " + unitOrDash(r), INFO, false); LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-2, -2); up.setMargins(inStock ? dp(5) : 0, 0, 0, 0); chips.addView(unit, up);
         LinearLayout.LayoutParams chp = new LinearLayout.LayoutParams(-1, -2); chp.setMargins(0, dp(7), 0, 0); copy.addView(chips, chp);
         top.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         c.addView(top, new LinearLayout.LayoutParams(-1, -2));
@@ -11463,8 +12243,12 @@ public class MainActivity extends Activity {
             add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
             Button add1 = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true); add1.setTextSize(fs(8.9f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
             add1.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+            Button addM = themedActionButton(MANUAL_PRICE_BUTTON, GOLD_2, false); addM.setTextSize(fs(8.6f));
+            addM.setContentDescription("افزودن با قیمت دستی");
+            addM.setOnClickListener(v -> confirmStockThen(r, () -> showManualPriceDialog(r, () -> rerenderShowcaseFast(query, filter))));
             actions.addView(add1, showcaseButtonLp(1f));
             actions.addView(add2, showcaseButtonLp(1f));
+            actions.addView(addM, showcaseButtonLp(1f));
             actions.addView(detail, showcaseButtonLp(.92f));
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(9), 0, 0); c.addView(actions, ap);
         }
@@ -11503,8 +12287,9 @@ public class MainActivity extends Activity {
         TextView name = text(safeDisplayText(r.opt("نام"), "کالا"), 18.0f, TEXT, Typeface.BOLD); name.setMaxLines(2); copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text("کد: " + faDigits(safeDisplayText(r.opt("کد"), "—")) + "  |  " + safeDisplayText(r.opt("گروه"), vp.title), 10.5f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout status = new LinearLayout(this); status.setOrientation(LinearLayout.HORIZONTAL);
-        status.addView(pill(stockStatusLabel(r), stockStatusColor(r), false), new LinearLayout.LayoutParams(-2, -2));
-        TextView unit = pill("واحد: " + unitOrDash(r), GOLD, false); LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-2, -2); up.setMargins(dp(6), 0, 0, 0); status.addView(unit, up);
+        boolean outOfStock = isOutOfStock(r);
+        if (!outOfStock) status.addView(pill(stockStatusLabel(r), stockStatusColor(r), false), new LinearLayout.LayoutParams(-2, -2));
+        TextView unit = pill("واحد: " + unitOrDash(r), GOLD, false); LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-2, -2); up.setMargins(outOfStock ? 0 : dp(6), 0, 0, 0); status.addView(unit, up);
         TextView pack = pill("بسته: " + numberOrDash(r, "تعداد_در_بسته"), MUTED, false); LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-2, -2); pp.setMargins(dp(6), 0, 0, 0); status.addView(pack, pp);
         LinearLayout.LayoutParams stp = new LinearLayout.LayoutParams(-1, -2); stp.setMargins(0, dp(8), 0, 0); copy.addView(status, stp);
         top.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -11532,7 +12317,10 @@ public class MainActivity extends Activity {
             LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
             Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", navAccent("cart"), false); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f); add2.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 2); showNotice("با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
             Button add1 = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f); add1.setOnClickListener(v -> confirmStockThen(r, () -> { addOrUpdateCartItem(r, qty.getText().toString(), 1); showNotice("با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
-            actions.addView(add1, showcaseButtonLp(1f)); actions.addView(add2, showcaseButtonLp(1f));
+            Button addM = themedActionButton(MANUAL_PRICE_BUTTON, GOLD_2, false);
+            addM.setContentDescription("افزودن با قیمت دستی");
+            addM.setOnClickListener(v -> confirmStockThen(r, () -> showManualPriceDialog(r, qty.getText().toString(), () -> rerenderShowcaseFast(query, filter))));
+            actions.addView(add1, showcaseButtonLp(1f)); actions.addView(add2, showcaseButtonLp(1f)); actions.addView(addM, showcaseButtonLp(1f));
             if (selected) { Button del = themedActionButton("حذف", DANGER, false); del.setOnClickListener(v -> removeCartItemWithUndo(safeDisplayText(r.opt("کد"), ""), () -> rerenderShowcaseFast(query, filter))); actions.addView(del, showcaseButtonLp(.8f)); }
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(9), 0, 0); c.addView(actions, ap);
         }
@@ -11917,6 +12705,85 @@ public class MainActivity extends Activity {
 
     private boolean cartBadgeBounce = false;
 
+    private void showManualPriceDialog(JSONObject product, Runnable after) {
+        String code = safeDisplayText(product == null ? null : product.opt("کد"), "");
+        int ix = cartFindIndex(code);
+        showManualPriceDialog(product, ix >= 0 ? cartQtyFor(code) : "1", after);
+    }
+
+    /** «قیمت دستی»: the visitor types the unit price (and quantity) for this product. */
+    private void showManualPriceDialog(JSONObject product, String qtyText, Runnable after) {
+        if (product == null) return;
+        int accent = GOLD_2;
+        String code = safeDisplayText(product.opt("کد"), "");
+        int ix = cartFindIndex(code);
+        JSONObject inCart = ix >= 0 ? visitorCartItems.optJSONObject(ix) : null;
+        double p1 = jsonDouble(product, "قیمت_فروش", 0);
+        double p2 = price2ByRule(p1, jsonDouble(product, "قیمت_فروش۲", 0));
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(12), dp(8), dp(12), dp(6));
+        TextView name = text(safeDisplayText(product.opt("نام"), "کالا"), 15f, TEXT, Typeface.BOLD); name.setMaxLines(2);
+        box.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        box.addView(text("قیمت ۱: " + (p1 > 0 ? money(p1) : "—") + "  •  قیمت ۲: " + (p2 > 0 ? money(p2) : "—"), 10f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        TextView pl = text("قیمت هر " + (unitOrDash(product).equals("—") ? "واحد" : unitOrDash(product)) + " (ریال)", 11f, TEXT, Typeface.BOLD);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(-1, -2); plp.setMargins(0, dp(10), 0, dp(4)); box.addView(pl, plp);
+        double startPrice = inCart != null && "m".equals(inCart.optString("priceTier", "")) ? inCart.optDouble("price", 0) : 0;
+        EditText price = numberInput("مثلاً ۱۸۵۰۰۰۰", startPrice, false);
+        if (startPrice <= 0) price.setText("");
+        box.addView(price, new LinearLayout.LayoutParams(-1, dp(50)));
+        TextView ql = text("تعداد", 11f, TEXT, Typeface.BOLD);
+        LinearLayout.LayoutParams qlp = new LinearLayout.LayoutParams(-1, -2); qlp.setMargins(0, dp(10), 0, dp(4)); box.addView(ql, qlp);
+        EditText qty = qtyInput("تعداد", qtyText == null || qtyText.trim().isEmpty() ? "1" : qtyText);
+        box.addView(qty, new LinearLayout.LayoutParams(-1, dp(50)));
+        TextView sum = text("", 11f, tc(accent), Typeface.BOLD); sum.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2); sp.setMargins(0, dp(10), 0, 0); box.addView(sum, sp);
+        Runnable updateSum = () -> {
+            double pv = parseNumber(price.getText().toString(), 0), qv = parseNumber(qty.getText().toString(), 0);
+            sum.setText(pv > 0 && qv > 0 ? "جمع این ردیف: " + money(pv * qv) : "قیمت و تعداد را بنویسید");
+        };
+        TextWatcher w = new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { updateSum.run(); }
+        };
+        price.addTextChangedListener(w); qty.addTextChangedListener(w); updateSum.run();
+        AlertDialog dlg = new MeelanoDialogBuilder()
+                .setTitle("افزودن با قیمت دستی")
+                .setView(box)
+                .setNegativeButton("انصراف", null)
+                .setPositiveButton("افزودن به سبد", null)
+                .create();
+        dlg.setOnShowListener(d -> {
+            styleMeelanoDialog(dlg, accent);
+            Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (ok != null) ok.setOnClickListener(v -> {
+                double pv = parseNumber(price.getText().toString(), 0);
+                double qv = parseNumber(qty.getText().toString(), 0);
+                if (pv <= 0) { price.setError("قیمت را بنویسید"); price.requestFocus(); return; }
+                if (qv <= 0) { qty.setError("تعداد را بنویسید"); qty.requestFocus(); return; }
+                mergeCartItemManualPrice(product, qv, pv);
+                dlg.dismiss();
+                showNotice(formatNumber(qv) + " عدد با قیمت دستی " + money(pv) + " به سبد اضافه شد.", false);
+                if (after != null) after.run();
+            });
+        });
+        dlg.show();
+        price.requestFocus();
+    }
+
+    private void mergeCartItemManualPrice(JSONObject product, double qty, double unitPrice) {
+        mergeCartItem(product, plainNumber(qty), 1, false);
+        try {
+            int ix = cartFindIndex(safeDisplayText(product.opt("کد"), ""));
+            JSONObject item = ix >= 0 ? visitorCartItems.optJSONObject(ix) : null;
+            if (item == null) return;
+            item.put("price", unitPrice);
+            item.put("priceTier", "m");
+            item.put("amount", cartItemNet(item));
+            visitorCartItems.put(ix, item);
+            autosaveCart(false);
+        } catch (Exception ignored) { }
+    }
+
     /** B10: remove a cart line and offer «بازگردانی» for a few seconds. */
     private void removeCartItemWithUndo(String code, Runnable rerender) {
         int ix = cartFindIndex(code);
@@ -11952,8 +12819,7 @@ public class MainActivity extends Activity {
         if (item == null) return;
         try {
             double current = item.optDouble("qty", 1);
-            double step = Math.max(1d, Math.min(12d, item.optDouble("pack", 1d)));
-            double next = current + (delta > 0 ? step : -step);
+            double next = current + (delta > 0 ? 1d : -1d);
             if (next <= 0) next = 1d;
             item.put("qty", next);
             item.put("amount", cartItemNet(item));
@@ -11997,8 +12863,9 @@ public class MainActivity extends Activity {
     private int cartLineCount() { return visitorCartItems == null ? 0 : visitorCartItems.length(); }
     private double cartTotalQty() { double t = 0; for (int i = 0; visitorCartItems != null && i < visitorCartItems.length(); i++) { JSONObject it = visitorCartItems.optJSONObject(i); if (it != null) t += Math.max(0, it.optDouble("qty", 0)); } return t; }
     private boolean cartHasItems() { return cartLineCount() > 0; }
-    private String cartCountText() { double q = cartTotalQty(); return q > 0 ? formatNumber(q) : formatNumber(cartLineCount()); }
-    private String cartCountSummary() { return cartCountText() + " عدد" + (cartLineCount() > 0 ? " / " + formatNumber(cartLineCount()) + " قلم" : ""); }
+    /** Number of cart rows (each product is one row; its quantity is entered on the row itself). */
+    private String cartCountText() { return formatNumber(cartLineCount()); }
+    private String cartCountSummary() { return formatNumber(cartLineCount()) + " قلم"; }
 
     private void loadVisitorReportsPage() { loadVisitorReportsPage(false); }
 
@@ -12282,9 +13149,18 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Total labels on the cart page that follow a typed quantity without redrawing the page. */
+    private final List<TextView> liveCartTotalViews = new ArrayList<>();
+
+    private void refreshLiveCartTotals() {
+        String t = money(cartTotal());
+        for (TextView v : liveCartTotalViews) if (v != null) v.setText(t);
+    }
+
     private void renderCartPage() {
         if (!canUsePermission("cart")) { redirectToAllowedPage("cart"); return; }
         autosaveCart(false);
+        liveCartTotalViews.clear();
         content.removeAllViews();
         if (VISITOR_EDITION) normalizeVisitorCartExactPrices();
         if (!VISITOR_EDITION) {
@@ -12319,9 +13195,10 @@ public class MainActivity extends Activity {
         pageDock.setBackground(gradient(new int[]{alpha(SURFACE, 250), alpha(mix(SURFACE, accent, 0.10f), 250)}, GradientDrawable.Orientation.TOP_BOTTOM, 0));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) pageDock.setElevation(dp(10));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL);
-        TextView label = text("جمع سبد • " + cartCountText(), 10.2f, MUTED, Typeface.BOLD); label.setSingleLine(true);
+        TextView label = text("جمع سبد • " + cartCountSummary(), 10.2f, MUTED, Typeface.BOLD); label.setSingleLine(true);
         copy.addView(label, new LinearLayout.LayoutParams(-1, -2));
         TextView total = text(money(cartTotal()), 15f, tc(accent), Typeface.BOLD); total.setSingleLine(true);
+        liveCartTotalViews.add(total);
         copy.addView(total, new LinearLayout.LayoutParams(-1, -2));
         pageDock.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         Button next;
@@ -12357,7 +13234,7 @@ public class MainActivity extends Activity {
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout metrics = new LinearLayout(this); metrics.setOrientation(LinearLayout.HORIZONTAL);
         metrics.addView(visitorMetricBox("مشتری", hasCustomer ? "انتخاب شد" : "انتخاب نشده", hasCustomer ? SUCCESS : WARNING), weightedMiniLp());
-        metrics.addView(visitorMetricBox("اقلام", cartCountText(), accent), weightedMiniLp());
+        metrics.addView(visitorMetricBox("اقلام", cartCountSummary(), accent), weightedMiniLp());
         metrics.addView(visitorMetricBox("مبلغ", money(cartTotal()), GOLD_2), weightedMiniLp());
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(8), 0, 0); c.addView(metrics, mp);
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -12373,7 +13250,7 @@ public class MainActivity extends Activity {
         c.setBackground(visitorPanel(navAccent("cart"), 30));
         c.addView(visitorSectionTitle("خلاصه سبد ویزیتور", "🛒", navAccent("cart")), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
-        row.addView(visitorMetricBox("تعداد", cartCountText(), GOLD_2), weightedMiniLp());
+        row.addView(visitorMetricBox("اقلام", cartCountSummary(), GOLD_2), weightedMiniLp());
         row.addView(visitorMetricBox("مبلغ", money(cartTotal()), GOLD_2), weightedMiniLp());
         row.addView(visitorMetricBox("مشتری", visitorCartCustomer == null ? "انتخاب نشده" : visitorCartCustomer.optString("name", "مشتری"), visitorCartCustomer == null ? WARNING : SUCCESS), weightedMiniLp());
         c.addView(row, new LinearLayout.LayoutParams(-1, -2));
@@ -12549,7 +13426,7 @@ public class MainActivity extends Activity {
         head.addView(cart3dIcon("🛒", accent, 18f), new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         copy.addView(text("اقلام انتخاب‌شده", 15.5f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("کالاهای سبد و مجموع تعداد آن‌ها.", 9.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("تعداد هر کالا را در خانه «تعداد» همان ردیف بنویسید.", 9.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
         if (!cartHasItems()) addEmptyTo(c, "سبد خالی است؛ از بخش کالا یک کالا اضافه کنید.");
@@ -12560,7 +13437,9 @@ public class MainActivity extends Activity {
         LinearLayout total = new LinearLayout(this); total.setOrientation(LinearLayout.HORIZONTAL); total.setGravity(Gravity.CENTER_VERTICAL); total.setPadding(dp(10), dp(9), dp(10), dp(9)); total.setBackground(unifiedInnerBg(SUCCESS, 16));
         String totalLabel = VISITOR_EDITION ? "جمع پیش‌فاکتور" : "جمع خام: " + money(cartSubtotal()) + " • تخفیف: " + money(cartLineDiscounts() + visitorCartGlobalDiscount);
         total.addView(text(totalLabel, 10.7f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(0, -2, 1f));
-        total.addView(text(money(cartTotal()), 13, tc(SUCCESS), Typeface.BOLD), new LinearLayout.LayoutParams(-2, -2));
+        TextView totalValue = text(money(cartTotal()), 13, tc(SUCCESS), Typeface.BOLD);
+        liveCartTotalViews.add(totalValue);
+        total.addView(totalValue, new LinearLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(10), 0, 0); c.addView(total, tp);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12)); content.addView(c, lp);
     }
@@ -12613,11 +13492,11 @@ public class MainActivity extends Activity {
         TextView idx = text(formatNumber(index + 1), 10.2f, onColorFor(accent), Typeface.BOLD); idx.setGravity(Gravity.CENTER); idx.setBackground(luxuryButtonBg(accent, true, 999)); head.addView(idx, new LinearLayout.LayoutParams(dp(32), dp(32)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(8), 0, dp(8), 0);
         TextView name = text(item.optString("name", "کالا"), 12.6f, TEXT, Typeface.BOLD); name.setSingleLine(false); name.setMaxLines(2); name.setEllipsize(TextUtils.TruncateAt.END); copy.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        String tier = "2".equals(item.optString("priceTier", "1")) ? "قیمت ۲" : "قیمت ۱";
-        TextView meta = text(formatNumber(item.optDouble("qty", 0)) + " " + item.optString("unit", "") + " × " + money(item.optDouble("price", 0)) + " • " + tier, 9.8f, MUTED, Typeface.BOLD);
+        String tier = cartTierLabel(item);
+        TextView meta = text(item.optString("unit", "").isEmpty() ? "فی " + money(item.optDouble("price", 0)) + " • " + tier : "فی هر " + item.optString("unit", "") + " " + money(item.optDouble("price", 0)) + " • " + tier, 9.8f, MUTED, Typeface.BOLD);
         meta.setSingleLine(false); meta.setMaxLines(2); meta.setEllipsize(TextUtils.TruncateAt.END); copy.addView(meta, new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView total = text(money(cartItemNet(item)), 10.5f, tc(accent), Typeface.BOLD); total.setGravity(Gravity.CENTER); total.setMaxLines(2); head.addView(total, new LinearLayout.LayoutParams(dp(largeFontScale() ? 118 : 104), -2));
+        final TextView total = text(money(cartItemNet(item)), 10.5f, tc(accent), Typeface.BOLD); total.setGravity(Gravity.CENTER); total.setMaxLines(2); head.addView(total, new LinearLayout.LayoutParams(dp(largeFontScale() ? 118 : 104), -2));
         row.addView(head, new LinearLayout.LayoutParams(-1, -2));
         String warn = cartStockWarning(item);
         if (!warn.isEmpty()) {
@@ -12625,16 +13504,76 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, -2); wp.setMargins(0, dp(6), 0, 0); row.addView(warning, wp);
         }
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL); actions.setGravity(Gravity.CENTER_VERTICAL);
+        // Quantity of THIS row, typed directly (− / + change it by one).
         Button minus = themedActionButton("−", DANGER, false); minus.setTextSize(fs(15)); minus.setOnClickListener(v -> changeCartItemQty(index, -1));
         Button plus = themedActionButton("+", SUCCESS, true); plus.setTextSize(fs(15)); plus.setOnClickListener(v -> changeCartItemQty(index, 1));
+        EditText qtyField = cartRowQtyField(item, index, total);
         Button edit = themedActionButton("ویرایش", accent, false); edit.setTextSize(fs(8.8f)); edit.setOnClickListener(v -> showEditCartItemDialog(index));
         Button del = themedActionButton("حذف", DANGER, false); del.setTextSize(fs(8.8f)); del.setOnClickListener(v -> removeCartItemWithUndo(item.optString("code", ""), this::renderCartPage));
-        actions.addView(minus, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(dp(48), dp(48)); pp.setMargins(dp(5), 0, 0, 0); actions.addView(plus, pp);
+        actions.addView(minus, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        LinearLayout.LayoutParams qfp = new LinearLayout.LayoutParams(0, dp(48), 1.25f); qfp.setMargins(dp(4), 0, 0, 0); actions.addView(qtyField, qfp);
+        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(dp(44), dp(48)); pp.setMargins(dp(4), 0, 0, 0); actions.addView(plus, pp);
         LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(0, dp(48), 1f); ep.setMargins(dp(5), 0, 0, 0); actions.addView(edit, ep);
-        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(0, dp(48), 1f); dpv.setMargins(dp(5), 0, 0, 0); actions.addView(del, dpv);
+        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(0, dp(48), 0.8f); dpv.setMargins(dp(4), 0, 0, 0); actions.addView(del, dpv);
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(7), 0, 0); row.addView(actions, ap);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(8), 0, 0); parent.addView(row, lp);
+    }
+
+    /** «1» / «2» when the unit price equals price 1 / price 2, otherwise «m» (typed by hand). */
+    private String tierForPrice(JSONObject item) {
+        double p = item.optDouble("price", 0);
+        if (Math.abs(p - item.optDouble("price1", -1)) < 0.5d) return "1";
+        if (item.optDouble("price2", 0) > 0 && Math.abs(p - item.optDouble("price2", -1)) < 0.5d) return "2";
+        return "m";
+    }
+
+    private String cartTierLabel(JSONObject item) {
+        String t = item == null ? "1" : item.optString("priceTier", "1");
+        if ("m".equals(t)) return "قیمت دستی";
+        return "2".equals(t) ? "قیمت ۲" : "قیمت ۱";
+    }
+
+    /** Number box for one cart row; the row total and the page totals follow while typing. */
+    private EditText cartRowQtyField(JSONObject item, int index, TextView rowTotal) {
+        EditText e = numberInput("تعداد", item.optDouble("qty", 1), true);
+        e.setGravity(Gravity.CENTER);
+        e.setTextSize(fs(13f));
+        e.setSelectAllOnFocus(true);
+        e.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        e.setContentDescription("تعداد " + item.optString("name", "کالا"));
+        e.setTag(R.id.meelano_a11y_label, "تعداد " + item.optString("name", "کالا"));
+        e.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) {
+                double q = parseNumber(s == null ? "" : s.toString(), 0);
+                if (q <= 0) return;
+                JSONObject it = visitorCartItems.optJSONObject(index);
+                if (it == null) return;
+                try { it.put("qty", q); it.put("amount", cartItemNet(it)); visitorCartItems.put(index, it); } catch (Exception ignored) { }
+                if (rowTotal != null) rowTotal.setText(money(cartItemNet(it)));
+                refreshLiveCartTotals();
+            }
+        });
+        e.setOnEditorActionListener((v, actionId, ev) -> {
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) { hideKeyboardFrom(v); autosaveCart(false); renderCartPage(); return true; }
+            return false;
+        });
+        e.setOnFocusChangeListener((v, has) -> {
+            if (has) return;
+            double q = parseNumber(((EditText) v).getText().toString(), 0);
+            if (q <= 0) ((EditText) v).setText(plainNumber(item.optDouble("qty", 1)));
+            autosaveCart(false);
+        });
+        return e;
+    }
+
+    private void hideKeyboardFrom(View v) {
+        try {
+            android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null && v != null) imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
+            if (v != null) v.clearFocus();
+        } catch (Exception ignored) { }
     }
 
     private void showEditCartItemDialog(int index) {
@@ -12654,7 +13593,7 @@ public class MainActivity extends Activity {
         priceRow.addView(p1, weightedButtonLp()); priceRow.addView(p2, weightedButtonLp()); LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(7), 0, 0); box.addView(priceRow, prp);
         addLabeledField(box, "توضیح", note, 76);
         AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).setPositiveButton("ذخیره", null).create();
-        dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, navAccent("cart")); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> { try { item.put("qty", Math.max(0.001, parseNumber(qty.getText().toString(), item.optDouble("qty", 1)))); item.put("price", Math.max(0, parseNumber(price.getText().toString(), item.optDouble("price", 0)))); item.put("lineDiscount", Math.max(0, parseNumber(discount.getText().toString(), 0))); item.put("note", note.getText().toString().trim()); item.put("amount", cartItemNet(item)); visitorCartItems.put(index, item); } catch (Exception ignored) { } dlg.dismiss(); renderCartPage(); }); });
+        dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, navAccent("cart")); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) ok.setOnClickListener(v -> { try { item.put("qty", Math.max(0.001, parseNumber(qty.getText().toString(), item.optDouble("qty", 1)))); item.put("price", Math.max(0, parseNumber(price.getText().toString(), item.optDouble("price", 0)))); item.put("priceTier", tierForPrice(item)); item.put("lineDiscount", Math.max(0, parseNumber(discount.getText().toString(), 0))); item.put("note", note.getText().toString().trim()); item.put("amount", cartItemNet(item)); visitorCartItems.put(index, item); } catch (Exception ignored) { } dlg.dismiss(); renderCartPage(); }); });
         dlg.show();
     }
 
@@ -14545,7 +15484,7 @@ public class MainActivity extends Activity {
             if(row == null){ warnings.put("کالا پیدا نشد: "+it.optString("name","")); blocked=true; continue; }
             double st=row[0]; double p1=row[1]; double p2=row[2];
             if(hasReliableStockSource && st<it.optDouble("qty",0)){ warnings.put("موجودی کافی نیست: "+it.optString("name","")+" / موجودی "+formatNumber(st)); blocked=true; }
-            double dbPrice="2".equals(it.optString("priceTier","1"))?p2:p1;
+            double dbPrice="m".equals(it.optString("priceTier","1"))?0:("2".equals(it.optString("priceTier","1"))?p2:p1);
             if(dbPrice>0 && Math.abs(dbPrice-it.optDouble("price",0))>1){ warnings.put("قیمت کالا تغییر کرده: "+it.optString("name","")); if(strict) blocked=true; }
         }
         out.put("warnings", warnings); out.put("blocked", blocked); out.put("ok", !blocked);
@@ -15578,7 +16517,7 @@ public class MainActivity extends Activity {
             if ("image".equals(filter) && imageCol != null) where.add(imageBinary ? "DATALENGTH(i.[" + imageCol + "])>20" : "LEN(LTRIM(RTRIM(TRY_CONVERT(nvarchar(max),i.[" + imageCol + "]))))>20");
             if ("package".equals(filter) && packCount != null) where.add("ISNULL(" + sqlNumberExpr("i", packCount, "decimal(19,3)") + ",0)>1");
             String order = "top".equals(filter) ? " ORDER BY مبلغ_فروش DESC, نام" : ("low".equals(filter) ? " ORDER BY موجودی ASC, نام" : ("price2".equals(filter) ? " ORDER BY قیمت_فروش۲ DESC, نام" : " ORDER BY نام, کد"));
-            int productTopLimit = VISITOR_EDITION ? 320 : 160;
+            int productTopLimit = VISITOR_EDITION ? 6000 : 160; // visitor: every product is loaded once at login
             String sql = "SELECT TOP (" + productTopLimit + ") " + join(select, ",") + " FROM dbo.[inventory] i " + unitJoin + groupJoin + saleApply + buyApply + priceApply + stockApply +
                     (where.isEmpty() ? "" : " WHERE " + join(where, " AND ")) + order;
             try {

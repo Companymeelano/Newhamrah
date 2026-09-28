@@ -36,10 +36,11 @@ jobs:
       - name: Restore Atiran2
         run: |
           pip install --quiet python-tds
-          for i in 1 2 3; do
+          for i in 1 2 3 4; do
+            if [ "$(docker inspect -f '{{.State.Running}}' mssql)" != "true" ]; then echo "::notice::mssql stopped, starting again"; docker start mssql; sleep 25; fi
             if python3 .github/scripts/atiran_e2e.py restore "$RUNNER_TEMP/restore.json" > "$RUNNER_TEMP/r.log" 2>&1; then echo "::notice::restore ok (try $i)"; break; fi
             grep -v -i "password" "$RUNNER_TEMP/r.log" | tail -4 | cut -c1-300 | sed 's/^/::notice::restore try '"$i"': /'
-            docker logs mssql 2>&1 | tail -3 | cut -c1-200 | sed 's/^/::notice::mssql: /'
+            docker logs mssql 2>&1 | grep -v -i password | tail -3 | cut -c1-200 | sed 's/^/::notice::mssql: /'
             sleep 20
           done
           test -s "$RUNNER_TEMP/restore.json"
