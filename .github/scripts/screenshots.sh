@@ -26,4 +26,19 @@ shot 07-more visitor_more
 shot 08-settings settings
 shot 09-home-dark visitor_dashboard noir_aurora
 shot 10-products-dark showcase noir_aurora
+# ---- behaviour checks (results in checks.txt) ----
+check_back () {  # page expected(exit|stay) [screenshot-name]
+  adb shell am start -S -W -n "$PKG/$ACT" --es meelano_preview "$1" --es meelano_theme azure_diamond >/dev/null
+  sleep 6
+  adb shell input keyevent KEYCODE_BACK
+  sleep 3
+  local f r
+  f=$(adb shell dumpsys window | grep -m1 mCurrentFocus | tr -s ' ')
+  if echo "$f" | grep -q "$PKG"; then r=stay; else r=exit; fi
+  local verdict=FAIL; [ "$r" = "$2" ] && verdict=PASS
+  echo "$verdict back-on-$1: got=$r expected=$2 ::$f" | tee -a "$OUT/checks.txt"
+  if [ -n "${3:-}" ]; then adb exec-out screencap -p > "$OUT/$3.png"; fi
+}
+check_back visitor_dashboard exit
+check_back showcase stay 11-back-from-products
 adb logcat -d -t 400 | grep -E "AndroidRuntime|FATAL|MainActivity" | tail -40 > "$OUT/logcat.txt" || true

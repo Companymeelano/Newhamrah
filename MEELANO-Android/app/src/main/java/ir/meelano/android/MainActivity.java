@@ -300,7 +300,11 @@ public class MainActivity extends Activity {
     private volatile boolean lastSqlVpnBypassed = false;
     private volatile String lastSqlNetworkNote = "";
     private final Map<String, String> customerLedgerCache = new HashMap<>();
-    private final Map<String, Bitmap> productBitmapCache = new HashMap<>();
+    // Bounded by bytes (1/8 of the heap) instead of an unbounded HashMap.
+    private final android.util.LruCache<String, Bitmap> productBitmapCache = new android.util.LruCache<String, Bitmap>(
+            (int) Math.max(4 * 1024, Math.min(Integer.MAX_VALUE, Runtime.getRuntime().maxMemory() / 1024L / 8L))) {
+        @Override protected int sizeOf(String key, Bitmap value) { return value == null ? 1 : Math.max(1, value.getByteCount() / 1024); }
+    };
 
     private static final Set<String> SAFE_TABLES = new HashSet<>(Arrays.asList(
             "CUSTOMERS", "inventory", "sailfact", "subsailfact", "sailfact_pish", "subsailfact_pish",
@@ -628,8 +632,24 @@ public class MainActivity extends Activity {
                 "pearl_platinum".equals(v) || "rose_quartz_lux".equals(v) || "emerald_silk".equals(v);
     }
 
+    private boolean motionAllowedCache = true;
+    private long motionAllowedCheckedAt = 0L;
+
+    /** Cached: this is queried from onDraw(), so avoid a prefs read + system call on every frame. */
     private boolean motionAllowed() {
+        long now = System.currentTimeMillis();
+        if (motionAllowedCheckedAt != 0L && now - motionAllowedCheckedAt < 4000L) return motionAllowedCache;
+        motionAllowedCheckedAt = now;
+        motionAllowedCache = computeMotionAllowed();
+        return motionAllowedCache;
+    }
+
+    private boolean computeMotionAllowed() {
         if (prefs != null && prefs.getBoolean(KEY_REDUCED_MOTION, false)) return false;
+        try {
+            // Accessibility → "Remove animations" sets the animator scale to 0.
+            if (Settings.Global.getFloat(getContentResolver(), Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) return false;
+        } catch (Exception ignored) { }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -694,6 +714,7 @@ public class MainActivity extends Activity {
     private void applyTheme(String themeId) {
         String id = resolveThemeId(themeId);
         lastAppliedDark = systemDarkMode();
+        readableColorCache.clear();
         if ("pearl_platinum".equals(id)) {
             NAVY = Color.rgb(245, 247, 251);
             SURFACE = Color.rgb(255, 255, 255);
@@ -966,6 +987,41 @@ public class MainActivity extends Activity {
         return "الماس آبی روشن";
     }
 
+    private final Map<Integer, Integer> readableColorCache = new HashMap<>();
+
+    private static double relativeLuminance(int color) {
+        double[] c = {Color.red(color) / 255d, Color.green(color) / 255d, Color.blue(color) / 255d};
+        for (int i = 0; i < 3; i++) c[i] = c[i] <= 0.03928 ? c[i] / 12.92 : Math.pow((c[i] + 0.055) / 1.055, 2.4);
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    }
+
+    private static double contrastRatio(int a, int b) {
+        double la = relativeLuminance(a), lb = relativeLuminance(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+
+    /**
+     * Text-safe version of an accent colour: keeps the hue but moves it towards TEXT until it
+     * reaches WCAG AA (4.5:1) on both SURFACE and SURFACE_2. Light themes used accents such as
+     * GOLD_2 at ~2:1 for amounts and titles, which is unreadable in sunlight. Dark themes already
+     * pass, so they are returned unchanged. Only for text drawn on the page surface, never for
+     * text on a filled accent background (those use onColorFor()).
+     */
+    private int tc(int color) {
+        Integer cached = readableColorCache.get(color);
+        if (cached != null) return cached;
+        int a = Color.alpha(color);
+        int opaque = Color.rgb(Color.red(color), Color.green(color), Color.blue(color));
+        int out = opaque;
+        int textOpaque = Color.rgb(Color.red(TEXT), Color.green(TEXT), Color.blue(TEXT));
+        for (int i = 1; i <= 20 && Math.min(contrastRatio(out, SURFACE), contrastRatio(out, SURFACE_2)) < 4.5; i++) {
+            out = mix(opaque, textOpaque, i * 0.05f);
+        }
+        int result = Color.argb(a, Color.red(out), Color.green(out), Color.blue(out));
+        readableColorCache.put(color, result);
+        return result;
+    }
+
     private int alpha(int color, int amount) {
         return Color.argb(amount, Color.red(color), Color.green(color), Color.blue(color));
     }
@@ -1090,9 +1146,9 @@ public class MainActivity extends Activity {
                 Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
                 Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
                 Button neu = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
-                if (pos != null) { pos.setTextColor(accent); pos.setAllCaps(false); pos.setTypeface(MEELANO_BOLD); applyTouchFeedback(pos); }
+                if (pos != null) { pos.setTextColor(tc(accent)); pos.setAllCaps(false); pos.setTypeface(MEELANO_BOLD); applyTouchFeedback(pos); }
                 if (neg != null) { neg.setTextColor(MUTED); neg.setAllCaps(false); applyTouchFeedback(neg); }
-                if (neu != null) { neu.setTextColor(INFO); neu.setAllCaps(false); applyTouchFeedback(neu); }
+                if (neu != null) { neu.setTextColor(tc(INFO)); neu.setAllCaps(false); applyTouchFeedback(neu); }
             } catch (Exception ignored) { }
         };
         dialog.setOnShowListener(d -> styler.run());
@@ -1165,6 +1221,8 @@ public class MainActivity extends Activity {
         return shell;
     }
 
+    private static final float LOGO_REST_T = (float) (3 * Math.PI);
+
     private class LiveMeelanoLogoView extends View {
         private final boolean compact;
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -1184,7 +1242,9 @@ public class MainActivity extends Activity {
             int w = getWidth(), h = getHeight();
             if (w <= 0 || h <= 0) return;
             boolean moving = motionAllowed();
-            float t = moving ? (System.currentTimeMillis() - startMs) / 1000f : 0f;
+            float elapsed = (System.currentTimeMillis() - startMs) / 1000f;
+            boolean introRunning = moving && elapsed < LOGO_REST_T;
+            float t = moving ? Math.min(elapsed, LOGO_REST_T) : 0f;
             float s = Math.min(w, h);
             float cx = w / 2f, cy = h / 2f;
             float pulse = (float) Math.sin(t * 2.0f);
@@ -1288,9 +1348,9 @@ public class MainActivity extends Activity {
             canvas.drawLine(s * 0.220f, s * 0.312f, s * 0.270f, s * 0.270f, p);
             canvas.drawLine(s * 0.832f, s * 0.326f, s * 0.858f, s * 0.294f, p);
 
-            if (moving) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) postInvalidateOnAnimation(); else postInvalidateDelayed(60);
-            }
+            // Previously this re-drew on every vsync (60-120 fps, software layer) for as long as the app
+            // was open. Now: a short intro at ~30 fps, then the logo rests and costs nothing.
+            if (introRunning) postInvalidateDelayed(33);
         }
     }
 
@@ -1397,7 +1457,7 @@ public class MainActivity extends Activity {
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
         titles.setPadding(dp(8), 0, dp(8), 0);
-        TextView appTitle = text(EDITION_TITLE, 15.8f, GOLD_2, Typeface.BOLD);
+        TextView appTitle = text(EDITION_TITLE, 15.8f, tc(GOLD_2), Typeface.BOLD);
         appTitle.setSingleLine(true);
         appTitle.setEllipsize(TextUtils.TruncateAt.END);
         appTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
@@ -1407,7 +1467,7 @@ public class MainActivity extends Activity {
         subtitle.setSingleLine(true);
         subtitle.setEllipsize(TextUtils.TruncateAt.END);
         subtitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        TextView badge = text(session == null ? "نسخه فروش میدانی" : "● آماده فروش امروز", 8.6f, isLightTheme() ? mix(GOLD, TEXT, 0.25f) : alpha(GOLD_2, 235), Typeface.BOLD);
+        TextView badge = text(session == null ? "نسخه فروش میدانی" : "● آماده فروش امروز", 8.6f, tc(isLightTheme() ? mix(GOLD, TEXT, 0.25f) : alpha(GOLD_2, 235)), Typeface.BOLD);
         badge.setSingleLine(true);
         badge.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         titles.addView(appTitle, new LinearLayout.LayoutParams(-1, -2));
@@ -1467,7 +1527,7 @@ public class MainActivity extends Activity {
         else if (st.contains("connected")) { color = SUCCESS; glyph = "●"; desc = "اتصال فعال"; }
         else if (st.contains("offline")) { color = DANGER; glyph = "!"; desc = "عدم اتصال"; }
         connectionIndicator.setText(glyph);
-        connectionIndicator.setTextColor(color);
+        connectionIndicator.setTextColor(tc(color));
         connectionIndicator.setContentDescription(desc);
         connectionIndicator.setBackground(gradient(new int[]{alpha(color, 82), alpha(GOLD, 22)}, GradientDrawable.Orientation.TL_BR, 14));
         if (st.contains("loading")) connectionIndicator.animate().rotationBy(360f).setDuration(850).start();
@@ -1479,7 +1539,7 @@ public class MainActivity extends Activity {
         b.setText(glyph);
         b.setTextSize(fs(21));
         b.setGravity(Gravity.CENTER);
-        b.setTextColor(GOLD_2);
+        b.setTextColor(tc(GOLD_2));
         b.setTypeface(MEELANO_BOLD);
         b.setBackground(roundedStroke(alpha(Color.WHITE, 10), 14, alpha(GOLD, 48)));
         b.setContentDescription(description);
@@ -1950,8 +2010,11 @@ public class MainActivity extends Activity {
 
 
     private void showLogin(String message) {
+        if (session != null) autosaveCart(true);
         activePage = "login";
         session = null;
+        cartAutosaveRestoreChecked = false;
+        if (visitorCartItems != null) resetCartState();
         setConnectionStatus("idle");
         subtitle.setText(VISITOR_EDITION ? "ورود مستقیم ویزیتور" : "ورود با حساب Meelano");
         stage.removeAllViews();
@@ -2208,7 +2271,7 @@ public class MainActivity extends Activity {
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(dp(4), dp(7), dp(4), dp(7));
         chip.setBackground(gradient(new int[]{alpha(accent, 42), alpha(SURFACE_2, 220)}, GradientDrawable.Orientation.TL_BR, 18));
-        TextView g = text(glyph, 15, accent, Typeface.BOLD);
+        TextView g = text(glyph, 15, tc(accent), Typeface.BOLD);
         g.setGravity(Gravity.CENTER);
         TextView l = text(label, 8.6f, TEXT, Typeface.BOLD);
         l.setGravity(Gravity.CENTER);
@@ -2244,7 +2307,7 @@ public class MainActivity extends Activity {
             if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 245), 28, alpha(SUCCESS, 90)));
             Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
             if (positive != null) {
-                positive.setTextColor(SUCCESS);
+                positive.setTextColor(tc(SUCCESS));
                 positive.setTypeface(MEELANO_BOLD);
                 positive.setOnClickListener(v -> {
                     String value = pin.getText().toString().trim();
@@ -2341,7 +2404,7 @@ public class MainActivity extends Activity {
         dialog.setOnShowListener(d -> {
             if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 248), 28, alpha(DANGER, 75)));
             Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            if (positive != null) positive.setTextColor(GOLD);
+            if (positive != null) positive.setTextColor(tc(GOLD));
         });
         dialog.show();
     }
@@ -2352,11 +2415,13 @@ public class MainActivity extends Activity {
             return;
         }
         String targetPage = (page == null || page.trim().isEmpty()) ? "dashboard" : page.trim();
+        if (VISITOR_EDITION && "dashboard".equals(targetPage)) targetPage = "visitor_dashboard";
         if (!canOpenPage(targetPage)) {
             targetPage = firstAllowedPage();
             showNotice("فقط بخش‌های مجاز این حساب نمایش داده می‌شود.", false);
         }
         activePage = targetPage;
+        maybeRestoreAutosavedCart();
         motionSerial = 0;
         setConnectionStatus("connected");
         subtitle.setText(VISITOR_EDITION ? "ویزیتور فعال • " + session.userName : session.userName);
@@ -2416,7 +2481,7 @@ public class MainActivity extends Activity {
         hint.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
         info.addView(hint, new LinearLayout.LayoutParams(0, dp(28), 1f));
         if (canOpenPage("cart")) {
-            TextView cart = text("سبد " + cartCountText(), 9.2f, navAccent("cart"), Typeface.BOLD);
+            TextView cart = text("سبد " + cartCountText(), 9.2f, tc(navAccent("cart")), Typeface.BOLD);
             cart.setGravity(Gravity.CENTER);
             cart.setSingleLine(true);
             cart.setPadding(dp(8), dp(3), dp(8), dp(3));
@@ -2502,6 +2567,7 @@ public class MainActivity extends Activity {
     }
 
     private void refreshVisitorCartBadge() {
+        autosaveCart(false);
         if (!VISITOR_EDITION || navStrip == null) return;
         try { buildNav(); } catch (Exception ignored) { }
     }
@@ -2581,7 +2647,7 @@ public class MainActivity extends Activity {
         }
         item.addView(iconWrap, new LinearLayout.LayoutParams(wrapW, wrapH));
         String dockLabel = label;
-        TextView title = text(dockLabel, (active ? 9.3f : 8.8f) * dockScale, active ? mix(accent, GOLD_2, 0.18f) : alpha(TEXT, 205), Typeface.BOLD);
+        TextView title = text(dockLabel, (active ? 9.3f : 8.8f) * dockScale, tc(active ? mix(accent, GOLD_2, 0.18f) : alpha(TEXT, 205)), Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         title.setSingleLine(true);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2);
@@ -3161,7 +3227,7 @@ public class MainActivity extends Activity {
                 "~ " + motion
         };
         for (int i = 0; i < chips.length; i++) {
-            TextView chip = text(chips[i], 9.0f, i == 1 ? GOLD_2 : TEXT, Typeface.BOLD);
+            TextView chip = text(chips[i], 9.0f, tc(i == 1 ? GOLD_2 : TEXT), Typeface.BOLD);
             chip.setGravity(Gravity.CENTER);
             chip.setSingleLine(true);
             chip.setEllipsize(TextUtils.TruncateAt.END);
@@ -3342,6 +3408,7 @@ public class MainActivity extends Activity {
     private void runDb(DbJob job, DbCallback callback) {
         setConnectionStatus("loading");
         long started = System.currentTimeMillis();
+        final LinearLayout requestPage = content;
         executor.execute(() -> {
             try {
                 String body = job.run();
@@ -3349,16 +3416,36 @@ public class MainActivity extends Activity {
                 if (prefs != null) prefs.edit().putString(KEY_LAST_CONNECTION_OK, nowText() + " • " + elapsed + "ms").remove(KEY_LAST_CONNECTION_ERROR).apply();
                 runOnUiThread(() -> {
                     setConnectionStatus("connected");
-                    callback.ok(body);
+                    deliverToRequestPage(requestPage, () -> callback.ok(body));
                 });
             } catch (Exception e) {
                 if (prefs != null) prefs.edit().putString(KEY_LAST_CONNECTION_ERROR, nowText() + " • " + shortError(e)).apply();
                 runOnUiThread(() -> {
                     setConnectionStatus("offline");
-                    callback.fail(e);
+                    deliverToRequestPage(requestPage, () -> callback.fail(e));
                 });
             }
         });
+    }
+
+    /**
+     * Runs a DB/network callback against the page that issued the request. Every showApp() builds a
+     * fresh {@code content} container, so if the user has moved on, the callback's rendering is
+     * pointed at the old (now detached) container: caches, cart state and notices still update,
+     * but the page the user is looking at is left untouched. Previously a slow product list could
+     * wipe the cart page (content.removeAllViews()) while the dock still showed "cart".
+     */
+    private void deliverToRequestPage(LinearLayout requestPage, Runnable callback) {
+        LinearLayout current = content;
+        boolean stale = requestPage != null && current != null && requestPage != current;
+        if (stale) content = requestPage;
+        try {
+            callback.run();
+        } catch (RuntimeException ex) {
+            if (!isFinishing() && !isDestroyed()) throw ex;
+        } finally {
+            if (stale && content == requestPage) content = current;
+        }
     }
 
     private String nowText() {
@@ -3761,7 +3848,7 @@ public class MainActivity extends Activity {
     private void addCacheBanner(String title, String body) {
         LinearLayout c = card();
         c.setBackground(gradient(new int[]{alpha(WARNING, 28), alpha(SURFACE, 246)}, GradientDrawable.Orientation.RIGHT_LEFT, 20));
-        c.addView(text(title, 14.5f, WARNING, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text(title, 14.5f, tc(WARNING), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         TextView b = text(body, 10.8f, TEXT, Typeface.NORMAL);
         b.setLineSpacing(dp(2), 1.05f);
         c.addView(b, new LinearLayout.LayoutParams(-1, -2));
@@ -3840,7 +3927,7 @@ public class MainActivity extends Activity {
         line.setGravity(Gravity.CENTER_VERTICAL);
         line.setPadding(dp(9), dp(8), dp(9), dp(8));
         line.setBackground(roundedStroke(alpha(accent, 16), 15, alpha(accent, 62)));
-        TextView b = text("●", 18, accent, Typeface.BOLD);
+        TextView b = text("●", 18, tc(accent), Typeface.BOLD);
         b.setGravity(Gravity.CENTER);
         line.addView(b, new LinearLayout.LayoutParams(dp(26), -1));
         LinearLayout copy = new LinearLayout(this);
@@ -3984,7 +4071,7 @@ public class MainActivity extends Activity {
         v.setGravity(Gravity.CENTER);
         v.setSingleLine(true);
         v.setEllipsize(TextUtils.TruncateAt.END);
-        TextView d = text(detail == null || detail.trim().isEmpty() ? "—" : detail, 8.7f, accent, Typeface.BOLD);
+        TextView d = text(detail == null || detail.trim().isEmpty() ? "—" : detail, 8.7f, tc(accent), Typeface.BOLD);
         d.setGravity(Gravity.CENTER);
         d.setSingleLine(true);
         d.setEllipsize(TextUtils.TruncateAt.END);
@@ -4004,7 +4091,7 @@ public class MainActivity extends Activity {
         item.setGravity(Gravity.CENTER_VERTICAL);
         item.setPadding(dp(6), dp(5), dp(6), dp(5));
         item.setBackground(roundedStroke(alpha(done ? SUCCESS : accent, done ? 16 : 13), 14, alpha(done ? SUCCESS : accent, 50)));
-        TextView badge = text(done ? "✓" : task.optString("tag", "امروز"), 8.6f, done ? SUCCESS : accent, Typeface.BOLD);
+        TextView badge = text(done ? "✓" : task.optString("tag", "امروز"), 8.6f, tc(done ? SUCCESS : accent), Typeface.BOLD);
         badge.setGravity(Gravity.CENTER);
         badge.setSingleLine(true);
         badge.setBackground(roundedStroke(alpha(done ? SUCCESS : accent, 24), 999, alpha(done ? SUCCESS : accent, 70)));
@@ -4157,7 +4244,7 @@ public class MainActivity extends Activity {
         item.setGravity(Gravity.CENTER_VERTICAL);
         item.setPadding(dp(9), dp(8), dp(9), dp(8));
         item.setBackground(roundedStroke(alpha(done ? SUCCESS : accent, done ? 18 : 16), 17, alpha(done ? SUCCESS : accent, 65)));
-        TextView badge = text(done ? "انجام شد" : task.optString("tag", "امروز"), 9.8f, done ? SUCCESS : accent, Typeface.BOLD);
+        TextView badge = text(done ? "انجام شد" : task.optString("tag", "امروز"), 9.8f, tc(done ? SUCCESS : accent), Typeface.BOLD);
         badge.setGravity(Gravity.CENTER); badge.setSingleLine(true);
         badge.setBackground(roundedStroke(alpha(done ? SUCCESS : accent, 24), 999, alpha(done ? SUCCESS : accent, 72)));
         item.addView(badge, new LinearLayout.LayoutParams(dp(70), dp(34)));
@@ -4467,7 +4554,7 @@ public class MainActivity extends Activity {
             box.addView(line, lp);
         }
         if (items != null && items.length() > 5) {
-            TextView more = text("+ " + formatNumber(items.length() - 5) + " قلم دیگر در دکمه «اقلام روز»", 9.3f, accent, Typeface.BOLD);
+            TextView more = text("+ " + formatNumber(items.length() - 5) + " قلم دیگر در دکمه «اقلام روز»", 9.3f, tc(accent), Typeface.BOLD);
             more.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(6), 0, 0);
             box.addView(more, mp);
@@ -4530,7 +4617,7 @@ public class MainActivity extends Activity {
         line.setPadding(dp(9), dp(8), dp(9), dp(8));
         line.setClickable(true);
         line.setBackground(roundedStroke(alpha(accent, 18), 16, alpha(accent, 78)));
-        TextView bullet = text("●", 18, accent, Typeface.BOLD);
+        TextView bullet = text("●", 18, tc(accent), Typeface.BOLD);
         bullet.setGravity(Gravity.CENTER);
         line.addView(bullet, new LinearLayout.LayoutParams(dp(26), dp(42)));
         LinearLayout titleBox = new LinearLayout(this);
@@ -4744,7 +4831,7 @@ public class MainActivity extends Activity {
         line.setClickable(true);
         line.setBackground(roundedStroke(alpha(accent, 24), 14, alpha(accent, 82)));
         TextView name = text(title, 11.2f, TEXT, Typeface.BOLD);
-        TextView val = text(value, 10.2f, accent, Typeface.BOLD);
+        TextView val = text(value, 10.2f, tc(accent), Typeface.BOLD);
         val.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
         val.setMaxLines(2);
         line.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -4943,7 +5030,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < rows.length(); i++) {
             JSONObject r = rows.optJSONObject(i);
             LinearLayout item = card(); item.setBackground(roundedStroke(SURFACE, 18, alpha(incoming ? SUCCESS : WARNING, 70)));
-            item.addView(text("شماره چک: " + r.optString("number", "—") + "   |   " + r.optString("date", "—"), 13, incoming ? SUCCESS : WARNING, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+            item.addView(text("شماره چک: " + r.optString("number", "—") + "   |   " + r.optString("date", "—"), 13, tc(incoming ? SUCCESS : WARNING), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
             item.addView(text("طرف حساب: " + r.optString("party", "—") + "   |   بانک: " + r.optString("bank", "—"), 11.5f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
             item.addView(text("مبلغ: " + money(r.opt("amount")) + "   |   دسته چک: " + r.optString("statusLabel", "—"), 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
             if (!r.optString("description", "").isEmpty()) item.addView(text("توضیحات: " + r.optString("description"), 10.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
@@ -5435,7 +5522,7 @@ public class MainActivity extends Activity {
             icon.setPadding(0, 0, 0, dp(2));
             TextView title = text(titleText, 11.5f, MUTED, Typeface.NORMAL);
             TextView value = text(formatNumber(item == null ? 0 : item.opt("value")), 21, TEXT, Typeface.BOLD);
-            TextView live = text("داده مستقیم", 10, SUCCESS, Typeface.NORMAL);
+            TextView live = text("داده مستقیم", 10, tc(SUCCESS), Typeface.NORMAL);
             c.addView(icon, new LinearLayout.LayoutParams(-1, dp(46)));
             c.addView(title, new LinearLayout.LayoutParams(-1, -2));
             c.addView(value, new LinearLayout.LayoutParams(-1, -2));
@@ -6236,8 +6323,8 @@ public class MainActivity extends Activity {
         boolean muted = state.optBoolean("muted");
         LinearLayout c = card();
         c.setBackground(gradient(new int[]{alpha(navAccent("chat"), 30), alpha(SURFACE, 250)}, GradientDrawable.Orientation.TL_BR, 24));
-        if (closed && !admin) { c.addView(text("گفتگو موقتاً توسط مدیر بسته شده است.", 12.5f, WARNING, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2)); content.addView(c, new LinearLayout.LayoutParams(-1, -2)); return; }
-        if (muted && !admin) { c.addView(text("ارسال پیام شما موقتاً بی‌صدا/محدود شده است.", 12.5f, WARNING, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2)); content.addView(c, new LinearLayout.LayoutParams(-1, -2)); return; }
+        if (closed && !admin) { c.addView(text("گفتگو موقتاً توسط مدیر بسته شده است.", 12.5f, tc(WARNING), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2)); content.addView(c, new LinearLayout.LayoutParams(-1, -2)); return; }
+        if (muted && !admin) { c.addView(text("ارسال پیام شما موقتاً بی‌صدا/محدود شده است.", 12.5f, tc(WARNING), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2)); content.addView(c, new LinearLayout.LayoutParams(-1, -2)); return; }
         EditText input = input("پیام گروهی…", "", false);
         input.setMinLines(2); input.setMaxLines(4); c.addView(input, new LinearLayout.LayoutParams(-1, dp(74)));
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
@@ -7289,9 +7376,57 @@ public class MainActivity extends Activity {
     private void addLeaveList(String title, JSONArray rows, boolean admin){ LinearLayout c=card(); c.setBackground(gradient(new int[]{alpha(INFO,20),alpha(SURFACE,250)},GradientDrawable.Orientation.TL_BR,22)); c.addView(text(title,15,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); if(rows==null||rows.length()==0)c.addView(text("درخواستی ثبت نشده است.",11,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,dp(54))); else for(int i=0;i<Math.min(80,rows.length());i++){ JSONObject r=rows.optJSONObject(i); LinearLayout item=new LinearLayout(this); item.setOrientation(LinearLayout.VERTICAL); item.setPadding(dp(9),dp(8),dp(9),dp(8)); item.setBackground(roundedStroke(alpha(navAccent("attendance"),16),16,alpha(navAccent("attendance"),60))); item.addView(text("#"+r.optLong("id")+" • "+r.optString("display")+" • "+leaveStatusFa(r.optString("status")),11.2f,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); item.addView(text(r.optString("type")+" • "+r.optString("start")+" تا "+r.optString("end")+" • "+r.optString("hours"),10.2f,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2)); if(!r.optString("reason").isEmpty()) item.addView(text(r.optString("reason"),10.2f,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2)); if(admin&&"pending".equals(r.optString("status"))){ LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); Button ok=primaryButton(withIcon("✓", "تأیید")); Button no=secondaryButton(withIcon("×", "رد")); long id=r.optLong("id"); ok.setOnClickListener(v->decideLeave(id,true)); no.setOnClickListener(v->decideLeave(id,false)); row.addView(ok,weightedButtonLp()); row.addView(no,weightedButtonLp()); item.addView(row,new LinearLayout.LayoutParams(-1,-2)); } LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(-1,-2); ip.setMargins(0,dp(7),0,0); c.addView(item,ip);} LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2); lp.setMargins(0,0,0,dp(12)); content.addView(c,lp); }
     private String leaveStatusFa(String s){ if("approved".equals(s))return "تأیید شده"; if("rejected".equals(s))return "رد شده"; return "در انتظار"; }
 
-    private JSONObject currentWifiFingerprint(){ JSONObject o=new JSONObject(); try{ if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){ requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_WIFI_PERMISSION); o.put("error","نیاز به مجوز موقعیت برای خواندن نام WiFi"); return o;} WifiManager wm=(WifiManager)getApplicationContext().getSystemService(Context.WIFI_SERVICE); if(wm==null)return o; WifiInfo info=wm.getConnectionInfo(); if(info!=null){ String ssid=info.getSSID(); if(ssid!=null)ssid=ssid.replace("\"",""); o.put("ssid",ssid); o.put("bssid",stringOr(info.getBSSID(),"")); } try{ int g=wm.getDhcpInfo()==null?0:wm.getDhcpInfo().gateway; o.put("gateway", ((g)&0xff)+"."+((g>>8)&0xff)+"."+((g>>16)&0xff)+"."+((g>>24)&0xff)); }catch(Exception ignored){} }catch(Exception ignored){} return o; }
-    private void captureWorkWifi(){ JSONObject w=currentWifiFingerprint(); runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); setChatSetting(c,"work_wifi_ssid",w.optString("ssid","")); setChatSetting(c,"work_wifi_bssid",w.optString("bssid","")); setChatSetting(c,"work_wifi_gateway",w.optString("gateway","")); } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("مودم محل کار ثبت شد.", false); loadAttendance(); } @Override public void fail(Exception e){ showPageError("ثبت مودم",e,()->loadAttendance()); }}); }
-    private void recordAttendance(String type){ JSONObject w=currentWifiFingerprint(); runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); String ssid=chatSetting(c,"work_wifi_ssid",""); String bssid=chatSetting(c,"work_wifi_bssid",""); String gateway=chatSetting(c,"work_wifi_gateway",""); boolean ok=(!bssid.isEmpty()&&bssid.equalsIgnoreCase(w.optString("bssid")))||(!ssid.isEmpty()&&ssid.equals(w.optString("ssid")))||(!gateway.isEmpty()&&gateway.equals(w.optString("gateway"))); if(!ok) throw new DbException("برای ثبت حضور باید به مودم محل کار متصل باشید."); validateAttendanceTimeWindow(c); preventDuplicateAttendance(c,type); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_attendance(username,display_name,event_type,wifi_ssid,wifi_bssid,gateway,note) VALUES(?,?,?,?,?,?,?)")){ ps.setString(1,currentAccountName()); ps.setString(2,session==null?currentAccountName():session.userName); ps.setString(3,type); ps.setString(4,w.optString("ssid","")); ps.setString(5,w.optString("bssid","")); ps.setString(6,w.optString("gateway","")); ps.setString(7,"ثبت از موبایل"); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("in".equals(type)?"حضور شما ثبت شد":"خروج شما ثبت شد", true); loadAttendance(); } @Override public void fail(Exception e){ showPageError("ثبت حضور",e,()->loadAttendance()); }}); }
+    private Runnable pendingWifiPermissionAction;
+
+    private boolean hasUsableWifi(JSONObject w) {
+        return w != null && (!w.optString("ssid", "").isEmpty() || !w.optString("bssid", "").isEmpty() || !w.optString("gateway", "").isEmpty());
+    }
+
+    private boolean locationServicesEnabled() {
+        if (Build.VERSION.SDK_INT < 28) return true;
+        try {
+            android.location.LocationManager lm = (android.location.LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            return lm == null || lm.isLocationEnabled();
+        } catch (Exception ignored) { return true; }
+    }
+
+    /**
+     * Reading the Wi-Fi name needs precise location. Android 12+ ignores a request for FINE
+     * without COARSE, so both are requested; the action is retried once the user answers.
+     */
+    private boolean ensureWifiLocationPermission(Runnable retry) {
+        if (Build.VERSION.SDK_INT < 23) return true;
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            if (!locationServicesEnabled()) {
+                showNotice("برای خواندن نام وای‌فای، «موقعیت مکانی» گوشی را روشن کنید و دوباره تلاش کنید.", true);
+                try { startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)); } catch (Exception ignored) { }
+                return false;
+            }
+            return true;
+        }
+        pendingWifiPermissionAction = retry;
+        requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_WIFI_PERMISSION);
+        return false;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_WIFI_PERMISSION) return;
+        Runnable next = pendingWifiPermissionAction;
+        pendingWifiPermissionAction = null;
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            if (next != null) next.run();
+        } else if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            showNotice("فقط موقعیت «تقریبی» داده شد. برای تشخیص وای‌فای محل کار، در تنظیمات برنامه «موقعیت دقیق» را فعال کنید.", true);
+        } else {
+            showNotice("بدون مجوز موقعیت، نام وای‌فای خوانده نمی‌شود و ثبت حضور ممکن نیست.", true);
+        }
+    }
+
+    private JSONObject currentWifiFingerprint(){ JSONObject o=new JSONObject(); try{ if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){ o.put("error","نیاز به مجوز موقعیت برای خواندن نام WiFi"); return o;} WifiManager wm=(WifiManager)getApplicationContext().getSystemService(Context.WIFI_SERVICE); if(wm==null)return o; WifiInfo info=wm.getConnectionInfo(); if(info!=null){ String ssid=info.getSSID(); if(ssid!=null)ssid=ssid.replace("\"",""); if("<unknown ssid>".equalsIgnoreCase(stringOr(ssid,"")))ssid=""; o.put("ssid",ssid); String bssid=stringOr(info.getBSSID(),""); if("02:00:00:00:00:00".equals(bssid))bssid=""; o.put("bssid",bssid); } try{ int g=wm.getDhcpInfo()==null?0:wm.getDhcpInfo().gateway; if(g!=0) o.put("gateway", ((g)&0xff)+"."+((g>>8)&0xff)+"."+((g>>16)&0xff)+"."+((g>>24)&0xff)); }catch(Exception ignored){} }catch(Exception ignored){} return o; }
+    private void captureWorkWifi(){ if(!ensureWifiLocationPermission(this::captureWorkWifi)) return; JSONObject w=currentWifiFingerprint(); if(!hasUsableWifi(w)){ showNotice("به وای‌فای محل کار متصل نیستید یا نام شبکه خوانده نشد.", true); return; } runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); setChatSetting(c,"work_wifi_ssid",w.optString("ssid","")); setChatSetting(c,"work_wifi_bssid",w.optString("bssid","")); setChatSetting(c,"work_wifi_gateway",w.optString("gateway","")); } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("مودم محل کار ثبت شد.", false); loadAttendance(); } @Override public void fail(Exception e){ showPageError("ثبت مودم",e,()->loadAttendance()); }}); }
+    private void recordAttendance(String type){ if(!ensureWifiLocationPermission(() -> recordAttendance(type))) return; JSONObject w=currentWifiFingerprint(); runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); String ssid=chatSetting(c,"work_wifi_ssid",""); String bssid=chatSetting(c,"work_wifi_bssid",""); String gateway=chatSetting(c,"work_wifi_gateway",""); boolean ok=(!bssid.isEmpty()&&bssid.equalsIgnoreCase(w.optString("bssid")))||(!ssid.isEmpty()&&ssid.equals(w.optString("ssid")))||(!gateway.isEmpty()&&gateway.equals(w.optString("gateway"))); if(!ok) throw new DbException("برای ثبت حضور باید به مودم محل کار متصل باشید."); validateAttendanceTimeWindow(c); preventDuplicateAttendance(c,type); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_attendance(username,display_name,event_type,wifi_ssid,wifi_bssid,gateway,note) VALUES(?,?,?,?,?,?,?)")){ ps.setString(1,currentAccountName()); ps.setString(2,session==null?currentAccountName():session.userName); ps.setString(3,type); ps.setString(4,w.optString("ssid","")); ps.setString(5,w.optString("bssid","")); ps.setString(6,w.optString("gateway","")); ps.setString(7,"ثبت از موبایل"); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("in".equals(type)?"حضور شما ثبت شد":"خروج شما ثبت شد", true); loadAttendance(); } @Override public void fail(Exception e){ showPageError("ثبت حضور",e,()->loadAttendance()); }}); }
 
     private void validateAttendanceTimeWindow(Connection c) throws Exception {
         String start = chatSetting(c, "attendance_start", "");
@@ -7354,12 +7489,13 @@ public class MainActivity extends Activity {
 
     private void runNetworkJob(String title, NetworkJob job, NetworkCallback callback) {
         setConnectionStatus("loading");
+        final LinearLayout requestPage = content;
         executor.execute(() -> {
             try {
                 String result = job.run();
-                runOnUiThread(() -> { setConnectionStatus("connected"); if (callback != null) callback.ok(result); });
+                runOnUiThread(() -> { setConnectionStatus("connected"); if (callback != null) deliverToRequestPage(requestPage, () -> callback.ok(result)); });
             } catch (Exception e) {
-                runOnUiThread(() -> { setConnectionStatus("offline"); if (callback != null) callback.fail(e); else showNotice(shortError(e), true); });
+                runOnUiThread(() -> { setConnectionStatus("offline"); if (callback != null) deliverToRequestPage(requestPage, () -> callback.fail(e)); else showNotice(shortError(e), true); });
             }
         });
     }
@@ -7502,7 +7638,7 @@ public class MainActivity extends Activity {
         copy.addView(text(o.optString("typeFa") + " • شماره " + o.optString("number", "—") + (selected ? "  ✓" : ""), 12.7f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text(o.optString("date", "—") + " • " + o.optString("party", "بدون نام") + " • " + money(o.opt("amount")), 10.3f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView badge = text(sent ? "ارسال‌شده" : (failed ? "ناقص" : "آماده"), 9.2f, sent ? SUCCESS : (failed ? DANGER : GOLD), Typeface.BOLD); badge.setGravity(Gravity.CENTER); badge.setBackground(roundedStroke(alpha(sent ? SUCCESS : (failed ? DANGER : GOLD), 16), 999, alpha(sent ? SUCCESS : (failed ? DANGER : GOLD), 70))); head.addView(badge, new LinearLayout.LayoutParams(dp(82), dp(32)));
+        TextView badge = text(sent ? "ارسال‌شده" : (failed ? "ناقص" : "آماده"), 9.2f, tc(sent ? SUCCESS : (failed ? DANGER : GOLD)), Typeface.BOLD); badge.setGravity(Gravity.CENTER); badge.setBackground(roundedStroke(alpha(sent ? SUCCESS : (failed ? DANGER : GOLD), 16), 999, alpha(sent ? SUCCESS : (failed ? DANGER : GOLD), 70))); head.addView(badge, new LinearLayout.LayoutParams(dp(82), dp(32)));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("مالیات: " + money(o.opt("tax")) + " • تخفیف: " + money(o.opt("discount")) + " • دریافتی: " + money(o.opt("paid")), 10.1f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
@@ -7926,7 +8062,7 @@ public class MainActivity extends Activity {
         copy.addView(text("مرتب کردن این لیست", 13.8f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text("هوشمند و بدون شلوغی؛ فقط ترتیب کارت‌های همین لیست عوض می‌شود.", 10.1f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         titleRow.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView active = text(customerSortLabel(customersSortOrder), 9.8f, INFO, Typeface.BOLD);
+        TextView active = text(customerSortLabel(customersSortOrder), 9.8f, tc(INFO), Typeface.BOLD);
         active.setGravity(Gravity.CENTER);
         active.setPadding(dp(9), dp(5), dp(9), dp(5));
         active.setSingleLine(true);
@@ -8196,7 +8332,7 @@ public class MainActivity extends Activity {
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView badge = text("⌁", 18, GOLD_2, Typeface.BOLD);
+        TextView badge = text("⌁", 18, tc(GOLD_2), Typeface.BOLD);
         badge.setGravity(Gravity.CENTER);
         badge.setBackground(roundedStroke(alpha(GOLD, 30), 13, alpha(GOLD, 70)));
         titleRow.addView(badge, new LinearLayout.LayoutParams(dp(38), dp(38)));
@@ -8470,7 +8606,7 @@ public class MainActivity extends Activity {
     }
 
     private void addCustomerTagChip(LinearLayout parent, String label, int accent) {
-        TextView chip = text(label, 9.4f, accent, Typeface.BOLD);
+        TextView chip = text(label, 9.4f, tc(accent), Typeface.BOLD);
         chip.setGravity(Gravity.CENTER);
         chip.setSingleLine(true);
         chip.setPadding(dp(6), 0, dp(6), 0);
@@ -8752,7 +8888,7 @@ public class MainActivity extends Activity {
             LinearLayout c = card();
             int accent = "چک دریافتی".equals(r.optString("type")) ? SUCCESS : ("چک پرداختی".equals(r.optString("type")) ? WARNING : GOLD);
             c.setBackground(roundedStroke(SURFACE, 18, alpha(accent, 60)));
-            c.addView(text(r.optString("type", "گردش") + "   |   " + r.optString("date", "—"), 13, accent, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+            c.addView(text(r.optString("type", "گردش") + "   |   " + r.optString("date", "—"), 13, tc(accent), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
             c.addView(text(r.optString("title", "—"), 12, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
             c.addView(text("مبلغ: " + money(r.opt("amount")) + "   |   وضعیت: " + r.optString("status", "—"), 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
             if (!r.optString("description", "").isEmpty()) c.addView(text("توضیحات: " + r.optString("description"), 10.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
@@ -9239,7 +9375,7 @@ public class MainActivity extends Activity {
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(dp(6), dp(7), dp(6), dp(7));
         chip.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 18 : 30), 16, alpha(accent, isLightTheme() ? 70 : 96)));
-        TextView v = text(formatNumber(value), 18f, accent, Typeface.BOLD);
+        TextView v = text(formatNumber(value), 18f, tc(accent), Typeface.BOLD);
         v.setGravity(Gravity.CENTER);
         v.setIncludeFontPadding(false);
         chip.addView(v, new LinearLayout.LayoutParams(-1, -2));
@@ -9297,7 +9433,7 @@ public class MainActivity extends Activity {
             convRow.setGravity(Gravity.CENTER_VERTICAL);
             TextView convLabel = text("نرخ تبدیل", 10.5f, MUTED, Typeface.BOLD);
             convRow.addView(convLabel, new LinearLayout.LayoutParams(0, -2, 1f));
-            TextView convValue = text(formatNumber(Math.round(conv * 100)) + "٪", 12.5f, SUCCESS, Typeface.BOLD);
+            TextView convValue = text(formatNumber(Math.round(conv * 100)) + "٪", 12.5f, tc(SUCCESS), Typeface.BOLD);
             convValue.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
             convRow.addView(convValue, new LinearLayout.LayoutParams(-2, -2));
             LinearLayout.LayoutParams convLp = new LinearLayout.LayoutParams(-1, -2); convLp.setMargins(0, dp(8), 0, dp(3));
@@ -9363,7 +9499,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < Math.min(3, rows.length()); i++) {
             JSONObject r = rows.optJSONObject(i); if (r == null) continue;
             int accent = prefactorStatusAccent(r.optString("status", ""));
-            TextView pill = text(prefactorStatusFa(r.optString("status", "")) + "  " + formatNumber(r.optLong("count", 0)), 8.4f, accent, Typeface.BOLD);
+            TextView pill = text(prefactorStatusFa(r.optString("status", "")) + "  " + formatNumber(r.optLong("count", 0)), 8.4f, tc(accent), Typeface.BOLD);
             pill.setSingleLine(true); pill.setGravity(Gravity.RIGHT); parent.addView(pill, new LinearLayout.LayoutParams(-1, -2));
         }
     }
@@ -9376,7 +9512,7 @@ public class MainActivity extends Activity {
         }
         for (int i = 0; i < Math.min(2, rows.length()); i++) {
             JSONObject r = rows.optJSONObject(i); if (r == null) continue;
-            TextView line = text(r.optString("label", "قیمت") + ": " + money(r.optDouble("value", 0)), 8.4f, "2".equals(r.optString("tier")) ? WARNING : GOLD_2, Typeface.BOLD);
+            TextView line = text(r.optString("label", "قیمت") + ": " + money(r.optDouble("value", 0)), 8.4f, tc("2".equals(r.optString("tier")) ? WARNING : GOLD_2), Typeface.BOLD);
             line.setSingleLine(true); line.setGravity(Gravity.RIGHT); parent.addView(line, new LinearLayout.LayoutParams(-1, -2));
         }
     }
@@ -9415,9 +9551,9 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(9), dp(8), dp(9), dp(8));
         row.setClickable(true); row.setFocusable(true); row.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 14 : 24), 18, alpha(accent, 62))); applyTouchFeedback(row);
         row.setOnClickListener(v -> { if (action != null) action.run(); });
-        TextView v = text(value, 10.2f, accent, Typeface.BOLD); v.setGravity(Gravity.CENTER); v.setSingleLine(true); row.addView(v, new LinearLayout.LayoutParams(dp(92), dp(32)));
+        TextView v = text(value, 10.2f, tc(accent), Typeface.BOLD); v.setGravity(Gravity.CENTER); v.setSingleLine(true); row.addView(v, new LinearLayout.LayoutParams(dp(92), dp(32)));
         TextView t = text(title, 11.4f, TEXT, Typeface.BOLD); t.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); row.addView(t, new LinearLayout.LayoutParams(0, dp(32), 1f));
-        TextView go = text("›", 17, accent, Typeface.BOLD); go.setGravity(Gravity.CENTER); row.addView(go, new LinearLayout.LayoutParams(dp(28), dp(32)));
+        TextView go = text("›", 17, tc(accent), Typeface.BOLD); go.setGravity(Gravity.CENTER); row.addView(go, new LinearLayout.LayoutParams(dp(28), dp(32)));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(7), 0, 0); parent.addView(row, lp);
     }
 
@@ -9565,9 +9701,9 @@ public class MainActivity extends Activity {
         TextView avatar = text("🧑‍💼", 26, Color.WHITE, Typeface.BOLD); avatar.setGravity(Gravity.CENTER); avatar.setBackground(gradient(new int[]{alpha(Color.rgb(95, 52, 170), 245), GOLD}, GradientDrawable.Orientation.TL_BR, 999));
         LinearLayout.LayoutParams avp = new LinearLayout.LayoutParams(dp(64), dp(64)); avp.setMargins(dp(10), 0, 0, 0); top.addView(avatar, avp);
         hero.addView(top, new LinearLayout.LayoutParams(-1, -2));
-        TextView title = text("آتیران ویزیتور", 29, GOLD_2, Typeface.BOLD); title.setGravity(Gravity.CENTER); title.setShadowLayer(dp(5), 0, dp(2), alpha(Color.BLACK, 180));
+        TextView title = text("آتیران ویزیتور", 29, tc(GOLD_2), Typeface.BOLD); title.setGravity(Gravity.CENTER); title.setShadowLayer(dp(5), 0, dp(2), alpha(Color.BLACK, 180));
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(16), 0, 0); hero.addView(title, tp);
-        TextView sub = text("ATIRAN • INTELLIGENT SALES EXPERIENCE", 12.5f, GOLD, Typeface.BOLD); sub.setGravity(Gravity.CENTER); sub.setLetterSpacing(0.08f);
+        TextView sub = text("ATIRAN • INTELLIGENT SALES EXPERIENCE", 12.5f, tc(GOLD), Typeface.BOLD); sub.setGravity(Gravity.CENTER); sub.setLetterSpacing(0.08f);
         hero.addView(sub, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout kpi = new LinearLayout(this); kpi.setOrientation(LinearLayout.HORIZONTAL); kpi.setPadding(dp(5), dp(8), dp(5), dp(8));
         kpi.setBackground(unifiedInnerBg(GOLD_2, 23));
@@ -9581,7 +9717,7 @@ public class MainActivity extends Activity {
 
     private LinearLayout visitorMetricBox(String label, String value, int accent) {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setGravity(Gravity.CENTER); box.setPadding(dp(5), dp(5), dp(5), dp(5));
-        TextView v = text(stringOr(value, "۰"), value != null && value.length() > 14 ? 11.2f : 14.0f, accent, Typeface.BOLD); v.setGravity(Gravity.CENTER); v.setMaxLines(2);
+        TextView v = text(stringOr(value, "۰"), value != null && value.length() > 14 ? 11.2f : 14.0f, tc(accent), Typeface.BOLD); v.setGravity(Gravity.CENTER); v.setMaxLines(2);
         TextView l = text(label, 9.0f, alpha(TEXT, 195), Typeface.BOLD); l.setGravity(Gravity.CENTER); l.setSingleLine(true);
         box.addView(v, new LinearLayout.LayoutParams(-1, -2)); box.addView(l, new LinearLayout.LayoutParams(-1, -2));
         return box;
@@ -9619,7 +9755,7 @@ public class MainActivity extends Activity {
     }
 
     private TextView visitorSectionTitle(String title, String glyph, int accent) {
-        TextView t = text((glyph == null ? "" : glyph + "  ") + title, 18.0f, GOLD_2, Typeface.BOLD);
+        TextView t = text((glyph == null ? "" : glyph + "  ") + title, 18.0f, tc(GOLD_2), Typeface.BOLD);
         t.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         t.setPadding(dp(4), 0, dp(4), dp(8));
         return t;
@@ -9674,7 +9810,7 @@ public class MainActivity extends Activity {
 
     private void addVisitorProgressLine(LinearLayout parent, String title, String sub, double progress, int accent) {
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(4), dp(6), dp(4), dp(6));
-        TextView dot = text("●", 18, accent, Typeface.BOLD); dot.setGravity(Gravity.CENTER); row.addView(dot, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        TextView dot = text("●", 18, tc(accent), Typeface.BOLD); dot.setGravity(Gravity.CENTER); row.addView(dot, new LinearLayout.LayoutParams(dp(42), dp(42)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(8), 0, dp(8), 0);
         copy.addView(text(title, 13.0f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text(sub, 9.6f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
@@ -9708,7 +9844,7 @@ public class MainActivity extends Activity {
     private void addVisitorRouteMiniCard(LinearLayout row, String tag, JSONObject item, int accent) {
         LinearLayout tile = new LinearLayout(this); tile.setOrientation(LinearLayout.VERTICAL); tile.setPadding(dp(10), dp(9), dp(10), dp(9)); tile.setClickable(true); tile.setFocusable(true); applyTouchFeedback(tile);
         tile.setBackground(roundedStroke(alpha(accent, 18), 22, alpha(accent, 80)));
-        TextView t = text(tag, 10.0f, accent, Typeface.BOLD); t.setGravity(Gravity.CENTER); tile.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        TextView t = text(tag, 10.0f, tc(accent), Typeface.BOLD); t.setGravity(Gravity.CENTER); tile.addView(t, new LinearLayout.LayoutParams(-1, -2));
         String name = item == null ? "مشتری آزاد" : item.optString("party", item.optString("نام", "مشتری"));
         TextView n = text(name, 12.0f, TEXT, Typeface.BOLD); n.setGravity(Gravity.CENTER); n.setMaxLines(2); n.setEllipsize(TextUtils.TruncateAt.END); tile.addView(n, new LinearLayout.LayoutParams(-1, -2));
         String sub = item == null ? "انتخاب از لیست مشتری" : (item.has("amount") ? money(item.opt("amount")) : item.optString("hint", "نیازمند پیگیری"));
@@ -9739,7 +9875,7 @@ public class MainActivity extends Activity {
     private void addVisitorBadge(LinearLayout row, String title, String sub, int accent) {
         LinearLayout b = new LinearLayout(this); b.setOrientation(LinearLayout.VERTICAL); b.setGravity(Gravity.CENTER); b.setPadding(dp(4), dp(7), dp(4), dp(7));
         b.setBackground(roundedStroke(alpha(accent, 18), 18, alpha(accent, 84)));
-        TextView icon = text("★", 17, accent, Typeface.BOLD); icon.setGravity(Gravity.CENTER); b.addView(icon, new LinearLayout.LayoutParams(-1, -2));
+        TextView icon = text("★", 17, tc(accent), Typeface.BOLD); icon.setGravity(Gravity.CENTER); b.addView(icon, new LinearLayout.LayoutParams(-1, -2));
         TextView t = text(title, 9.4f, TEXT, Typeface.BOLD); t.setGravity(Gravity.CENTER); t.setSingleLine(false); b.addView(t, new LinearLayout.LayoutParams(-1, -2));
         TextView s = text(sub, 8.6f, MUTED, Typeface.NORMAL); s.setGravity(Gravity.CENTER); s.setSingleLine(false); b.addView(s, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(92), 1f); lp.setMargins(dp(3), 0, dp(3), 0); row.addView(b, lp);
@@ -9820,7 +9956,7 @@ public class MainActivity extends Activity {
         c.addView(visitorSectionTitle("ریسک بدهی — مشتریان بدهکار", "△", DANGER), new LinearLayout.LayoutParams(-1, -2));
         double sum = 0;
         for (int i = 0; i < Math.min(3, rows.length()); i++) { JSONObject r = rows.optJSONObject(i); if (r != null) { sum += r.optDouble("amount", 0); addVisitorRankLine(c, i + 1, r.optString("party", "مشتری"), money(r.opt("amount")), DANGER); } }
-        TextView total = text("جمع بدهی باز: " + money(sum), 15.5f, GOLD_2, Typeface.BOLD); total.setGravity(Gravity.CENTER); LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(9), 0, 0); c.addView(total, tp);
+        TextView total = text("جمع بدهی باز: " + money(sum), 15.5f, tc(GOLD_2), Typeface.BOLD); total.setGravity(Gravity.CENTER); LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(9), 0, 0); c.addView(total, tp);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
     }
 
@@ -9831,7 +9967,7 @@ public class MainActivity extends Activity {
         double sum = 0;
         for (int i = 0; rows != null && i < Math.min(3, rows.length()); i++) { JSONObject r = rows.optJSONObject(i); if (r != null) { sum += r.optDouble("amount", 0); addVisitorRankLine(c, i + 1, r.optString("party", "مشتری"), (r.optString("dueDate", "").isEmpty() ? "" : r.optString("dueDate") + " • ") + money(r.opt("amount")), WARNING); } }
         if (rows == null || rows.length() == 0) c.addView(text("همه مشتریان در وضعیت پایدار هستند 🎉", 12.5f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        TextView total = text("جمع مبالغ پیگیری: " + money(sum), 14.5f, GOLD_2, Typeface.BOLD); total.setGravity(Gravity.CENTER); LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(9), 0, 0); c.addView(total, tp);
+        TextView total = text("جمع مبالغ پیگیری: " + money(sum), 14.5f, tc(GOLD_2), Typeface.BOLD); total.setGravity(Gravity.CENTER); LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(9), 0, 0); c.addView(total, tp);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(12)); content.addView(c, cp);
     }
 
@@ -9840,7 +9976,7 @@ public class MainActivity extends Activity {
         TextView num = text(formatNumber(rank), 12, onColorFor(accent), Typeface.BOLD); num.setGravity(Gravity.CENTER); num.setBackground(luxuryButtonBg(accent, true, 999)); row.addView(num, new LinearLayout.LayoutParams(dp(34), dp(34)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(9), 0, dp(9), 0);
         copy.addView(text(title, 12.5f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text(sub, 10.0f, accent, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text(sub, 10.0f, tc(accent), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
     }
@@ -9958,7 +10094,7 @@ public class MainActivity extends Activity {
         String value = "hint".equals(valueKey) ? item.optString("hint", "نیازمند تماس") : money(item.opt(valueKey));
         copy.addView(text(value, 9.6f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         line.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView go = text("›", 18, accent, Typeface.BOLD); go.setGravity(Gravity.CENTER); line.addView(go, new LinearLayout.LayoutParams(dp(26), dp(34)));
+        TextView go = text("›", 18, tc(accent), Typeface.BOLD); go.setGravity(Gravity.CENTER); line.addView(go, new LinearLayout.LayoutParams(dp(26), dp(34)));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(8), 0, 0); parent.addView(line, lp);
     }
 
@@ -10122,6 +10258,21 @@ public class MainActivity extends Activity {
         parent.addView(b, lp);
     }
 
+    private void addVisitorShowcaseModeSegment(LinearLayout parent, String query, String filter, String key, String label) {
+        boolean selected = key.equals(visitorShowcaseMode());
+        Button b = themedActionButton(label, selected ? navAccent("showcase") : INFO, selected);
+        b.setTextSize(fs(compactUi() ? 8.0f : 8.5f));
+        b.setSingleLine(true);
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setPadding(dp(2), 0, dp(2), 0);
+        b.setContentDescription("حالت نمایش " + label + (selected ? "، انتخاب‌شده" : ""));
+        b.setOnClickListener(v -> setVisitorShowcaseMode(key, query, filter));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        lp.setMargins(dp(2), 0, dp(2), 0);
+        parent.addView(b, lp);
+    }
+
     private void addVisitorShowcaseSmartControls(JSONArray rows, String query, String active, boolean loading) {
         String q = query == null ? "" : query;
         String f = active == null || active.trim().isEmpty() ? "all" : active;
@@ -10134,7 +10285,7 @@ public class MainActivity extends Activity {
         ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.ic_svg_nav_products); icon.setColorFilter(onColorFor(GOLD)); icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE); icon.setPadding(dp(12), dp(12), dp(12), dp(12)); icon.setBackground(luxuryButtonBg(GOLD, true, 16)); icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         head.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
-        copy.addView(text("کالا", 17.4f, GOLD_2, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("کالا", 17.4f, tc(GOLD_2), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text((loading ? "در حال آماده‌سازی" : formatNumber(count) + " کالا") + " • " + formatNumber(p2) + " با قیمت ۲", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         ImageView cart = new ImageView(this); cart.setImageResource(R.drawable.ic_svg_nav_cart); cart.setColorFilter(onColorFor(navAccent("cart"))); cart.setScaleType(ImageView.ScaleType.CENTER_INSIDE); cart.setPadding(dp(12), dp(12), dp(12), dp(12)); cart.setBackground(luxuryButtonBg(navAccent("cart"), true, 999)); cart.setContentDescription("سبد خرید، " + cartCountText() + " قلم"); cart.setClickable(true); applyTouchFeedback(cart); cart.setOnClickListener(v -> showApp("cart"));
@@ -10153,6 +10304,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams srp = new LinearLayout.LayoutParams(-1, -2); srp.setMargins(0, dp(10), 0, 0); c.addView(search, srp);
 
         HorizontalScrollView hs = new HorizontalScrollView(this); styleHorizontalScroll(hs); hs.setHorizontalScrollBarEnabled(false);
+        hs.setHorizontalFadingEdgeEnabled(true); hs.setFadingEdgeLength(dp(28));
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setGravity(Gravity.CENTER_VERTICAL);
         String[][] filters = {{"all","همه"},{"stock","موجود"},{"price2","قیمت ۲"},{"top","پرفروش"},{"low","کمبود"},{"priced","قیمت‌دار"},{"image","تصویردار"},{"package","بسته‌بندی"}};
         for (String[] opt : filters) addVisitorFilterChip(chips, q, f, opt[0], opt[1]);
@@ -10166,14 +10318,13 @@ public class MainActivity extends Activity {
         LinearLayout modePanel = new LinearLayout(this); modePanel.setOrientation(LinearLayout.HORIZONTAL); modePanel.setGravity(Gravity.CENTER_VERTICAL); modePanel.setPadding(dp(8), dp(5), dp(6), dp(5));
         modePanel.setBackground(roundedStroke(alpha(navAccent("showcase"), isLightTheme() ? 16 : 26), 18, alpha(navAccent("showcase"), isLightTheme() ? 72 : 86)));
         TextView mt = text("نمایش", 10.0f, TEXT, Typeface.BOLD); mt.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); mt.setSingleLine(true); modePanel.addView(mt, new LinearLayout.LayoutParams(-2, -2));
-        HorizontalScrollView modeScroll = new HorizontalScrollView(this); styleHorizontalScroll(modeScroll); modeScroll.setHorizontalScrollBarEnabled(false);
+        // Four equal segments that always fit the width (the old scrolling row cut off «روان» and hid «فوق‌سبک»).
         LinearLayout modes = new LinearLayout(this); modes.setOrientation(LinearLayout.HORIZONTAL); modes.setGravity(Gravity.CENTER_VERTICAL);
-        addVisitorShowcaseModeChip(modes, q, f, "gallery", "سه‌بعدی");
-        addVisitorShowcaseModeChip(modes, q, f, "catalog", "ساده");
-        addVisitorShowcaseModeChip(modes, q, f, "compact", "روان");
-        addVisitorShowcaseModeChip(modes, q, f, "ultra", "فوق‌سبک");
-        modeScroll.addView(modes, new FrameLayout.LayoutParams(-2, -2));
-        LinearLayout.LayoutParams msp = new LinearLayout.LayoutParams(0, -2, 1f); msp.setMargins(dp(6), 0, 0, 0); modePanel.addView(modeScroll, msp);
+        addVisitorShowcaseModeSegment(modes, q, f, "gallery", "سه‌بعدی");
+        addVisitorShowcaseModeSegment(modes, q, f, "catalog", "ساده");
+        addVisitorShowcaseModeSegment(modes, q, f, "compact", "روان");
+        addVisitorShowcaseModeSegment(modes, q, f, "ultra", "فوق‌سبک");
+        LinearLayout.LayoutParams msp = new LinearLayout.LayoutParams(0, -2, 1f); msp.setMargins(dp(4), 0, 0, 0); modePanel.addView(modes, msp);
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(8), 0, 0); c.addView(modePanel, mp);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, 0, 0, dp(10)); content.addView(c, cp);
     }
@@ -10197,7 +10348,7 @@ public class MainActivity extends Activity {
             c.setPadding(dp(12), dp(12), dp(12), dp(12));
             c.setBackground(unifiedCardBg(navAccent("showcase"), 28, false));
             LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
-            TextView img = text("🏷", 22, alpha(GOLD_2, 210), Typeface.BOLD); img.setGravity(Gravity.CENTER); img.setBackground(roundedStroke(alpha(GOLD, 20), 22, alpha(GOLD, 60))); row.addView(img, new LinearLayout.LayoutParams(dp(88), dp(88)));
+            TextView img = text("🏷", 22, tc(alpha(GOLD_2, 210)), Typeface.BOLD); img.setGravity(Gravity.CENTER); img.setBackground(roundedStroke(alpha(GOLD, 20), 22, alpha(GOLD, 60))); row.addView(img, new LinearLayout.LayoutParams(dp(88), dp(88)));
             LinearLayout bars = new LinearLayout(this); bars.setOrientation(LinearLayout.VERTICAL); bars.setPadding(dp(12), 0, 0, 0);
             for (int b = 0; b < 4; b++) { View v = new View(this); v.setBackground(rounded(alpha(b % 2 == 0 ? GOLD_2 : GOLD, b == 0 ? 55 : 32), 999)); LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(b == 0 ? -1 : dp(160 - b * 24), dp(b == 0 ? 14 : 10)); vp.setMargins(0, b == 0 ? 0 : dp(10), 0, 0); bars.addView(v, vp); }
             row.addView(bars, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -10212,7 +10363,7 @@ public class MainActivity extends Activity {
         if (suggestion == null || suggestion.trim().isEmpty()) suggestion = "برای افزایش سبد، کالاهای دارای قیمت ۲ یا پرفروش همین فیلتر را اول معرفی کن.";
         LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.HORIZONTAL); c.setGravity(Gravity.CENTER_VERTICAL); c.setPadding(dp(10), dp(8), dp(10), dp(8));
         c.setBackground(roundedStroke(alpha(GOLD, 18), 20, alpha(GOLD_2, 82)));
-        TextView icon = text("💡", 18, GOLD_2, Typeface.BOLD); icon.setGravity(Gravity.CENTER); c.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        TextView icon = text("💡", 18, tc(GOLD_2), Typeface.BOLD); icon.setGravity(Gravity.CENTER); c.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
         TextView t = text("پیشنهاد فروش: " + suggestion, 10.2f, alpha(TEXT, 225), Typeface.BOLD); t.setMaxLines(2); t.setEllipsize(TextUtils.TruncateAt.END); c.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
         Button p2 = themedActionButton("قیمت ۲", WARNING, "price2".equals(filter)); p2.setTextSize(fs(8.4f)); p2.setOnClickListener(v -> loadShowcase(query, "price2"));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(78), dp(36)); bp.setMargins(dp(6), 0, 0, 0); c.addView(p2, bp);
@@ -10745,7 +10896,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(9), 0, 0); c.addView(priceRow, prp);
         String p2q = price2QualityText(r);
         if (!p2q.isEmpty()) {
-            TextView warn = text(p2q, 9.2f, price2Computed(r) ? INFO : WARNING, Typeface.BOLD);
+            TextView warn = text(p2q, 9.2f, tc(price2Computed(r) ? INFO : WARNING), Typeface.BOLD);
             warn.setGravity(Gravity.CENTER); warn.setPadding(dp(7), dp(5), dp(7), dp(5));
             warn.setBackground(roundedStroke(alpha(price2Computed(r) ? INFO : WARNING, 16), 14, alpha(price2Computed(r) ? INFO : WARNING, 62)));
             LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(-1, -2); wlp.setMargins(0, dp(7), 0, 0); c.addView(warn, wlp);
@@ -10808,12 +10959,12 @@ public class MainActivity extends Activity {
 
         LinearLayout pricePanel = new LinearLayout(this); pricePanel.setOrientation(LinearLayout.VERTICAL); pricePanel.setPadding(dp(11), dp(10), dp(11), dp(10));
         pricePanel.setBackground(unifiedInnerBg(price2Ok ? GOLD_2 : navAccent("showcase"), 22));
-        pricePanel.addView(text("🏷  قیمت‌های کالا (ریال)", 14.0f, GOLD_2, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        pricePanel.addView(text("🏷  قیمت‌های کالا (ریال)", 14.0f, tc(GOLD_2), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout priceRow = new LinearLayout(this); priceRow.setOrientation(LinearLayout.HORIZONTAL);
         priceRow.addView(showcaseMetric("فروش ۲", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD, true), showcaseCellLp(1f, 74));
         priceRow.addView(showcaseMetric("فروش ۱", moneyOrDash(r, "قیمت_فروش"), SUCCESS, true), showcaseCellLp(1f, 74));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(8), 0, 0); pricePanel.addView(priceRow, prp);
-        TextView profit = text("سود مشتری: +۲٪  •  موجودی: " + stockWithUnit(r), 10.0f, GOLD_2, Typeface.BOLD); profit.setGravity(Gravity.CENTER); profit.setPadding(dp(8), dp(7), dp(8), dp(7)); profit.setBackground(roundedStroke(alpha(GOLD, 24), 999, alpha(GOLD, 72)));
+        TextView profit = text("سود مشتری: +۲٪  •  موجودی: " + stockWithUnit(r), 10.0f, tc(GOLD_2), Typeface.BOLD); profit.setGravity(Gravity.CENTER); profit.setPadding(dp(8), dp(7), dp(8), dp(7)); profit.setBackground(roundedStroke(alpha(GOLD, 24), 999, alpha(GOLD, 72)));
         LinearLayout.LayoutParams pfp = new LinearLayout.LayoutParams(-1, -2); pfp.setMargins(0, dp(8), 0, 0); pricePanel.addView(profit, pfp);
         LinearLayout.LayoutParams panelLp = new LinearLayout.LayoutParams(-1, -2); panelLp.setMargins(0, dp(11), 0, 0); c.addView(pricePanel, panelLp);
 
@@ -10877,7 +11028,7 @@ public class MainActivity extends Activity {
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setGravity(Gravity.CENTER_VERTICAL);
         TextView badge = text(vp.badge, 9.6f, onColorFor(accent), Typeface.BOLD); badge.setGravity(Gravity.CENTER); badge.setPadding(dp(8), dp(3), dp(8), dp(3)); badge.setBackground(rounded(alpha(accent, 230), 14));
         chips.addView(badge, new LinearLayout.LayoutParams(-2, -2));
-        TextView group = text("  " + safeDisplayText(r.opt("گروه"), vp.title), 10.2f, accent, Typeface.BOLD); group.setSingleLine(false); group.setMaxLines(2);
+        TextView group = text("  " + safeDisplayText(r.opt("گروه"), vp.title), 10.2f, tc(accent), Typeface.BOLD); group.setSingleLine(false); group.setMaxLines(2);
         chips.addView(group, new LinearLayout.LayoutParams(0, -2, 1f));
         if (price2Ok) {
             TextView p2Chip = text("قیمت۲ فعال", 8.8f, onColorFor(WARNING), Typeface.BOLD);
@@ -10894,7 +11045,7 @@ public class MainActivity extends Activity {
         priceRow.addView(showcaseMetric("قیمت فروش ۱", moneyOrDash(r, "قیمت_فروش"), GOLD, true), showcaseCellLp(1f, 64));
         priceRow.addView(showcaseMetric("قیمت فروش ۲ ✦", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", WARNING, true), showcaseCellLp(1.12f, 64));
         LinearLayout.LayoutParams prp = new LinearLayout.LayoutParams(-1, -2); prp.setMargins(0, dp(11), 0, 0); c.addView(priceRow, prp);
-        TextView price2Ribbon = text(price2Ok ? "قیمت فروش ۲ برای افزودن مستقیم آماده است" : "قیمت فروش ۲ برای این کالا ثبت نشده است", 9.6f, price2Ok ? WARNING : MUTED, Typeface.BOLD);
+        TextView price2Ribbon = text(price2Ok ? "قیمت فروش ۲ برای افزودن مستقیم آماده است" : "قیمت فروش ۲ برای این کالا ثبت نشده است", 9.6f, tc(price2Ok ? WARNING : MUTED), Typeface.BOLD);
         price2Ribbon.setGravity(Gravity.CENTER);
         price2Ribbon.setPadding(dp(8), dp(5), dp(8), dp(5));
         price2Ribbon.setBackground(roundedStroke(alpha(price2Ok ? WARNING : MUTED, isLightTheme() ? 16 : 28), 14, alpha(price2Ok ? WARNING : MUTED, 60)));
@@ -10968,7 +11119,7 @@ public class MainActivity extends Activity {
         l.setGravity(Gravity.CENTER);
         String vText = stringOr(value, "—");
         float size = important ? (vText.length() > 18 ? 10.2f : 11.5f) : (vText.length() > 16 ? 9.3f : 10.2f);
-        TextView v = text(vText, size, important ? accent : TEXT, Typeface.BOLD);
+        TextView v = text(vText, size, tc(important ? accent : TEXT), Typeface.BOLD);
         v.setGravity(Gravity.CENTER); v.setSingleLine(false); v.setMaxLines(2);
         box.addView(l, new LinearLayout.LayoutParams(-1, -2));
         box.addView(v, new LinearLayout.LayoutParams(-1, -2));
@@ -11033,7 +11184,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(176), dp(176)); ilp.setMargins(0, 0, dp(14), 0); hero.addView(img, ilp);
         LinearLayout title = new LinearLayout(this); title.setOrientation(LinearLayout.VERTICAL);
         TextView name = text(safeDisplayText(r.opt("نام"), "کالا"), 17.2f, TEXT, Typeface.BOLD); name.setMaxLines(3); title.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        title.addView(text(vp.title + " • " + safeDisplayText(r.opt("گروه"), "بدون گروه"), 11.2f, accent, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        title.addView(text(vp.title + " • " + safeDisplayText(r.opt("گروه"), "بدون گروه"), 11.2f, tc(accent), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         title.addView(text("کد: " + safeDisplayText(r.opt("کد"), "—") + "\nبارکد: " + safeDisplayText(r.opt("بارکد"), "—"), 10.6f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         hero.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         box.addView(hero, new LinearLayout.LayoutParams(-1, -2));
@@ -11044,7 +11195,7 @@ public class MainActivity extends Activity {
         prices.addView(showcaseMetric("قیمت فروش ۲ ✦", price2Ok ? moneyOrDash(r, "قیمت_فروش۲") : "—", GOLD_2, true), showcaseCellLp(1.1f, 66));
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, -2); pp.setMargins(0, dp(12), 0, 0); box.addView(prices, pp);
         String p2quality = price2QualityText(r);
-        TextView p2Status = text(price2Ok ? (p2quality.isEmpty() ? "این کالا با قیمت فروش ۲ آماده افزودن به سبد است." : p2quality) : "برای این کالا قیمت فروش ۲ ثبت نشده یا مقدار آن صفر است.", 10.0f, price2Ok ? GOLD_2 : MUTED, Typeface.BOLD);
+        TextView p2Status = text(price2Ok ? (p2quality.isEmpty() ? "این کالا با قیمت فروش ۲ آماده افزودن به سبد است." : p2quality) : "برای این کالا قیمت فروش ۲ ثبت نشده یا مقدار آن صفر است.", 10.0f, tc(price2Ok ? GOLD_2 : MUTED), Typeface.BOLD);
         p2Status.setGravity(Gravity.CENTER);
         p2Status.setPadding(dp(8), dp(6), dp(8), dp(6));
         p2Status.setBackground(roundedStroke(alpha(price2Ok ? GOLD_2 : MUTED, isLightTheme() ? 16 : 28), 15, alpha(price2Ok ? GOLD_2 : MUTED, 66)));
@@ -11119,7 +11270,7 @@ public class MainActivity extends Activity {
                         if (which <= 0) ed.remove(key); else ed.putString(key, types[which]);
                         ed.apply();
                     }
-                    productBitmapCache.clear();
+                    productBitmapCache.evictAll();
                     showNotice("تصویر این کالا ذخیره شد.", false);
                     rerenderShowcaseFast(stringOr(query, ""), stringOr(filter, "all"));
                 })
@@ -11463,7 +11614,7 @@ public class MainActivity extends Activity {
         TextView tt = text(title, 11.6f, TEXT, Typeface.BOLD); tt.setSingleLine(true); tt.setEllipsize(TextUtils.TruncateAt.END); copy.addView(tt, new LinearLayout.LayoutParams(-1, -2));
         TextView ss = text(sub, 9.2f, MUTED, Typeface.NORMAL); ss.setSingleLine(true); ss.setEllipsize(TextUtils.TruncateAt.END); copy.addView(ss, new LinearLayout.LayoutParams(-1, -2));
         line.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView val = text(value, 10.0f, accent, Typeface.BOLD); val.setGravity(Gravity.CENTER); val.setMaxLines(2); line.addView(val, new LinearLayout.LayoutParams(dp(96), -2));
+        TextView val = text(value, 10.0f, tc(accent), Typeface.BOLD); val.setGravity(Gravity.CENTER); val.setMaxLines(2); line.addView(val, new LinearLayout.LayoutParams(dp(96), -2));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(7), 0, 0); parent.addView(line, lp);
     }
 
@@ -11516,6 +11667,7 @@ public class MainActivity extends Activity {
 
     private void renderCartPage() {
         if (!canUsePermission("cart")) { redirectToAllowedPage("cart"); return; }
+        autosaveCart(false);
         content.removeAllViews();
         if (VISITOR_EDITION) normalizeVisitorCartExactPrices();
         if (!VISITOR_EDITION) {
@@ -11665,7 +11817,7 @@ public class MainActivity extends Activity {
             TextView customerMeta = text("مشتری برای همین پیش‌فاکتور ثبت شد" + (visitorCartCustomer.optString("phone", "").trim().isEmpty() ? "" : " • " + visitorCartCustomer.optString("phone", "")), 10.0f, MUTED, Typeface.BOLD);
             LinearLayout.LayoutParams cmp = new LinearLayout.LayoutParams(-1, -2); cmp.setMargins(0, dp(7), 0, 0); c.addView(customerMeta, cmp);
             String risk = cartApprovalReason();
-            if (!risk.isEmpty()) c.addView(text("نیازمند توجه: " + risk, 10.2f, DANGER, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+            if (!risk.isEmpty()) c.addView(text("نیازمند توجه: " + risk, 10.2f, tc(DANGER), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
             if (!visitorCartCustomer.optString("address", "").trim().isEmpty()) c.addView(text("آدرس پیش‌فرض: " + visitorCartCustomer.optString("address", ""), 10.3f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         }
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
@@ -11752,7 +11904,7 @@ public class MainActivity extends Activity {
         LinearLayout total = new LinearLayout(this); total.setOrientation(LinearLayout.HORIZONTAL); total.setGravity(Gravity.CENTER_VERTICAL); total.setPadding(dp(10), dp(9), dp(10), dp(9)); total.setBackground(unifiedInnerBg(SUCCESS, 16));
         String totalLabel = VISITOR_EDITION ? "جمع پیش‌فاکتور" : "جمع خام: " + money(cartSubtotal()) + " • تخفیف: " + money(cartLineDiscounts() + visitorCartGlobalDiscount);
         total.addView(text(totalLabel, 10.7f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(0, -2, 1f));
-        total.addView(text(money(cartTotal()), 13, SUCCESS, Typeface.BOLD), new LinearLayout.LayoutParams(-2, -2));
+        total.addView(text(money(cartTotal()), 13, tc(SUCCESS), Typeface.BOLD), new LinearLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(10), 0, 0); c.addView(total, tp);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12)); content.addView(c, lp);
     }
@@ -11779,7 +11931,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(7), 0, 0); row.addView(metrics, mp);
         String warn = cartStockWarning(item);
         if (!warn.isEmpty()) {
-            TextView warning = text("⚠ " + warn, 9.4f, DANGER, Typeface.BOLD);
+            TextView warning = text("⚠ " + warn, 9.4f, tc(DANGER), Typeface.BOLD);
             warning.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
             warning.setPadding(dp(8), dp(5), dp(8), dp(5));
             warning.setBackground(roundedStroke(alpha(DANGER, 15), 14, alpha(DANGER, 58)));
@@ -11809,11 +11961,11 @@ public class MainActivity extends Activity {
         TextView meta = text(formatNumber(item.optDouble("qty", 0)) + " " + item.optString("unit", "") + " × " + money(item.optDouble("price", 0)) + " • " + tier, 9.8f, MUTED, Typeface.BOLD);
         meta.setSingleLine(true); meta.setEllipsize(TextUtils.TruncateAt.END); copy.addView(meta, new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView total = text(money(cartItemNet(item)), 10.5f, accent, Typeface.BOLD); total.setGravity(Gravity.CENTER); total.setMaxLines(2); head.addView(total, new LinearLayout.LayoutParams(dp(104), -2));
+        TextView total = text(money(cartItemNet(item)), 10.5f, tc(accent), Typeface.BOLD); total.setGravity(Gravity.CENTER); total.setMaxLines(2); head.addView(total, new LinearLayout.LayoutParams(dp(104), -2));
         row.addView(head, new LinearLayout.LayoutParams(-1, -2));
         String warn = cartStockWarning(item);
         if (!warn.isEmpty()) {
-            TextView warning = text("⚠ " + warn, 9.1f, DANGER, Typeface.BOLD); warning.setGravity(Gravity.RIGHT); warning.setPadding(dp(7), dp(4), dp(7), dp(4)); warning.setBackground(roundedStroke(alpha(DANGER, 13), 14, alpha(DANGER, 50)));
+            TextView warning = text("⚠ " + warn, 9.1f, tc(DANGER), Typeface.BOLD); warning.setGravity(Gravity.RIGHT); warning.setPadding(dp(7), dp(4), dp(7), dp(4)); warning.setBackground(roundedStroke(alpha(DANGER, 13), 14, alpha(DANGER, 50)));
             LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, -2); wp.setMargins(0, dp(6), 0, 0); row.addView(warning, wp);
         }
         LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL); actions.setGravity(Gravity.CENTER_VERTICAL);
@@ -11856,7 +12008,7 @@ public class MainActivity extends Activity {
         c.setPadding(dp(11), dp(10), dp(11), dp(10));
         c.setBackground(unifiedCardBg(navAccent("cart"), 24, false));
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView icon = text("✨", 20, GOLD_2, Typeface.BOLD); icon.setGravity(Gravity.CENTER); icon.setBackground(luxuryButtonBg(GOLD, false, 999)); row.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        TextView icon = text("✨", 20, tc(GOLD_2), Typeface.BOLD); icon.setGravity(Gravity.CENTER); icon.setBackground(luxuryButtonBg(GOLD, false, 999)); row.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
         TextView copy = text("پیشنهاد مکمل سبد: " + suggestion, 10.8f, TEXT, Typeface.BOLD); copy.setMaxLines(3); copy.setPadding(dp(10), 0, dp(10), 0); row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         Button go = themedActionButton("کالا", navAccent("showcase"), true); go.setTextSize(fs(9.0f)); go.setOnClickListener(v -> showApp("showcase")); row.addView(go, new LinearLayout.LayoutParams(dp(86), dp(42)));
         c.addView(row, new LinearLayout.LayoutParams(-1, -2));
@@ -11928,7 +12080,7 @@ public class MainActivity extends Activity {
         box.addView(text("حذف کامل پیش‌فاکتور", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         box.addView(text("همه اقلام، مشتری، یادداشت، امضا و پیش‌نویس محلی همین سبد حذف می‌شود. این کار روی پیش‌فاکتورهای ثبت‌شده قبلی اثر ندارد.", 10.8f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         AlertDialog dlg = new AlertDialog.Builder(this).setView(box).setNegativeButton("انصراف", null).setPositiveButton("حذف کامل", null).create();
-        dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, DANGER); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) { ok.setTextColor(DANGER); ok.setOnClickListener(v -> { String draftId = visitorCartDraftId == null ? "" : visitorCartDraftId; if (!draftId.trim().isEmpty()) removeLocalDraft(draftId); if (prefs != null) prefs.edit().remove(KEY_CART_DRAFT).apply(); resetCartState(); showNotice("پیش‌فاکتور فعلی کامل حذف شد.", false); dlg.dismiss(); renderCartPage(); }); } });
+        dlg.setOnShowListener(d -> { styleMeelanoDialog(dlg, DANGER); Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE); if (ok != null) { ok.setTextColor(tc(DANGER)); ok.setOnClickListener(v -> { String draftId = visitorCartDraftId == null ? "" : visitorCartDraftId; if (!draftId.trim().isEmpty()) removeLocalDraft(draftId); if (prefs != null) prefs.edit().remove(KEY_CART_DRAFT).apply(); resetCartState(); showNotice("پیش‌فاکتور فعلی کامل حذف شد.", false); dlg.dismiss(); renderCartPage(); }); } });
         dlg.show();
     }
 
@@ -12151,6 +12303,11 @@ public class MainActivity extends Activity {
 
     private JSONObject currentCartSnapshot(String status) {
         syncCartFormInputs();
+        return buildCartSnapshot(status);
+    }
+
+    /** Snapshot of the in-memory cart without reading the cart page's input fields. */
+    private JSONObject buildCartSnapshot(String status) {
         JSONObject d = new JSONObject();
         try {
             if (visitorCartDraftId == null || visitorCartDraftId.trim().isEmpty()) visitorCartDraftId = "MEELANO-" + System.currentTimeMillis();
@@ -12166,6 +12323,58 @@ public class MainActivity extends Activity {
             d.put("visitor", currentAccountName()); d.put("visitorId", currentVisitorScopeId() == null ? "" : String.valueOf(currentVisitorScopeId()));
         } catch (Exception ignored) { }
         return d;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Cart autosave. Android may kill the app in the background (typically while the visitor is in
+    // the camera/gallery or a barcode scanner). The cart is written to preferences on every change
+    // and in onStop(), and restored automatically after the same account logs in again.
+    // ---------------------------------------------------------------------------------------------
+    private static final String KEY_CART_AUTOSAVE = "visitor_cart_autosave_json";
+    private static final long CART_AUTOSAVE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000;
+    private boolean cartAutosaveRestoreChecked = false;
+
+    private boolean cartIsEmptyForAutosave() {
+        return (visitorCartItems == null || visitorCartItems.length() == 0) && visitorCartCustomer == null;
+    }
+
+    private void autosaveCart(boolean readCartInputs) {
+        if (prefs == null || designPreview || session == null) return;
+        try {
+            if (readCartInputs && "cart".equals(activePage)) syncCartFormInputs();
+            if (cartIsEmptyForAutosave()) { prefs.edit().remove(KEY_CART_AUTOSAVE).apply(); return; }
+            JSONObject wrap = new JSONObject();
+            wrap.put("owner", currentAccountName());
+            wrap.put("savedAt", System.currentTimeMillis());
+            wrap.put("snap", buildCartSnapshot("draft"));
+            prefs.edit().putString(KEY_CART_AUTOSAVE, wrap.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    private void maybeRestoreAutosavedCart() {
+        if (cartAutosaveRestoreChecked || prefs == null || designPreview || session == null) return;
+        cartAutosaveRestoreChecked = true;
+        try {
+            String raw = prefs.getString(KEY_CART_AUTOSAVE, "");
+            if (raw == null || raw.trim().isEmpty() || !cartIsEmptyForAutosave()) return;
+            JSONObject wrap = new JSONObject(raw);
+            if (!currentAccountName().equalsIgnoreCase(wrap.optString("owner", ""))) return;
+            long age = System.currentTimeMillis() - wrap.optLong("savedAt", 0);
+            if (age < 0 || age > CART_AUTOSAVE_MAX_AGE_MS) { prefs.edit().remove(KEY_CART_AUTOSAVE).apply(); return; }
+            JSONObject snap = wrap.optJSONObject("snap");
+            if (snap == null) return;
+            restoreCartSnapshot(snap);
+            int lines = visitorCartItems == null ? 0 : visitorCartItems.length();
+            if (lines > 0 || visitorCartCustomer != null) {
+                showNotice(lines > 0 ? "سبد قبلی شما (" + formatNumber(lines) + " قلم) به‌طور خودکار بازیابی شد." : "مشتری انتخاب‌شده قبلی بازیابی شد.", true);
+            }
+        } catch (Exception ignored) { }
+    }
+
+    @Override
+    protected void onStop() {
+        autosaveCart(true);
+        super.onStop();
     }
 
     private void saveCartDraftOnly() {
@@ -12318,7 +12527,7 @@ public class MainActivity extends Activity {
             if (neg != null) { neg.setTextColor(MUTED); neg.setAllCaps(false); applyTouchFeedback(neg); }
             Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
             if (ok != null) {
-                ok.setTextColor(accent); ok.setAllCaps(false); ok.setTypeface(MEELANO_BOLD); applyTouchFeedback(ok);
+                ok.setTextColor(tc(accent)); ok.setAllCaps(false); ok.setTypeface(MEELANO_BOLD); applyTouchFeedback(ok);
                 ok.setOnClickListener(v -> { ok.setEnabled(false); ok.setText("در حال ثبت…"); dlg.dismiss(); if (offline) { saveOfflinePrefactor(finalSnap, finalCheck.optString("message", "offline")); renderCartPage(); } else submitCartSnapshot(finalSnap, finalSnap.optString("status", "sent"), true); });
             }
         });
@@ -12377,7 +12586,7 @@ public class MainActivity extends Activity {
 
     private void addPreviewInfoLine(LinearLayout parent, String label, String value, int accent) {
         LinearLayout row = previewTableRow(accent, false);
-        TextView l = text(label, 9.0f, accent, Typeface.BOLD); l.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); l.setSingleLine(true);
+        TextView l = text(label, 9.0f, tc(accent), Typeface.BOLD); l.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); l.setSingleLine(true);
         TextView v = text(stringOr(value, "—"), 10.1f, TEXT, Typeface.BOLD); v.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END);
         row.addView(l, new LinearLayout.LayoutParams(0, -2, .65f));
         row.addView(v, new LinearLayout.LayoutParams(0, -2, 1.45f));
@@ -12394,7 +12603,7 @@ public class MainActivity extends Activity {
     }
 
     private void addPreviewNotice(LinearLayout parent, String message, int accent) {
-        TextView n = text(stringOr(message, ""), 10.1f, accent, Typeface.BOLD);
+        TextView n = text(stringOr(message, ""), 10.1f, tc(accent), Typeface.BOLD);
         n.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         n.setPadding(dp(9), dp(7), dp(9), dp(7));
         n.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 13 : 22), 18, alpha(accent, 64)));
@@ -12692,7 +12901,7 @@ public class MainActivity extends Activity {
             Set<String> hCols = columns(c, target.headerTable); Set<String> dCols = columns(c, target.detailTable);
             Map<String, SqlColumnMeta> hMeta = sqlColumnMeta(c, target.headerTable);
             Map<String, SqlColumnMeta> dMeta = sqlColumnMeta(c, target.detailTable);
-            long nativeNo = nextNativeNumber(c, target.headerTable, target.noCol, id);
+            long nativeNo = nextNativeNumber(c, target.headerTable, target.noCol);
             String nativeDate = nativeAtiranToday(c);
             Map<String, Object> hv = new LinkedHashMap<>();
             hv.put(target.noCol, nativeNo);
@@ -12789,11 +12998,19 @@ public class MainActivity extends Activity {
         if (col != null && !values.containsKey(col)) values.put(col, value);
     }
 
-    private long nextNativeNumber(Connection c, String table, String col, long fallback) {
-        long n = Math.max(1, fallback);
-        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT ISNULL(MAX(TRY_CONVERT(bigint," + qi(col) + ")),0)+1 FROM " + dbo(table))) { if (r.next()) n = Math.max(n, r.getLong(1)); }
-        catch (Exception ignored) { }
-        return n;
+    /**
+     * Next Atiran pre-invoice number. Must be called inside the caller's transaction:
+     * UPDLOCK + HOLDLOCK keeps the range locked until commit, so two visitors submitting at the
+     * same moment are serialised instead of both receiving the same number. The internal Meelano
+     * id is never used as a floor (that made numbers jump), and a failed read aborts the native
+     * sync (recorded as "sync incomplete") instead of silently writing a wrong number.
+     */
+    private long nextNativeNumber(Connection c, String table, String col) throws Exception {
+        String sql = "SELECT ISNULL(MAX(TRY_CONVERT(bigint," + qi(col) + ")),0)+1 FROM " + dbo(table) + " WITH (UPDLOCK, HOLDLOCK)";
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery(sql)) {
+            if (r.next()) return Math.max(1L, r.getLong(1));
+        }
+        throw new DbException("شماره بعدی پیش‌فاکتور آتیران خوانده نشد.");
     }
 
     private boolean insertFlexibleRow(Connection c, String table, Map<String, Object> values) throws Exception {
@@ -13092,7 +13309,7 @@ public class MainActivity extends Activity {
             if (!dk.equals(lastDate)) {
                 LinearLayout day = new LinearLayout(this); day.setOrientation(LinearLayout.HORIZONTAL); day.setGravity(Gravity.CENTER_VERTICAL); day.setPadding(dp(10),dp(8),dp(10),dp(8));
                 day.setBackground(roundedStroke(alpha(GOLD_2, isLightTheme()?18:30),999,alpha(GOLD_2,88)));
-                TextView dot = text("●",13,GOLD_2,Typeface.BOLD); dot.setGravity(Gravity.CENTER); day.addView(dot,new LinearLayout.LayoutParams(dp(28),dp(28)));
+                TextView dot = text("●",13,tc(GOLD_2),Typeface.BOLD); dot.setGravity(Gravity.CENTER); day.addView(dot,new LinearLayout.LayoutParams(dp(28),dp(28)));
                 TextView label = text("تاریخ " + dk,12.2f,TEXT,Typeface.BOLD); label.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL); day.addView(label,new LinearLayout.LayoutParams(0,-2,1f));
                 LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(-1,-2); dpv.setMargins(0,dp(5),0,dp(8)); list.addView(day,dpv);
                 lastDate = dk;
@@ -13119,8 +13336,8 @@ public class MainActivity extends Activity {
         m.addView(visitorMetricBox("تسویه", stringOr(r.optString("settlement"),"—"), INFO), weightedMiniLp());
         m.addView(visitorMetricBox("تحویل", stringOr(r.optString("delivery"),"—"), SUCCESS), weightedMiniLp());
         LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1,-2); mlp.setMargins(0,dp(7),0,0); c.addView(m,mlp);
-        if(!r.optString("reason","").isEmpty()) { TextView rs = text("یادداشت تایید: "+r.optString("reason",""),9.8f,accent,Typeface.BOLD); rs.setPadding(dp(8),dp(5),dp(8),dp(5)); rs.setBackground(roundedStroke(alpha(accent,16),14,alpha(accent,60))); LinearLayout.LayoutParams rp2 = new LinearLayout.LayoutParams(-1,-2); rp2.setMargins(0,dp(7),0,0); c.addView(rs,rp2); }
-        TextView invReady = text("تبدیل به فاکتور: " + prefactorInvoiceReadinessText(r), 9.7f, r.optBoolean("readyForInvoice", false) ? SUCCESS : MUTED, Typeface.BOLD);
+        if(!r.optString("reason","").isEmpty()) { TextView rs = text("یادداشت تایید: "+r.optString("reason",""),9.8f,tc(accent),Typeface.BOLD); rs.setPadding(dp(8),dp(5),dp(8),dp(5)); rs.setBackground(roundedStroke(alpha(accent,16),14,alpha(accent,60))); LinearLayout.LayoutParams rp2 = new LinearLayout.LayoutParams(-1,-2); rp2.setMargins(0,dp(7),0,0); c.addView(rs,rp2); }
+        TextView invReady = text("تبدیل به فاکتور: " + prefactorInvoiceReadinessText(r), 9.7f, tc(r.optBoolean("readyForInvoice", false) ? SUCCESS : MUTED), Typeface.BOLD);
         invReady.setPadding(dp(8), dp(5), dp(8), dp(5)); invReady.setBackground(roundedStroke(alpha(r.optBoolean("readyForInvoice", false) ? SUCCESS : INFO, 14), 14, alpha(r.optBoolean("readyForInvoice", false) ? SUCCESS : INFO, 58)));
         LinearLayout.LayoutParams irp = new LinearLayout.LayoutParams(-1, -2); irp.setMargins(0, dp(7), 0, 0); c.addView(invReady, irp);
         LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
@@ -13786,7 +14003,7 @@ public class MainActivity extends Activity {
         copy.setPadding(dp(10), 0, dp(10), 0);
         copy.addView(text(safeDisplayText(r.opt("نام"), "بدون نام"), 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text("کد: " + safeDisplayText(r.opt("کد"), "-") + "   |   بارکد: " + safeDisplayText(r.opt("بارکد"), "-"), 11.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("گروه: " + safeDisplayText(r.opt("گروه"), "-") + "   |   " + (hasProductImage(r) ? "تصویر کالا متصل" : "تصویر پیش‌فرض"), 10.8f, accent, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text("گروه: " + safeDisplayText(r.opt("گروه"), "-") + "   |   " + (hasProductImage(r) ? "تصویر کالا متصل" : "تصویر پیش‌فرض"), 10.8f, tc(accent), Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         c.addView(head, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout metrics = new LinearLayout(this);
@@ -13858,22 +14075,80 @@ public class MainActivity extends Activity {
         catch (Exception ex) { showNotice("انتخاب تصویر در این دستگاه در دسترس نیست.", false); }
     }
 
+    private static int sampleSizeFor(int width, int height, int targetMinSide) {
+        int sample = 1;
+        if (width <= 0 || height <= 0 || targetMinSide <= 0) return 1;
+        while (Math.min(width, height) / (sample * 2) >= targetMinSide) sample *= 2;
+        return sample;
+    }
+
+    /** Decodes an encoded image at no more than ~2x the requested short side. */
+    private Bitmap decodeSampled(byte[] bytes, int targetMinSide) {
+        if (bytes == null || bytes.length == 0) return null;
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, targetMinSide);
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
+    }
+
+    private int exifRotationDegrees(Uri uri) {
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) return 0;
+            int o = new android.media.ExifInterface(in).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL);
+            if (o == android.media.ExifInterface.ORIENTATION_ROTATE_90) return 90;
+            if (o == android.media.ExifInterface.ORIENTATION_ROTATE_180) return 180;
+            if (o == android.media.ExifInterface.ORIENTATION_ROTATE_270) return 270;
+        } catch (Exception ignored) { }
+        return 0;
+    }
+
+    /** Off the UI thread: sampled decode (no full-resolution bitmap), EXIF rotation, 512×512 JPEG. */
+    private String encodeProductPhoto512(Uri uri) throws Exception {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (InputStream in = getContentResolver().openInputStream(uri)) { BitmapFactory.decodeStream(in, null, bounds); }
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, 512);
+        Bitmap src;
+        try (InputStream in = getContentResolver().openInputStream(uri)) { src = BitmapFactory.decodeStream(in, null, opts); }
+        if (src == null) return null;
+        int side = Math.min(src.getWidth(), src.getHeight());
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        float scale = 512f / Math.max(1, side);
+        m.postScale(scale, scale);
+        int rotation = exifRotationDegrees(uri);
+        if (rotation != 0) m.postRotate(rotation);
+        Bitmap out = Bitmap.createBitmap(src, Math.max(0, (src.getWidth() - side) / 2), Math.max(0, (src.getHeight() - side) / 2), side, side, m, true);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        out.compress(Bitmap.CompressFormat.JPEG, 86, bytes);
+        if (out != src) out.recycle();
+        src.recycle();
+        return Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP);
+    }
+
     private void handleVisitorProductImage(Uri uri) {
         if (uri == null || pendingProductImageKey == null || pendingProductImageKey.trim().isEmpty()) return;
-        try (InputStream in = getContentResolver().openInputStream(uri)) {
-            Bitmap src = BitmapFactory.decodeStream(in);
-            if (src == null) { showNotice("تصویر خوانده نشد.", false); return; }
-            int side = Math.min(src.getWidth(), src.getHeight());
-            Bitmap crop = Bitmap.createBitmap(src, Math.max(0, (src.getWidth() - side) / 2), Math.max(0, (src.getHeight() - side) / 2), side, side);
-            Bitmap scaled = Bitmap.createScaledBitmap(crop, 512, 512, true);
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            scaled.compress(Bitmap.CompressFormat.JPEG, 86, out);
-            if (prefs != null) prefs.edit().putString(pendingProductImageKey, Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)).apply();
-            productBitmapCache.clear();
-            showNotice("تصویر کالا با ابعاد ۵۱۲×۵۱۲ ذخیره شد: " + stringOr(pendingProductImageName, "کالا"), true);
-            if ("showcase".equals(activePage)) rerenderShowcaseFast(showcaseCacheQuery, showcaseCacheFilter);
-            else if ("cart".equals(activePage)) renderCartPage();
-        } catch (Exception ex) { showNotice("ذخیره تصویر ممکن نشد: " + shortError(ex), true); }
+        final String key = pendingProductImageKey;
+        final String name = pendingProductImageName;
+        showNotice("در حال آماده‌سازی تصویر کالا…", false);
+        preloadExecutor.execute(() -> {
+            String encoded = null;
+            Exception failure = null;
+            try { encoded = encodeProductPhoto512(uri); } catch (Exception | OutOfMemoryError ex) { failure = ex instanceof Exception ? (Exception) ex : new Exception("حافظه کافی نبود"); }
+            final String result = encoded;
+            final Exception error = failure;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (result == null) { showNotice(error == null ? "تصویر خوانده نشد." : "ذخیره تصویر ممکن نشد: " + shortError(error), true); return; }
+                if (prefs != null) prefs.edit().putString(key, result).apply();
+                productBitmapCache.evictAll();
+                showNotice("تصویر کالا با ابعاد ۵۱۲×۵۱۲ ذخیره شد: " + stringOr(name, "کالا"), true);
+                if ("showcase".equals(activePage)) rerenderShowcaseFast(showcaseCacheQuery, showcaseCacheFilter);
+                else if ("cart".equals(activePage)) renderCartPage();
+            });
+        });
         pendingProductImageKey = ""; pendingProductImageName = "";
     }
 
@@ -13903,6 +14178,9 @@ public class MainActivity extends Activity {
         if (smart != null) img.setImageBitmap(smart); else img.setImageResource(ir.meelano.android.R.drawable.icon_products);
         if (!decodeRealImage || !hasProductImage(r)) return;
         String raw = r.optString("تصویر", "").trim();
+        String cacheKey = "db_image|" + r.optString("کد", "") + "|" + raw.length() + "|" + raw.hashCode();
+        Bitmap cachedImage = productBitmapCache.get(cacheKey);
+        if (cachedImage != null && !cachedImage.isRecycled()) { img.setImageBitmap(cachedImage); return; }
         int comma = raw.indexOf(',');
         if (raw.startsWith("data:image") && comma > 0) raw = raw.substring(comma + 1);
         try {
@@ -13910,9 +14188,10 @@ public class MainActivity extends Activity {
             String clean = raw.replace(" ", "").replace("\n", "").replace("\r", "").trim();
             if (clean.startsWith("0x") && clean.length() > 10) bytes = hexToBytes(clean.substring(2));
             else bytes = Base64.decode(clean, Base64.DEFAULT);
-            Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-            if (bmp != null) img.setImageBitmap(bmp);
-        } catch (Exception ignored) { }
+            // Product cards show the image at <= ~140dp; decode small instead of full resolution.
+            Bitmap bmp = decodeSampled(bytes, dp(160));
+            if (bmp != null) { productBitmapCache.put(cacheKey, bmp); img.setImageBitmap(bmp); }
+        } catch (Exception | OutOfMemoryError ignored) { }
     }
 
     private byte[] hexToBytes(String hex) {
@@ -13986,7 +14265,6 @@ public class MainActivity extends Activity {
             p.setStrokeWidth(1.15f); p.setColor(alpha(Color.WHITE, isLightTheme() ? 176 : 72));
             canvas.drawRoundRect(new RectF(15, 15, w - 15, h - 15), 31f, 31f, p);
             p.setStyle(Paint.Style.FILL);
-            if (productBitmapCache.size() > 120) productBitmapCache.clear();
             productBitmapCache.put(cacheKey, bmp);
             return bmp;
         } catch (Exception ignored) { return null; }
@@ -14974,7 +15252,7 @@ public class MainActivity extends Activity {
         item.setGravity(Gravity.CENTER_VERTICAL);
         item.setPadding(dp(9), dp(8), dp(9), dp(8));
         item.setBackground(roundedStroke(alpha(accent, 15), 15, alpha(accent, 45)));
-        TextView rank = text(String.valueOf(index), 12, accent, Typeface.BOLD);
+        TextView rank = text(String.valueOf(index), 12, tc(accent), Typeface.BOLD);
         rank.setGravity(Gravity.CENTER);
         rank.setBackground(roundedStroke(alpha(accent, 32), 999, alpha(accent, 75)));
         item.addView(rank, new LinearLayout.LayoutParams(dp(34), dp(34)));
@@ -14986,7 +15264,7 @@ public class MainActivity extends Activity {
         String hint = reportHint(key, row, valueMode);
         copy.addView(text(hint, 9.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         item.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView value = text(reportValue(row, valueMode), 10.4f, accent, Typeface.BOLD);
+        TextView value = text(reportValue(row, valueMode), 10.4f, tc(accent), Typeface.BOLD);
         value.setGravity(Gravity.CENTER);
         value.setMaxLines(2);
         item.addView(value, new LinearLayout.LayoutParams(dp(valueMode == 4 ? 104 : 92), -2));
@@ -15164,7 +15442,7 @@ public class MainActivity extends Activity {
         copy.setPadding(dp(8), 0, dp(8), 0);
         copy.addView(text(title, 10.8f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         copy.addView(text(label, 11.2f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text(value, 9.8f, accent, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text(value, 9.8f, tc(accent), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         box.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
         lp.setMargins(dp(3), 0, dp(3), 0);
@@ -15800,7 +16078,7 @@ public class MainActivity extends Activity {
             if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(roundedStroke(alpha(SURFACE, 245), 28, alpha(GOLD, 90)));
             Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
             if (positive != null) {
-                positive.setTextColor(GOLD);
+                positive.setTextColor(tc(GOLD));
                 positive.setTextSize(fs(14f));
                 positive.setTypeface(MEELANO_BOLD);
             }
@@ -16069,7 +16347,7 @@ public class MainActivity extends Activity {
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(dp(3), dp(5), dp(3), dp(5));
         chip.setBackground(gradient(new int[]{alpha(accent, 44), alpha(SURFACE_2, 218)}, GradientDrawable.Orientation.TL_BR, 16));
-        TextView g = text(glyph, 17, accent, Typeface.BOLD);
+        TextView g = text(glyph, 17, tc(accent), Typeface.BOLD);
         g.setGravity(Gravity.CENTER);
         g.setShadowLayer(dp(2), 0, dp(1), alpha(Color.BLACK, 90));
         TextView l = text(label, 8.7f, TEXT, Typeface.BOLD);
@@ -16190,7 +16468,7 @@ public class MainActivity extends Activity {
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setPadding(dp(11), dp(9), dp(11), dp(9));
         bubble.setBackground(roundedStroke(alpha(accent, user ? 28 : 34), 17, alpha(accent, 80)));
-        TextView who = text(user ? displayFirstName() : "میلو • AI", 10.5f, accent, Typeface.BOLD);
+        TextView who = text(user ? displayFirstName() : "میلو • AI", 10.5f, tc(accent), Typeface.BOLD);
         TextView body = text(message, 12.2f, TEXT, Typeface.NORMAL);
         body.setLineSpacing(dp(3), 1.06f);
         bubble.addView(who, new LinearLayout.LayoutParams(-1, -2));
@@ -16852,7 +17130,7 @@ public class MainActivity extends Activity {
         compact.setOnClickListener(v -> { prefs.edit().putBoolean(KEY_COMPACT_UI, !prefs.getBoolean(KEY_COMPACT_UI, false)).apply(); showApp("settings"); });
         LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(-1, dp(48)); p1.setMargins(0, dp(12), 0, dp(8)); c.addView(compact, p1);
         Button motion = secondaryButton((motionAllowed() ? "" : "✓ ") + "کاهش حرکت و مصرف باتری");
-        motion.setOnClickListener(v -> { prefs.edit().putBoolean(KEY_REDUCED_MOTION, !prefs.getBoolean(KEY_REDUCED_MOTION, false)).apply(); showApp("settings"); });
+        motion.setOnClickListener(v -> { prefs.edit().putBoolean(KEY_REDUCED_MOTION, !prefs.getBoolean(KEY_REDUCED_MOTION, false)).apply(); motionAllowedCheckedAt = 0L; showApp("settings"); });
         c.addView(motion, new LinearLayout.LayoutParams(-1, dp(48)));
         content.addView(c, cp);
     }
@@ -16971,7 +17249,7 @@ public class MainActivity extends Activity {
         c.setBackground(unifiedCardBg(mix(INFO, SUCCESS, 0.25f), 24, false));
         c.addView(text("امنیت محلی پیشرفته", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("PIN ورود سریع و کلیدهای AI از این نسخه با Android Keystore رمزنگاری می‌شوند؛ داده‌های قدیمی هنگام ذخیره بعدی خودکار به قالب امن‌تر مهاجرت می‌کنند.", 10.8f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
-        TextView badge = text(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? "✓ Keystore فعال روی این دستگاه" : "حالت سازگار قدیمی", 11, Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, Typeface.BOLD);
+        TextView badge = text(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? "✓ Keystore فعال روی این دستگاه" : "حالت سازگار قدیمی", 11, tc(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING), Typeface.BOLD);
         badge.setGravity(Gravity.CENTER); badge.setPadding(dp(8), dp(8), dp(8), dp(8));
         badge.setBackground(roundedStroke(alpha(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, 18), 16, alpha(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, 70)));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2); bp.setMargins(0, dp(10), 0, 0); c.addView(badge, bp);
@@ -17308,7 +17586,7 @@ public class MainActivity extends Activity {
             JSONObject u = users.optJSONObject(i); if (u == null) continue;
             addAccessUserRow(c, u, i);
         }
-        if (users != null && users.length() > 120) c.addView(text("فقط ۱۲۰ کاربر اول نمایش داده شد؛ برای مدیریت بیشتر نقش‌های پیش‌فرض را تنظیم کنید.", 10.2f, WARNING, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        if (users != null && users.length() > 120) c.addView(text("فقط ۱۲۰ کاربر اول نمایش داده شد؛ برای مدیریت بیشتر نقش‌های پیش‌فرض را تنظیم کنید.", 10.2f, tc(WARNING), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12)); content.addView(c, lp);
     }
 
@@ -17374,7 +17652,7 @@ public class MainActivity extends Activity {
         for (String[] perm : permissionCatalog()) {
             if (!perm[2].equals(group[0])) {
                 group[0] = perm[2];
-                TextView g = text(group[0], 12.2f, GOLD, Typeface.BOLD); g.setPadding(0, dp(8), 0, dp(2)); list.addView(g, new LinearLayout.LayoutParams(-1, -2));
+                TextView g = text(group[0], 12.2f, tc(GOLD), Typeface.BOLD); g.setPadding(0, dp(8), 0, dp(2)); list.addView(g, new LinearLayout.LayoutParams(-1, -2));
             }
             CheckBox cb = new CheckBox(this);
             cb.setText(perm[1]); cb.setTextColor(TEXT); cb.setTextSize(fs(11.2f)); cb.setTypeface(MEELANO_BOLD); cb.setChecked(selected.contains(perm[0])); cb.setTag(perm[0]);
@@ -17432,7 +17710,7 @@ public class MainActivity extends Activity {
     }
 
     private void addSettingsCategory(String title) {
-        TextView t = text(title == null ? "تنظیمات" : title, 12.4f, currentPageAccent(), Typeface.BOLD);
+        TextView t = text(title == null ? "تنظیمات" : title, 12.4f, tc(currentPageAccent()), Typeface.BOLD);
         t.setGravity(Gravity.CENTER);
         t.setPadding(dp(10), dp(7), dp(10), dp(7));
         t.setBackground(roundedStroke(alpha(currentPageAccent(), isLightTheme() ? 18 : 28), 999, alpha(currentPageAccent(), 64)));
@@ -17461,7 +17739,7 @@ public class MainActivity extends Activity {
         LinearLayout about = card();
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(12), 0, 0);
         about.addView(text("درباره نسخه", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        TextView desc = text("Meelano Visit v" + appVersionName() + "\nطراحی تازه: نوار وضعیت خوانا و سازگار با اندروید ۱۵، متن‌های درشت‌تر و خواناتر، پیام‌های رنگی داخل برنامه، تم خودکار روز/شب و بازخورد لمسی هنگام افزودن به سبد.", 12, MUTED, Typeface.NORMAL);
+        TextView desc = text("Meelano Visit v" + appVersionName() + "\nاین نسخه: ذخیره خودکار سبد، شماره‌گذاری امن پیش‌فاکتور آتیران، دکمه برگشت درست، رنگ‌های خواناتر، تصویر کالای سبک‌تر و مصرف باتری کمتر.", 12, MUTED, Typeface.NORMAL);
         desc.setLineSpacing(dp(3), 1.05f); about.addView(desc, new LinearLayout.LayoutParams(-1, -2));
         content.addView(about, ap);
     }
@@ -17515,7 +17793,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2);
         ap.setMargins(0, dp(12), 0, 0);
         about.addView(text("درباره نسخه", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        TextView desc = text("Meelano Visit v" + appVersionName() + "\nطراحی تازه: نوار وضعیت خوانا و سازگار با اندروید ۱۵، متن‌های درشت‌تر و خواناتر، پیام‌های رنگی داخل برنامه، تم خودکار روز/شب و بازخورد لمسی هنگام افزودن به سبد.", 12, MUTED, Typeface.NORMAL);
+        TextView desc = text("Meelano Visit v" + appVersionName() + "\nاین نسخه: ذخیره خودکار سبد، شماره‌گذاری امن پیش‌فاکتور آتیران، دکمه برگشت درست، رنگ‌های خواناتر، تصویر کالای سبک‌تر و مصرف باتری کمتر.", 12, MUTED, Typeface.NORMAL);
         desc.setLineSpacing(dp(3), 1.05f);
         about.addView(desc, new LinearLayout.LayoutParams(-1, -2));
         content.addView(about, ap);
@@ -18039,11 +18317,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String homePage() {
+        String home = VISITOR_EDITION ? "visitor_dashboard" : "dashboard";
+        return canOpenPage(home) ? home : firstAllowedPage();
+    }
+
     @Override
     public void onBackPressed() {
-        if (session != null && !"dashboard".equals(activePage)) {
-            showApp("dashboard");
-            return;
+        if (session != null) {
+            String home = homePage();
+            if (!home.equals(activePage)) {
+                showApp(home);
+                return;
+            }
         }
         super.onBackPressed();
     }
