@@ -124,9 +124,14 @@ jobs:
         run: |
           mkdir -p apk
           cp out/*.apk apk/
+          # Small manifest read by the app's "new version" check (Settings → بروزرسانی برنامه).
+          CODE=$(grep -oP "versionCode\s+\K[0-9]+" MEELANO-Android/app/build.gradle)
+          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-v%s-debug.apk"}\n' \
+            "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest.json
+          cat apk/latest.json
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
-          git add apk/*.apk
+          git add apk/*.apk apk/latest.json
           git commit -m "Build APK v$APP_VERSION [skip ci]" || echo "No changes"
           for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
 

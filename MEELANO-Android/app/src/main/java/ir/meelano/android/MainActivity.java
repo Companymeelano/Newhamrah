@@ -2465,6 +2465,13 @@ public class MainActivity extends Activity {
 
         Button login = primaryButton("ورود");
         loginCard.addView(login, new LinearLayout.LayoutParams(-1, dp(54)));
+        Button bioLogin = null;
+        if (VISITOR_EDITION && visitorBiometricEnabled() && biometricAvailable()) {
+            bioLogin = secondaryButton("ورود با اثر انگشت");
+            bioLogin.setContentDescription("ورود با اثر انگشت برای " + prefs.getString(KEY_BIO_USER, ""));
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-1, dp(52)); blp.setMargins(0, dp(10), 0, 0);
+            loginCard.addView(bioLogin, blp);
+        }
 
         TextView note = text("طراحی و برنامه‌نویسی: " + DEVELOPER_NAME, 10.5f, MUTED, Typeface.BOLD);
         note.setGravity(Gravity.CENTER);
@@ -2492,6 +2499,7 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> {
                         session = s;
                         prefs.edit().putString(KEY_LAST_USER, u).apply();
+                        lastUserInteractionAt = System.currentTimeMillis();
                         if (!VISITOR_EDITION) storeQuickSession(s);
                         login.setEnabled(true);
                         login.setText("ورود");
@@ -2499,6 +2507,7 @@ public class MainActivity extends Activity {
                         showNotice(VISITOR_EDITION ? "اطلاعات اولیه آماده شد" : "اتصال موفق بود", false);
                         showApp("dashboard");
                         if (!VISITOR_EDITION) maybePromptQuickPinSetup();
+                        else afterVisitorPasswordLogin(u, p);
                     });
                 } catch (Exception ex) {
                     runOnUiThread(() -> {
@@ -2511,6 +2520,11 @@ public class MainActivity extends Activity {
             });
         };
         login.setOnClickListener(doLogin[0]);
+        if (bioLogin != null) {
+            bioLogin.setOnClickListener(v -> startVisitorBiometricLogin(username, password, () -> doLogin[0].onClick(login)));
+            // Open the fingerprint prompt right away when the app starts on the login page.
+            if (message != null && message.trim().isEmpty() && !designPreview) bioLogin.post(bioLogin::performClick);
+        }
         password.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_DONE) {
                 doLogin[0].onClick(login);
@@ -13107,6 +13121,240 @@ public class MainActivity extends Activity {
         super.onStop();
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Security: auto sign-out after inactivity + fingerprint login for visitors.
+    // ---------------------------------------------------------------------------------------------
+    private static final String KEY_AUTO_LOCK_MIN = "auto_lock_minutes";
+    private static final String KEY_BIO_USER = "visitor_bio_user";
+    private static final String KEY_BIO_PASS = "visitor_bio_pass";
+    private static final String KEY_BIO_ASKED = "visitor_bio_asked";
+    private static final int DEFAULT_AUTO_LOCK_MIN = 60;
+    private long lastUserInteractionAt = System.currentTimeMillis();
+    private final android.os.Handler lockHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable lockTick = new Runnable() {
+        @Override public void run() { checkAutoLock(); lockHandler.postDelayed(this, 60_000L); }
+    };
+
+    @Override
+    public void onUserInteraction() {
+        super.onUserInteraction();
+        lastUserInteractionAt = System.currentTimeMillis();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        checkAutoLock();
+        lockHandler.removeCallbacks(lockTick);
+        lockHandler.postDelayed(lockTick, 60_000L);
+        maybeCheckForAppUpdate(false);
+    }
+
+    @Override
+    protected void onPause() {
+        lockHandler.removeCallbacks(lockTick);
+        super.onPause();
+    }
+
+    private int autoLockMinutes() { return prefs == null ? DEFAULT_AUTO_LOCK_MIN : prefs.getInt(KEY_AUTO_LOCK_MIN, DEFAULT_AUTO_LOCK_MIN); }
+
+    private void checkAutoLock() {
+        int min = autoLockMinutes();
+        if (min <= 0 || session == null || designPreview) return;
+        if (System.currentTimeMillis() - lastUserInteractionAt < min * 60_000L) return;
+        lastUserInteractionAt = System.currentTimeMillis();
+        showLogin("برای امنیت، بعد از " + faDigits(String.valueOf(min)) + " دقیقه بی‌کاری از حساب خارج شدید. سبد شما ذخیره شده است.");
+    }
+
+    private boolean biometricAvailable() {
+        if (Build.VERSION.SDK_INT < 28) return false;
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.hardware.biometrics.BiometricManager bm = getSystemService(android.hardware.biometrics.BiometricManager.class);
+                return bm != null && bm.canAuthenticate() == android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS;
+            }
+            return getPackageManager().hasSystemFeature(PackageManager.FEATURE_FINGERPRINT);
+        } catch (Exception ignored) { return false; }
+    }
+
+    private boolean visitorBiometricEnabled() {
+        return prefs != null && prefs.getString(KEY_BIO_PASS, "").startsWith("ks:") && !prefs.getString(KEY_BIO_USER, "").isEmpty();
+    }
+
+    /** The password is encrypted with a key kept in the phone's secure hardware (Android Keystore). */
+    private boolean storeVisitorBiometric(String user, String password) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false;
+        try {
+            String enc = keystoreEncrypt(Base64.encodeToString(password.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP));
+            prefs.edit().putString(KEY_BIO_USER, user).putString(KEY_BIO_PASS, "ks:" + enc).apply();
+            return true;
+        } catch (Exception ex) { return false; }
+    }
+
+    private String readVisitorBiometricPassword() {
+        try {
+            String v = prefs.getString(KEY_BIO_PASS, "");
+            if (!v.startsWith("ks:")) return "";
+            return new String(Base64.decode(keystoreDecrypt(v.substring(3)), Base64.NO_WRAP), StandardCharsets.UTF_8);
+        } catch (Exception ex) { return ""; }
+    }
+
+    private void clearVisitorBiometric() {
+        if (prefs != null) prefs.edit().remove(KEY_BIO_USER).remove(KEY_BIO_PASS).apply();
+    }
+
+    /** After a successful password login: offer fingerprint login once, or refresh the stored password. */
+    private void afterVisitorPasswordLogin(String user, String password) {
+        if (!VISITOR_EDITION || designPreview || prefs == null || !biometricAvailable()) return;
+        if (visitorBiometricEnabled()) {
+            if (user.equals(prefs.getString(KEY_BIO_USER, ""))) storeVisitorBiometric(user, password); // password may have changed
+            else clearVisitorBiometric();
+            return;
+        }
+        if (prefs.getBoolean(KEY_BIO_ASKED, false)) return;
+        prefs.edit().putBoolean(KEY_BIO_ASKED, true).apply();
+        AlertDialog dlg = new MeelanoDialogBuilder()
+                .setTitle("ورود با اثر انگشت")
+                .setMessage("دفعه بعد بدون نوشتن رمز، با اثر انگشت وارد شوید؟\nرمز شما به‌صورت رمزشده فقط روی همین گوشی نگه داشته می‌شود.")
+                .setNegativeButton("نه، ممنون", null)
+                .setPositiveButton("فعال کن", (d, w) -> showNotice(storeVisitorBiometric(user, password) ? "ورود با اثر انگشت فعال شد." : "فعال کردن اثر انگشت روی این گوشی ممکن نشد.", false))
+                .create();
+        dlg.setOnShowListener(d -> styleMeelanoDialog(dlg, GOLD));
+        dlg.show();
+    }
+
+    private void startVisitorBiometricLogin(EditText username, EditText password, Runnable login) {
+        if (Build.VERSION.SDK_INT < 28) return;
+        try {
+            CancellationSignal signal = new CancellationSignal();
+            BiometricPrompt prompt = new BiometricPrompt.Builder(this)
+                    .setTitle("ورود به Meelano Visit")
+                    .setSubtitle(prefs.getString(KEY_BIO_USER, ""))
+                    .setNegativeButton("ورود با رمز", getMainExecutor(), (d, which) -> password.requestFocus())
+                    .build();
+            prompt.authenticate(signal, getMainExecutor(), new BiometricPrompt.AuthenticationCallback() {
+                @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                    String pass = readVisitorBiometricPassword();
+                    if (pass.isEmpty()) { clearVisitorBiometric(); showNotice("لطفاً یک بار با رمز وارد شوید.", false); return; }
+                    username.setText(prefs.getString(KEY_BIO_USER, ""));
+                    password.setText(pass);
+                    login.run();
+                }
+                @Override public void onAuthenticationError(int errorCode, CharSequence errString) { }
+            });
+        } catch (Exception ex) { showNotice("اثر انگشت در دسترس نیست؛ با رمز وارد شوید.", false); }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // "New version available" check. CI writes apk/latest.json next to each APK.
+    // ---------------------------------------------------------------------------------------------
+    private static final String UPDATE_MANIFEST_URL = "https://github.com/Companymeelano/Newhamrah/raw/arena/01a0e474-newhamrah/apk/latest.json";
+    private static final String KEY_UPDATE_CHECKED_AT = "update_checked_at";
+    private static final String KEY_UPDATE_LATEST = "update_latest_json";
+    private static final long UPDATE_CHECK_INTERVAL_MS = 12L * 60 * 60 * 1000;
+
+    private long installedVersionCode() {
+        try {
+            android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
+        } catch (Exception ignored) { return 0; }
+    }
+
+    /** Latest version seen on the server, or null when unknown / not newer than this install. */
+    private JSONObject pendingAppUpdate() {
+        try {
+            String raw = prefs == null ? "" : prefs.getString(KEY_UPDATE_LATEST, "");
+            if (raw == null || raw.isEmpty()) return null;
+            JSONObject o = new JSONObject(raw);
+            return o.optLong("versionCode", 0) > installedVersionCode() ? o : null;
+        } catch (Exception ignored) { return null; }
+    }
+
+    private void maybeCheckForAppUpdate(boolean manual) {
+        if (prefs == null || designPreview) return;
+        long last = prefs.getLong(KEY_UPDATE_CHECKED_AT, 0);
+        if (!manual && System.currentTimeMillis() - last < UPDATE_CHECK_INTERVAL_MS) return;
+        prefs.edit().putLong(KEY_UPDATE_CHECKED_AT, System.currentTimeMillis()).apply();
+        // Own thread: the single DB executor must never wait on a slow internet request.
+        new Thread(() -> {
+            String body = null;
+            java.net.HttpURLConnection conn = null;
+            try {
+                conn = (java.net.HttpURLConnection) new java.net.URL(UPDATE_MANIFEST_URL).openConnection();
+                conn.setConnectTimeout(8000); conn.setReadTimeout(8000); conn.setInstanceFollowRedirects(true);
+                if (conn.getResponseCode() == 200) {
+                    try (java.io.InputStream in = conn.getInputStream()) {
+                        ByteArrayOutputStream out = new ByteArrayOutputStream(); byte[] buf = new byte[2048]; int n;
+                        while ((n = in.read(buf)) > 0 && out.size() < 16_384) out.write(buf, 0, n);
+                        body = new String(out.toByteArray(), StandardCharsets.UTF_8);
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally { if (conn != null) conn.disconnect(); }
+            final String result = body;
+            runOnUiThread(() -> {
+                try {
+                    if (result != null) { new JSONObject(result.trim()); prefs.edit().putString(KEY_UPDATE_LATEST, result.trim()).apply(); }
+                } catch (Exception ignored) { }
+                JSONObject up = pendingAppUpdate();
+                if (up != null) showNotice("نسخه جدید " + faDigits(up.optString("versionName", "")) + " آماده است.", true, "دانلود", () -> openAppUpdate(up));
+                else if (manual) showNotice(result == null ? "بررسی نسخه جدید ممکن نشد؛ اینترنت را بررسی کنید." : "برنامه شما به‌روز است.", false);
+                if (manual && "settings".equals(activePage)) renderVisitorEditionSettings();
+            });
+        }, "meelano-update-check").start();
+    }
+
+    private void openAppUpdate(JSONObject up) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(up.optString("url", "")))); }
+        catch (Exception ex) { showNotice("باز کردن لینک دانلود ممکن نشد.", false); }
+    }
+
+    private void addAppUpdateCard() {
+        LinearLayout c = card();
+        c.setBackground(themedSectionBg("visitor_dashboard", 24));
+        c.addView(text("بروزرسانی برنامه", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        JSONObject up = pendingAppUpdate();
+        c.addView(text("نسخه نصب‌شده: " + faDigits(appVersionName()) + (up == null ? " • به‌روز" : " • نسخه جدید: " + faDigits(up.optString("versionName", ""))), 11, up == null ? MUTED : tc(SUCCESS), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        Button b = themedActionButton(up == null ? "بررسی نسخه جدید" : "دانلود نسخه جدید", up == null ? INFO : SUCCESS, up != null);
+        b.setOnClickListener(v -> { if (up != null) openAppUpdate(up); else maybeCheckForAppUpdate(true); });
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(46)); bp.setMargins(0, dp(8), 0, 0); c.addView(b, bp);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(12), 0, 0);
+        content.addView(c, lp);
+    }
+
+    /** Settings card: fingerprint login and auto sign-out time. */
+    private void addVisitorSecurityCard() {
+        LinearLayout c = card();
+        c.setBackground(themedSectionBg("visitor_dashboard", 24));
+        c.addView(text("امنیت ورود", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        boolean bioOk = biometricAvailable();
+        boolean bioOn = visitorBiometricEnabled();
+        c.addView(text(!bioOk ? "این گوشی اثر انگشت فعال ندارد." : (bioOn ? "ورود با اثر انگشت فعال است." : "ورود با اثر انگشت خاموش است. بعد از ورود بعدی با رمز می‌توانید آن را روشن کنید."), 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        if (bioOn) {
+            Button off = themedActionButton("خاموش کردن اثر انگشت", DANGER, false);
+            off.setOnClickListener(v -> { clearVisitorBiometric(); showNotice("ورود با اثر انگشت خاموش شد.", false); renderVisitorEditionSettings(); });
+            LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(-1, dp(46)); op.setMargins(0, dp(8), 0, 0); c.addView(off, op);
+        } else if (bioOk) {
+            Button on = themedActionButton("روشن کردن در ورود بعدی", GOLD, false);
+            on.setOnClickListener(v -> { prefs.edit().putBoolean(KEY_BIO_ASKED, false).apply(); showNotice("بعد از ورود بعدی با رمز، اثر انگشت فعال می‌شود.", false); });
+            LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(-1, dp(46)); op.setMargins(0, dp(8), 0, 0); c.addView(on, op);
+        }
+        TextView lockTitle = text("خروج خودکار بعد از بی‌کاری", 12.5f, TEXT, Typeface.BOLD);
+        LinearLayout.LayoutParams ltp = new LinearLayout.LayoutParams(-1, -2); ltp.setMargins(0, dp(12), 0, 0); c.addView(lockTitle, ltp);
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+        int current = autoLockMinutes();
+        int[] opts = {0, 10, 30, 60};
+        for (int m : opts) {
+            Button b = themedActionButton(m == 0 ? "خاموش" : faDigits(String.valueOf(m)) + " دقیقه", GOLD, m == current);
+            b.setTextSize(fs(9.4f));
+            b.setOnClickListener(v -> { prefs.edit().putInt(KEY_AUTO_LOCK_MIN, m).apply(); renderVisitorEditionSettings(); });
+            row.addView(b, weightedButtonLp());
+        }
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(6), 0, 0); c.addView(row, rp);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(12), 0, 0);
+        content.addView(c, lp);
+    }
+
     private void saveCartDraftOnly() {
         try {
             JSONObject snap = currentCartSnapshot("draft");
@@ -18828,6 +19076,8 @@ public class MainActivity extends Activity {
         Button logout = themedActionButton("خروج از حساب ویزیتور", DANGER, false); logout.setOnClickListener(v -> showLogin("برای ورود مجدد ویزیتور اطلاعات Meelano را وارد کنید."));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(9), 0, 0); quick.addView(logout, lp);
         content.addView(quick, new LinearLayout.LayoutParams(-1, -2));
+        addVisitorSecurityCard();
+        addAppUpdateCard();
         addExperienceSettingsCard();
         LinearLayout about = card();
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(12), 0, 0);
