@@ -6628,6 +6628,7 @@ public class MainActivity extends Activity {
             LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, 0, 0);
             copy.addView(text(st[1], 12.5f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
             TextView detail = text("در صف", 10f, MUTED, Typeface.BOLD);
+            detail.setTextDirection(View.TEXT_DIRECTION_RTL); // «۱٬۲۴۰ کالا» starts with digits; keep it right-to-left
             copy.addView(detail, new LinearLayout.LayoutParams(-1, -2));
             row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
             row.setAlpha(.7f);
