@@ -14345,6 +14345,65 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
+    /**
+     * Reads the live approval state of each pre-invoice from Atiran's own table (dbo.sailfact_pish):
+     * TaedForush = sales approval, TaedHesabdari = accounting approval, Rejected, sh_f = invoice number.
+     * Adds it as r.atiran = {no, sales, accounting, rejected, invoice}. Silently skipped on other databases.
+     */
+    private void attachAtiranPishStatus(Connection c, JSONArray rows) {
+        try {
+            Map<Long, JSONObject> byNo = new HashMap<>();
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject o = rows.optJSONObject(i); if (o == null) continue;
+                if (!"sailfact_pish".equalsIgnoreCase(o.optString("nativeTable", ""))) continue;
+                try { long n = Long.parseLong(o.optString("nativeNo", "").trim()); if (n > 0) byNo.put(n, o); } catch (Exception ignored) { }
+            }
+            if (byNo.isEmpty()) return;
+            try (PreparedStatement chk = c.prepareStatement("SELECT CASE WHEN OBJECT_ID(N'dbo.sailfact_pish') IS NULL THEN 0 ELSE 1 END"); ResultSet r = chk.executeQuery()) {
+                if (!r.next() || r.getInt(1) != 1) return;
+            }
+            StringBuilder in = new StringBuilder();
+            for (Long n : byNo.keySet()) { if (in.length() > 0) in.append(','); in.append(n); } // numbers only: safe to inline
+            String sql = "SELECT h.shfacfo, ISNULL(CAST(h.TaedForush AS int),0), ISNULL(CAST(h.TaedHesabdari AS int),0), ISNULL(CAST(h.Rejected AS int),0), ISNULL(TRY_CONVERT(bigint,h.sh_f),0) " +
+                    "FROM dbo.sailfact_pish h WHERE h.active='t' AND h.shfacfo IN (" + in + ")";
+            try (PreparedStatement ps = c.prepareStatement(sql); ResultSet r = ps.executeQuery()) {
+                while (r.next()) {
+                    JSONObject o = byNo.get(r.getLong(1)); if (o == null) continue;
+                    JSONObject a = new JSONObject();
+                    a.put("no", r.getLong(1)); a.put("sales", r.getInt(2) == 1); a.put("accounting", r.getInt(3) == 1);
+                    a.put("rejected", r.getInt(4) != 0); a.put("invoice", r.getLong(5));
+                    o.put("atiran", a);
+                }
+            }
+        } catch (Exception ignored) { }
+    }
+
+    /** Three small steps under a pre-invoice card: sales approval → accounting approval → invoiced. */
+    private void addAtiranStatusSteps(LinearLayout parent, JSONObject a) {
+        if (parent == null || a == null) return;
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(8), dp(6), dp(8), dp(6));
+        box.setBackground(roundedStroke(alpha(INFO, 12), 14, alpha(INFO, 50)));
+        TextView t = text("وضعیت در آتیران • پیش‌فاکتور شماره " + faDigits(String.valueOf(a.optLong("no"))), 10f, MUTED, Typeface.BOLD);
+        box.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout steps = new LinearLayout(this); steps.setOrientation(LinearLayout.HORIZONTAL);
+        if (a.optBoolean("rejected", false)) {
+            steps.addView(pill("✕ رد شده", DANGER, true), new LinearLayout.LayoutParams(-2, -2));
+        } else {
+            boolean sales = a.optBoolean("sales", false), acc = a.optBoolean("accounting", false);
+            long inv = a.optLong("invoice", 0);
+            steps.addView(pill((sales ? "✓ " : "… ") + "تأیید فروش", sales ? SUCCESS : WARNING, sales), new LinearLayout.LayoutParams(0, -2, 1f));
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, -2, 1f); sp.setMargins(dp(4), 0, 0, 0);
+            steps.addView(pill((acc ? "✓ " : "… ") + "تأیید حسابداری", acc ? SUCCESS : WARNING, acc), sp);
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0, -2, 1f); ip.setMargins(dp(4), 0, 0, 0);
+            steps.addView(pill(inv > 0 ? "✓ فاکتور " + faDigits(String.valueOf(inv)) : "… فاکتور نشده", inv > 0 ? SUCCESS : MUTED, inv > 0), ip);
+        }
+        for (int i = 0; i < steps.getChildCount(); i++) { View v = steps.getChildAt(i); if (v instanceof TextView) { ((TextView) v).setGravity(Gravity.CENTER); ((TextView) v).setSingleLine(true); } }
+        LinearLayout.LayoutParams stp = new LinearLayout.LayoutParams(-1, -2); stp.setMargins(0, dp(5), 0, 0); box.addView(steps, stp);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(7), 0, 0);
+        parent.addView(box, lp);
+    }
+
     private String prefactorInvoiceReadinessText(JSONObject r) {
         if (r == null) return "";
         String inv = r.optString("invoiceStatus", "");
@@ -14501,9 +14560,10 @@ public class MainActivity extends Activity {
             ensurePrefactorTables(c);
             repairUnsyncedNativePrefactors(c);
             List<Object> params = new ArrayList<>(); String where = prefactorScopeWhere("p", params);
-            String sql = "SELECT TOP (100) p.id, TRY_CONVERT(nvarchar(30),p.created_at), p.status, p.customer_code, p.customer_name, ISNULL(p.grand_total,p.total_amount), p.settlement_type, p.delivery_date, p.approval_reason, ISNULL(x.cnt,0), ISNULL(p.ready_for_invoice,0), ISNULL(p.invoice_status,N''), ISNULL(p.invoice_number,N'') FROM dbo.meelano_prefactors p OUTER APPLY (SELECT COUNT_BIG(1) cnt FROM dbo.meelano_prefactor_items i WHERE i.prefactor_id=p.id) x" + where + " ORDER BY p.created_at DESC, p.id DESC";
+            String sql = "SELECT TOP (100) p.id, TRY_CONVERT(nvarchar(30),p.created_at), p.status, p.customer_code, p.customer_name, ISNULL(p.grand_total,p.total_amount), p.settlement_type, p.delivery_date, p.approval_reason, ISNULL(x.cnt,0), ISNULL(p.ready_for_invoice,0), ISNULL(p.invoice_status,N''), ISNULL(p.invoice_number,N''), ISNULL(p.native_prefactor_table,N''), ISNULL(p.native_prefactor_no,N'') FROM dbo.meelano_prefactors p OUTER APPLY (SELECT COUNT_BIG(1) cnt FROM dbo.meelano_prefactor_items i WHERE i.prefactor_id=p.id) x" + where + " ORDER BY p.created_at DESC, p.id DESC";
             JSONArray arr = new JSONArray();
-            try (PreparedStatement ps = c.prepareStatement(sql)) { setParams(ps, params); try(ResultSet r = ps.executeQuery()) { while(r.next()){ JSONObject o=new JSONObject(); o.put("id", r.getLong(1)); o.put("date", stringOr(r.getString(2), "")); o.put("status", stringOr(r.getString(3), "")); o.put("customerCode", stringOr(r.getString(4), "")); o.put("customerName", stringOr(r.getString(5), "")); o.put("total", r.getDouble(6)); o.put("settlement", stringOr(r.getString(7), "")); o.put("delivery", stringOr(r.getString(8), "")); o.put("reason", stringOr(r.getString(9), "")); o.put("items", r.getLong(10)); o.put("readyForInvoice", r.getBoolean(11)); o.put("invoiceStatus", stringOr(r.getString(12), "")); o.put("invoiceNumber", stringOr(r.getString(13), "")); arr.put(o); } } }
+            try (PreparedStatement ps = c.prepareStatement(sql)) { setParams(ps, params); try(ResultSet r = ps.executeQuery()) { while(r.next()){ JSONObject o=new JSONObject(); o.put("id", r.getLong(1)); o.put("date", stringOr(r.getString(2), "")); o.put("status", stringOr(r.getString(3), "")); o.put("customerCode", stringOr(r.getString(4), "")); o.put("customerName", stringOr(r.getString(5), "")); o.put("total", r.getDouble(6)); o.put("settlement", stringOr(r.getString(7), "")); o.put("delivery", stringOr(r.getString(8), "")); o.put("reason", stringOr(r.getString(9), "")); o.put("items", r.getLong(10)); o.put("readyForInvoice", r.getBoolean(11)); o.put("invoiceStatus", stringOr(r.getString(12), "")); o.put("invoiceNumber", stringOr(r.getString(13), "")); o.put("nativeTable", stringOr(r.getString(14), "")); o.put("nativeNo", stringOr(r.getString(15), "")); arr.put(o); } } }
+            attachAtiranPishStatus(c, arr);
             return arr.toString();
         }
     }
@@ -14609,7 +14669,9 @@ public class MainActivity extends Activity {
         if(!r.optString("reason","").isEmpty()) { TextView rs = text("یادداشت تایید: "+r.optString("reason",""),9.8f,tc(accent),Typeface.BOLD); rs.setPadding(dp(8),dp(5),dp(8),dp(5)); rs.setBackground(roundedStroke(alpha(accent,16),14,alpha(accent,60))); LinearLayout.LayoutParams rp2 = new LinearLayout.LayoutParams(-1,-2); rp2.setMargins(0,dp(7),0,0); c.addView(rs,rp2); }
         TextView invReady = text("تبدیل به فاکتور: " + prefactorInvoiceReadinessText(r), 9.7f, tc(r.optBoolean("readyForInvoice", false) ? SUCCESS : MUTED), Typeface.BOLD);
         invReady.setPadding(dp(8), dp(5), dp(8), dp(5)); invReady.setBackground(roundedStroke(alpha(r.optBoolean("readyForInvoice", false) ? SUCCESS : INFO, 14), 14, alpha(r.optBoolean("readyForInvoice", false) ? SUCCESS : INFO, 58)));
-        LinearLayout.LayoutParams irp = new LinearLayout.LayoutParams(-1, -2); irp.setMargins(0, dp(7), 0, 0); c.addView(invReady, irp);
+        LinearLayout.LayoutParams irp = new LinearLayout.LayoutParams(-1, -2); irp.setMargins(0, dp(7), 0, 0);
+        if (r.optJSONObject("atiran") != null) addAtiranStatusSteps(c, r.optJSONObject("atiran"));
+        else c.addView(invReady, irp);
         LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
         Button det=themedActionButton("جزئیات/PDF", accent, false); det.setTextSize(fs(8.6f)); det.setOnClickListener(v -> loadPrefactorDetails(r.optLong("id"), false));
         Button edit=themedActionButton("کپی به سبد", navAccent("cart"), true); edit.setTextSize(fs(8.6f)); edit.setOnClickListener(v -> loadPrefactorDetails(r.optLong("id"), true));
