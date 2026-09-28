@@ -18,15 +18,15 @@ app/src/main/java/ir/meelano/android/MainActivity.java:1081: warning: [deprecati
 app/src/main/java/ir/meelano/android/MainActivity.java:1081: warning: [deprecation] getSystemWindowInsetBottom() in WindowInsets has been deprecated
 app/src/main/java/ir/meelano/android/MainActivity.java:1082: warning: [deprecation] getSystemWindowInsetLeft() in WindowInsets has been deprecated
 app/src/main/java/ir/meelano/android/MainActivity.java:1082: warning: [deprecation] getSystemWindowInsetRight() in WindowInsets has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:3791: warning: [deprecation] getAllNetworks() in ConnectivityManager has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:7735: warning: [deprecation] getConnectionInfo() in WifiManager has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:7735: warning: [deprecation] getDhcpInfo() in WifiManager has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:7735: warning: [deprecation] getDhcpInfo() in WifiManager has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:9287: warning: [deprecation] setCalendarViewShown(boolean) in DatePicker has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:9288: warning: [deprecation] setSpinnersShown(boolean) in DatePicker has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:16855: warning: [deprecation] EXTRA_CHECK_VOICE_DATA_FOR in TextToSpeech.Engine has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:17970: warning: [deprecation] speak(String,int,HashMap<String,String>) in TextToSpeech has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:18068: warning: [deprecation] Builder(Context) in Builder has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:18923: warning: [serial] serializable class DbException has no definition of serialVersionUID
-app/src/main/java/ir/meelano/android/MainActivity.java:19177: warning: [deprecation] onBackPressed() in Activity has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:19185: warning: [deprecation] onBackPressed() in Activity has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:3798: warning: [deprecation] getAllNetworks() in ConnectivityManager has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:7742: warning: [deprecation] getConnectionInfo() in WifiManager has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:7742: warning: [deprecation] getDhcpInfo() in WifiManager has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:7742: warning: [deprecation] getDhcpInfo() in WifiManager has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:9294: warning: [deprecation] setCalendarViewShown(boolean) in DatePicker has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:9295: warning: [deprecation] setSpinnersShown(boolean) in DatePicker has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:16862: warning: [deprecation] EXTRA_CHECK_VOICE_DATA_FOR in TextToSpeech.Engine has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:17977: warning: [deprecation] speak(String,int,HashMap<String,String>) in TextToSpeech has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:18075: warning: [deprecation] Builder(Context) in Builder has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:18930: warning: [serial] serializable class DbException has no definition of serialVersionUID
+app/src/main/java/ir/meelano/android/MainActivity.java:19184: warning: [deprecation] onBackPressed() in Activity has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:19192: warning: [deprecation] onBackPressed() in Activity has been deprecated
