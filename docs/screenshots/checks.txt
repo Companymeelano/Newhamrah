@@ -1,2 +1,2 @@
-PASS back-on-visitor_dashboard: got=exit expected=exit :: mCurrentFocus=Window{60f9a02 u0 Application Not Responding: com.google.android.apps.nexuslauncher}
-FAIL back-on-showcase: got=exit expected=stay :: mCurrentFocus=Window{60f9a02 u0 Application Not Responding: com.google.android.apps.nexuslauncher}
+PASS back-on-visitor_dashboard: got=exit expected=exit :: mCurrentFocus=Window{a9e8ae7 u0 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}
+PASS back-on-showcase: got=stay expected=stay :: mCurrentFocus=Window{9b9f08a u0 ir.meelano.visitor.debug/ir.meelano.android.MainActivity}
