@@ -1,0 +1,650 @@
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/build.gradle:10: Warning: Not targeting the latest versions of Android; compatibility modes apply. Consider testing and updating this version. Consult the android.os.Build.VERSION_CODES javadoc for details. [OldTargetApi]
+        targetSdk 35
+        ~~~~~~~~~~~~
+
+   Explanation for issues of type "OldTargetApi":
+   When your application runs on a version of Android that is more recent than
+   your targetSdkVersion specifies that it has been tested with, various
+   compatibility modes kick in. This ensures that your application continues
+   to work, but it may look out of place. For example, if the targetSdkVersion
+   is less than 14, your app may get an option button in the UI.
+
+   To fix this issue, set the targetSdkVersion to the highest available value.
+   Then test your app to make sure everything works correctly. You may want to
+   consult the compatibility notes to see what changes apply to each version
+   you are adding support for:
+   https://developer.android.com/reference/android/os/Build.VERSION_CODES.html
+   as well as follow this guide:
+   https://developer.android.com/distribute/best-practices/develop/target-sdk.
+   html
+
+   https://developer.android.com/distribute/best-practices/develop/target-sdk.html
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/AndroidManifest.xml:6: Error: If you need access to FINE location, you must request both ACCESS_FINE_LOCATION and ACCESS_COARSE_LOCATION [CoarseFineLocation]
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "CoarseFineLocation":
+   If your app requires access to FINE location, on Android 12 and higher you
+   must now request both FINE and COARSE. Users will have the option to grant
+   only COARSE location. Ensure your app can work with just COARSE location.
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/AndroidManifest.xml:38: Warning: Expecting android:screenOrientation="unspecified" or "fullSensor" for this activity so the user can use the application in any orientation and provide a great experience on Chrome OS devices [LockedOrientationActivity]
+            android:screenOrientation="portrait">
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "LockedOrientationActivity":
+   The <activity> element should not be locked to any orientation so that
+   users can take advantage of the multi-window environments and larger
+   screens available on Android. To fix the issue, consider declaring the
+   corresponding activity element with `screenOrientation="unspecified"`or
+   fullSensor attribute.
+
+   https://developer.android.com/topic/arc/window-management
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/AndroidManifest.xml:38: Warning: Should not restrict activity to fixed orientation. This may not be suitable for different form factors, causing the app to be letterboxed. [DiscouragedApi]
+            android:screenOrientation="portrait">
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "DiscouragedApi":
+   Discouraged APIs are allowed and are not deprecated, but they may be unfit
+   for common use (e.g. due to slow performance or subtle behavior).
+
+/home/runner/.gradle/caches/modules-2/files-2.1/net.sourceforge.jtds/jtds/1.3.1/1527f2fc2f040898625370a1687d902aa0743bcc/jtds-1.3.1.jar: Warning: checkClientTrusted is empty, which could cause insecure network traffic due to trusting arbitrary TLS/SSL certificates presented by peers [TrustAllX509TrustManager]
+/home/runner/.gradle/caches/modules-2/files-2.1/net.sourceforge.jtds/jtds/1.3.1/1527f2fc2f040898625370a1687d902aa0743bcc/jtds-1.3.1.jar: Warning: checkServerTrusted is empty, which could cause insecure network traffic due to trusting arbitrary TLS/SSL certificates presented by peers [TrustAllX509TrustManager]
+
+   Explanation for issues of type "TrustAllX509TrustManager":
+   This check looks for X509TrustManager implementations whose
+   checkServerTrusted or checkClientTrusted methods do nothing (thus trusting
+   any certificate chain) which could result in insecure network traffic
+   caused by trusting arbitrary TLS/SSL certificates presented by peers.
+
+   https://goo.gle/TrustAllX509TrustManager
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/xml/network_security_config.xml:3: Warning: Insecure Base Configuration [InsecureBaseConfiguration]
+    <base-config cleartextTrafficPermitted="true" />
+                                            ~~~~
+
+   Explanation for issues of type "InsecureBaseConfiguration":
+   Permitting cleartext traffic could allow eavesdroppers to intercept data
+   sent by your app, which impacts the privacy of your users. Consider only
+   allowing encrypted traffic by setting the cleartextTrafficPermitted tag to
+   false.
+
+   https://goo.gle/InsecureBaseConfiguration
+   https://developer.android.com/preview/features/security-config.html
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/AndroidManifest.xml:13: Warning: The attribute android:allowBackup is deprecated from Android 12 and higher and may be removed in future versions. Consider adding the attribute android:dataExtractionRules specifying an @xml resource which configures cloud backups and device transfers on Android 12 and higher. [DataExtractionRules]
+        android:allowBackup="false"
+                             ~~~~~
+
+   Explanation for issues of type "DataExtractionRules":
+   Before Android 12, the attributes android:allowBackup and
+   android:fullBackupContent were used to configure all forms of backup,
+   including cloud backups, device-to-device transfers and adb backup.
+
+   In Android 12 and higher, these attributes have been deprecated and will
+   only apply to cloud backups. You should instead use the attribute
+   android:dataExtractionRules, specifying an @xml resource that configures
+   which files to back up, for cloud backups and for device-to-device
+   transfers, separately. If your minSdkVersion supports older versions,
+   you'll still want to specify an android:fullBackupContent resource if the
+   default behavior is not right for your app.
+
+   https://developer.android.com/about/versions/12/backup-restore#xml-changes
+   https://goo.gle/DataExtractionRules
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1197: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            RectF outer = new RectF(s * 0.06f, s * 0.06f, w - s * 0.06f, h - s * 0.06f);
+                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1207: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            canvas.drawRoundRect(new RectF(s * 0.09f, s * 0.09f, w - s * 0.09f, h - s * 0.09f), s * 0.18f, s * 0.18f, p);
+                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1213: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            Path grain = new Path();
+                         ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1216: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            Path grain2 = new Path();
+                          ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1226: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                RectF orbit = new RectF(cx - s * 0.405f, cy - s * 0.405f, cx + s * 0.405f, cy + s * 0.405f);
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1235: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            Path m = new Path();
+                     ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1256: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            Path inner = new Path();
+                         ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1266: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            Path a = new Path();
+                     ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1804: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                    Path diamond = new Path();
+                                   ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1854: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            RectF r = new RectF((w - s) / 2f + pad, (h - s) / 2f + pad, (w + s) / 2f - pad, (h + s) / 2f - pad);
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1894: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            RectF r = new RectF((w - s) / 2f + pad, (h - s) / 2f + pad, (w + s) / 2f - pad, (h + s) / 2f - pad);
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4255: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            RectF bg = new RectF(pad, pad, w - pad, h - pad);
+                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4262: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            canvas.drawRoundRect(new RectF(pad + dp(3), pad + dp(3), w - pad - dp(3), h - pad - dp(3)), dp(18), dp(18), p);
+                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4264: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            canvas.drawRoundRect(new RectF(pad + dp(6), pad + dp(6), w - pad - dp(6), h - pad - dp(6)), dp(16), dp(16), p);
+                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4281: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                Path arrow = new Path();
+                             ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4292: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                RectF receipt = new RectF(w * 0.25f, h * 0.18f, w * 0.72f, h * 0.68f);
+                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4301: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                Path bag = new Path();
+                           ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:17840: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            Path line = new Path();
+                        ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:17841: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+            Path area = new Path();
+                        ~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:17923: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                canvas.drawRoundRect(new RectF(x, h - bottom - h1, x + barW, h - bottom), dp(8), dp(8), paint);
+                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:17925: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                canvas.drawRoundRect(new RectF(x + barW + dp(3), h - bottom - h2, x + barW * 2 + dp(3), h - bottom), dp(8), dp(8), paint);
+                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:17974: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+                RectF rect = new RectF(x, y, x + barW, h - bottom);
+                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "DrawAllocation":
+   You should avoid allocating objects during a drawing or layout operation.
+   These are called frequently, so a smooth UI can be interrupted by garbage
+   collection pauses caused by the object allocations.
+
+   The way this is generally handled is to allocate the needed objects up
+   front and to reuse them for each drawing operation.
+
+   Some methods allocate memory on your behalf (such as Bitmap.create), and
+   these should be handled in the same way.
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:634: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:905: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+                if (Build.VERSION.SDK_INT >= 23) {
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1081: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) chip.setElevation(dp(filled ? 3 : 1));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1141: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1162: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) shell.setElevation(dp(7));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1292: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) postInvalidateOnAnimation(); else postInvalidateDelayed(60);
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1301: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1380: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1385: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) identity.setElevation(dp(10));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1429: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) hit.setElevation(dp(8));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1641: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { b.setElevation(dp(5)); b.setLetterSpacing(0.01f); }
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1657: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { b.setElevation(dp(2)); b.setLetterSpacing(0.005f); }
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1673: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { b.setElevation(dp(primary ? 7 : 3)); b.setLetterSpacing(0.01f); }
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1746: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1759: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) c.setElevation(dp(VISITOR_EDITION ? 9 : 7));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2010: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) loginCard.setElevation(dp(12));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2369: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2388: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) navStrip.setElevation(dp(14));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2471: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2484: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) bar.setElevation(dp(15));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2563: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) bubbleView.setElevation(dp(active ? 10 : 4));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2572: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) badge.setElevation(dp(16));
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2627: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) tab.setElevation(dp(active ? 8 : 2));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2746: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) btn.setElevation(dp(5));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2921: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) q.setTextDirection(View.TEXT_DIRECTION_RTL);
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3222: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && p.getIndeterminateDrawable() != null) {
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3387: Warning: Unnecessary; SDK_INT is never < 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3964: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) b.setElevation(dp(6));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4199: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+            PendingIntent pi = PendingIntent.getActivity(this, 1818, intent, Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
+                                                                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4238: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) v.setElevation(dp(12));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:6777: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) { start.setTextDirection(View.TEXT_DIRECTION_RTL); end.setTextDirection(View.TEXT_DIRECTION_RTL); }
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:7292: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+    private JSONObject currentWifiFingerprint(){ JSONObject o=new JSONObject(); try{ if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){ requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_WIFI_PERMISSION); o.put("error","نیاز به مجوز موقعیت برای خواندن نام WiFi"); return o;} WifiManager wm=(WifiManager)getApplicationContext().getSystemService(Context.WIFI_SERVICE); if(wm==null)return o; WifiInfo info=wm.getConnectionInfo(); if(info!=null){ String ssid=info.getSSID(); if(ssid!=null)ssid=ssid.replace("\"",""); o.put("ssid",ssid); o.put("bssid",stringOr(info.getBSSID(),"")); } try{ int g=wm.getDhcpInfo()==null?0:wm.getDhcpInfo().gateway; o.put("gateway", ((g)&0xff)+"."+((g>>8)&0xff)+"."+((g>>16)&0xff)+"."+((g>>24)&0xff)); }catch(Exception ignored){} }catch(Exception ignored){} return o; }
+                                                                                        ~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:8864: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        note.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) note.setTextDirection(View.TEXT_DIRECTION_RTL);
+                                                                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9172: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) hero.setElevation(dp(8));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9469: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) tile.setElevation(dp(3));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9918: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) tile.setElevation(dp(3));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10002: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) c.setElevation(dp(7));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10491: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) c.setElevation(dp(3));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10624: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) c.setElevation(dp(selected ? 3 : 1));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10698: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) c.setElevation(dp(selected ? 6 : 3));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10791: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) c.setElevation(dp(selected ? 12 : 7));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10795: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) img.setElevation(dp(5));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10851: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) c.setElevation(dp(selected ? 5 : 2));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10864: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) img.setElevation(dp(4));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:11492: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) icon.setElevation(dp(7));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:11620: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) bubble.setElevation(dp(done ? 4 : 1));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12364: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:15116: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) panel.setElevation(dp(9));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:15205: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) icon.setElevation(dp(5));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:15768: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) box.setElevation(dp(10));
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:15786: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) name.setTextDirection(View.TEXT_DIRECTION_RTL);
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16142: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) assistantInput.setTextDirection(View.TEXT_DIRECTION_RTL);
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16574: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return "ks:" + keystoreEncrypt(raw.trim());
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16841: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) tts.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "meelano_ai_answer");
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16939: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+            PendingIntent pi = PendingIntent.getActivity(this, 0, intent, Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
+                                                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16974: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        TextView badge = text(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? "✓ Keystore فعال روی این دستگاه" : "حالت سازگار قدیمی", 11, Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, Typeface.BOLD);
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16974: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        TextView badge = text(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? "✓ Keystore فعال روی این دستگاه" : "حالت سازگار قدیمی", 11, Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, Typeface.BOLD);
+                                                                                                                                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16976: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        badge.setBackground(roundedStroke(alpha(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, 18), 16, alpha(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, 70)));
+                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16976: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+        badge.setBackground(roundedStroke(alpha(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, 18), 16, alpha(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? SUCCESS : WARNING, 70)));
+                                                                                                                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoWidgetProvider.java:38: Warning: Unnecessary; SDK_INT is always >= 24 [ObsoleteSdkInt]
+            int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0;
+                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "ObsoleteSdkInt":
+   This check flags version checks that are not necessary, because the
+   minSdkVersion (or surrounding known API level) is already at least as high
+   as the version checked for.
+
+   Similarly, it also looks for resources in -vNN folders, such as values-v14
+   where the version qualifier is less than or equal to the minSdkVersion,
+   where the contents should be merged into the best folder.
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/values/colors.xml:3: Warning: The resource R.color.meelano_surface appears to be unused [UnusedResources]
+    <color name="meelano_surface">#FFFFFF</color>
+           ~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/values/colors.xml:5: Warning: The resource R.color.meelano_gold_light appears to be unused [UnusedResources]
+    <color name="meelano_gold_light">#18BEFF</color>
+           ~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/values/colors.xml:6: Warning: The resource R.color.white appears to be unused [UnusedResources]
+    <color name="white">#FFFFFF</color>
+           ~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/drawable/icon_bank.xml:1: Warning: The resource R.drawable.icon_bank appears to be unused [UnusedResources]
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+^
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/drawable/icon_reports.xml:1: Warning: The resource R.drawable.icon_reports appears to be unused [UnusedResources]
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+^
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/values/strings.xml:3: Warning: The resource R.string.settings appears to be unused [UnusedResources]
+    <string name="settings">تنظیمات</string>
+            ~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/values/strings.xml:4: Warning: The resource R.string.web_url_hint appears to be unused [UnusedResources]
+    <string name="web_url_hint">ورود ویزیتور Meelano</string>
+            ~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/values/strings.xml:5: Warning: The resource R.string.android_subtitle appears to be unused [UnusedResources]
+    <string name="android_subtitle">نسخه اختصاصی ویزیتور Direct SQL</string>
+            ~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "UnusedResources":
+   Unused resources make applications larger and slow down builds.
+
+
+   The unused resource check can ignore tests. If you want to include
+   resources that are only referenced from tests, consider packaging them in a
+   test source set instead.
+
+   You can include test sources in the unused resource check by setting the
+   system property lint.unused-resources.include-tests =true, and to exclude
+   them (usually for performance reasons), use
+   lint.unused-resources.exclude-tests =true.
+   ,
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1030: Warning: onTouch lambda should call View#performClick when a click is detected [ClickableViewAccessibility]
+        v.setOnTouchListener((view, event) -> {
+                             ^
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:13209: Warning: Custom view SignaturePadView overrides onTouchEvent but not performClick [ClickableViewAccessibility]
+        @Override public boolean onTouchEvent(MotionEvent e) { float x=e.getX(), y=e.getY(); if(e.getAction()==MotionEvent.ACTION_DOWN){ path.moveTo(x,y); invalidate(); return true; } if(e.getAction()==MotionEvent.ACTION_MOVE){ path.lineTo(x,y); invalidate(); return true; } return true; }
+                                 ~~~~~~~~~~~~
+
+   Explanation for issues of type "ClickableViewAccessibility":
+   If a View that overrides onTouchEvent or uses an OnTouchListener does not
+   also implement performClick and call it when clicks are detected, the View
+   may not handle accessibility actions properly. Logic handling the click
+   actions should ideally be placed in View#performClick as some accessibility
+   services invoke performClick when a click action should occur.
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:7699: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        p2p.setText("حالت P2P/Direct برای DVRهای پورت 37777 فعال باشد");
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:7704: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        dahua.setOnClickListener(v -> { servicePort.setText("37777"); streamPort.setText("554"); tpl.setText(defaultCameraLiveTemplate()); replay.setText(defaultCameraReplayTemplate()); p2p.setChecked(true); });
+                                                            ~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:7704: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        dahua.setOnClickListener(v -> { servicePort.setText("37777"); streamPort.setText("554"); tpl.setText(defaultCameraLiveTemplate()); replay.setText(defaultCameraReplayTemplate()); p2p.setChecked(true); });
+                                                                                         ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:7795: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+    private void showCameraPlayer(int ch, boolean replay){ String url=cameraUrl(ch,replay); if(prefString(KEY_CAMERA_HOST,"").trim().isEmpty()){showNotice("ابتدا تنظیمات DVR را ثبت کنید.", false);return;} LinearLayout box=new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(8),dp(8),dp(8),dp(4)); box.addView(text((replay?"بازپخش ":"پخش زنده ")+"دوربین "+formatNumber(ch),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2)); VideoView video=new VideoView(this); MediaController mc=new MediaController(this); mc.setAnchorView(video); video.setMediaController(mc); video.setVideoURI(Uri.parse(url)); FrameLayout wrap=new FrameLayout(this); wrap.setBackgroundColor(Color.BLACK); wrap.addView(video,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER)); LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(-1,dp(280)); vp.setMargins(0,dp(8),0,dp(8)); box.addView(wrap,vp); LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); Button play=primaryButton("شروع پخش"); Button zoom=secondaryButton("زوم ×۱.۳"); Button external=secondaryButton("پلیر خارجی"); final float[] scale={1f}; play.setOnClickListener(v->{ try{video.start();}catch(Exception ex){showNotice("پخش شروع نشد: "+shortError(ex), true);} }); zoom.setOnClickListener(v->{ scale[0]=scale[0]<1.6f?scale[0]+0.3f:1f; video.setScaleX(scale[0]); video.setScaleY(scale[0]); zoom.setText("زوم ×"+String.format(Locale.US,"%.1f",scale[0])); }); external.setOnClickListener(v->openExternalStream(url)); row.addView(play,weightedButtonLp()); row.addView(zoom,weightedButtonLp()); row.addView(external,weightedButtonLp()); box.addView(row,new LinearLayout.LayoutParams(-1,-2)); AlertDialog dlg=new AlertDialog.Builder(this).setView(box).setNegativeButton("بستن",(d,w)->{try{video.stopPlayback();}catch(Exception ignored){}}).create(); styleMeelanoDialog(dlg,navAccent("cameras")); dlg.setOnShowListener(d-> { try{ video.start(); }catch(Exception ignored){} }); dlg.show(); }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:8837: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+                        if (target != null) target.setText("انتخاب تاریخ یادآوری: " + value);
+                                                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16675: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+            summary.setText("مدل فعال: " + providerDisplayName(activeAiProvider()) + " • نام خطاب: " + displayFirstName());
+                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16779: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        if (status != null) status.setText("در حال اعتبارسنجی " + providerDisplayName(provider) + "…");
+                                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16805: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+                    if (summary != null) summary.setText("مدل فعال: " + providerDisplayName(ids[which]) + " • نام خطاب: " + displayFirstName());
+                                                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:18036: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+                assistantInput.setText("این کد/بارکد را در کالاها بررسی کن: " + stringOr(code, ""));
+                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "SetTextI18n":
+   When calling TextView#setText
+   * Never call Number#toString() to format numbers; it will not handle
+   fraction separators and locale-specific digits properly. Consider using
+   String#format with proper format specifications (%d or %f) instead.
+   * Do not pass a string literal (e.g. "Hello") to display text. Hardcoded
+   text can not be properly translated to other languages. Consider using
+   Android resource strings instead.
+   * Do not build messages by concatenating text chunks. Such messages can not
+   be properly translated.
+
+   https://developer.android.com/guide/topics/resources/localization.html
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/layout/widget_meelano.xml:16: Warning: Hardcoded string "Meelano امروز", should use @string resource [HardcodedText]
+        android:text="Meelano امروز"
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/layout/widget_meelano.xml:27: Warning: Hardcoded string "برای به‌روزرسانی وارد اپ شوید", should use @string resource [HardcodedText]
+        android:text="برای به‌روزرسانی وارد اپ شوید"
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "HardcodedText":
+   Hardcoding text attributes directly in layout files is bad for several
+   reasons:
+
+   * When creating configuration variations (for example for landscape or
+   portrait) you have to repeat the actual text (and keep it up to date when
+   making changes)
+
+   * The application cannot be translated to other languages by just adding
+   new translations for existing string resources.
+
+   There are quickfixes to automatically extract this hardcoded string into a
+   resource lookup.
+
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1140: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        t.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                             ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1376: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        identity.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+                                                              ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1398: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        titles.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+                                                            ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1403: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        appTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                    ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1409: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        subtitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                    ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1412: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        badge.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                 ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1749: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        e.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                             ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1968: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        FrameLayout.LayoutParams g1p = new FrameLayout.LayoutParams(dp(250), dp(250), Gravity.TOP | Gravity.RIGHT);
+                                                                                                            ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1977: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        FrameLayout.LayoutParams g2p = new FrameLayout.LayoutParams(dp(270), dp(270), Gravity.BOTTOM | Gravity.LEFT);
+                                                                                                               ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:1986: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        FrameLayout.LayoutParams g3p = new FrameLayout.LayoutParams(dp(190), dp(190), Gravity.CENTER | Gravity.RIGHT);
+                                                                                                               ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2416: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        hint.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+                                                          ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2573: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+            FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, dp(21 * dockScale), Gravity.TOP | Gravity.RIGHT);
+                                                                                                                     ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:2920: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        q.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                             ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:3919: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        last.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                                ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4731: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        v.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                             ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:4748: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        val.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                               ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:6776: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        start.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); end.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                 ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:6776: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        start.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); end.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                                                                          ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:7959: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        hint.setGravity(Gravity.RIGHT);
+                                ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:8864: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        note.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) note.setTextDirection(View.TEXT_DIRECTION_RTL);
+                                ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9178: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        LinearLayout.LayoutParams lpLabel = new LinearLayout.LayoutParams(-2, dp(30)); lpLabel.gravity = Gravity.RIGHT; hero.addView(label, lpLabel);
+                                                                                                                 ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9181: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        title.setGravity(Gravity.RIGHT); title.setLineSpacing(dp(3), 1.05f);
+                                 ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9184: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        sub.setGravity(Gravity.RIGHT); sub.setLineSpacing(dp(3), 1.05f);
+                               ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9301: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+            convValue.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                                         ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9348: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView t = text(title, 12.2f, TEXT, Typeface.BOLD); t.setGravity(Gravity.RIGHT); p.addView(t, new LinearLayout.LayoutParams(-1, -2));
+                                                                                   ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9349: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView s = text(sub, 9.2f, MUTED, Typeface.BOLD); s.setGravity(Gravity.RIGHT); p.addView(s, new LinearLayout.LayoutParams(-1, -2));
+                                                                                 ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9367: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+            pill.setSingleLine(true); pill.setGravity(Gravity.RIGHT); parent.addView(pill, new LinearLayout.LayoutParams(-1, -2));
+                                                              ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9380: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+            line.setSingleLine(true); line.setGravity(Gravity.RIGHT); parent.addView(line, new LinearLayout.LayoutParams(-1, -2));
+                                                              ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9419: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView t = text(title, 11.4f, TEXT, Typeface.BOLD); t.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); row.addView(t, new LinearLayout.LayoutParams(0, dp(32), 1f));
+                                                                                   ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9623: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        t.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                             ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:9684: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(Math.max(dp(12), (int)(dp(210) * Math.max(0.04, Math.min(1.0, progress)))), dp(7), Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+                                                                                                                                                                                        ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10168: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView mt = text("نمایش", 10.0f, TEXT, Typeface.BOLD); mt.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); mt.setSingleLine(true); modePanel.addView(mt, new LinearLayout.LayoutParams(-2, -2));
+                                                                                       ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:10716: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        FrameLayout.LayoutParams tagLp = new FrameLayout.LayoutParams(-2, dp(24), Gravity.RIGHT | Gravity.BOTTOM);
+                                                                                          ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:11783: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+            warning.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                       ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:11816: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+            TextView warning = text("⚠ " + warn, 9.1f, DANGER, Typeface.BOLD); warning.setGravity(Gravity.RIGHT); warning.setPadding(dp(7), dp(4), dp(7), dp(4)); warning.setBackground(roundedStroke(alpha(DANGER, 13), 14, alpha(DANGER, 50)));
+                                                                                                          ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12334: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        addPreviewTableCell(head, "کالا", 1.45f, onColorFor(accent), Typeface.BOLD, Gravity.RIGHT | Gravity.CENTER_VERTICAL, true);
+                                                                                            ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12344: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+            addPreviewTableCell(row, safeDisplayText(it.optString("name", ""), "کالا"), 1.45f, TEXT, Typeface.BOLD, Gravity.RIGHT | Gravity.CENTER_VERTICAL, false);
+                                                                                                                            ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12380: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView l = text(label, 9.0f, accent, Typeface.BOLD); l.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); l.setSingleLine(true);
+                                                                                    ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12381: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView v = text(stringOr(value, "—"), 10.1f, TEXT, Typeface.BOLD); v.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END);
+                                                                                                  ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12389: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView l = text(label, 9.6f, strong ? onColorFor(accent) : alpha(TEXT, 225), Typeface.BOLD); l.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                                                                                                            ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12390: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        TextView v = text(stringOr(value, "—"), strong ? 11.4f : 10.2f, strong ? onColorFor(accent) : accent, Typeface.BOLD); v.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END);
+                                                                                                                                                   ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:12398: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        n.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                             ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:13096: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+                TextView label = text("تاریخ " + dk,12.2f,TEXT,Typeface.BOLD); label.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL); day.addView(label,new LinearLayout.LayoutParams(0,-2,1f));
+                                                                                                        ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:14998: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        d.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                             ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:15785: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        name.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16141: Warning: Use "Gravity.END" instead of "Gravity.RIGHT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        assistantInput.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                                          ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:16640: Warning: Use "Gravity.START" instead of "Gravity.LEFT" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        e.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+                             ~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/layout/widget_meelano.xml:7: Warning: Use "end" instead of "right" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+    android:gravity="center_vertical|right"
+                     ~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/layout/widget_meelano.xml:15: Warning: Use "end" instead of "right" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        android:gravity="right"
+                         ~~~~~
+/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/res/layout/widget_meelano.xml:25: Warning: Use "end" instead of "right" to ensure correct behavior in right-to-left locales [RtlHardcoded]
+        android:gravity="right"
+                         ~~~~~
+
+   Explanation for issues of type "RtlHardcoded":
+   Using Gravity#LEFT and Gravity#RIGHT can lead to problems when a layout is
+   rendered in locales where text flows from right to left. Use Gravity#START
+   and Gravity#END instead. Similarly, in XML gravity and layout_gravity
+   attributes, use start rather than left.
+
+   For XML attributes such as paddingLeft and layout_marginLeft, use
+   paddingStart and layout_marginStart. NOTE: If your minSdkVersion is less
+   than 17, you should add both the older left/right attributes as well as the
+   new start/end attributes. On older platforms, where RTL is not supported
+   and the start/end attributes are unknown and therefore ignored, you need
+   the older left/right attributes. There is a separate lint check which
+   catches that type of error.
+
+   (Note: For Gravity#LEFT and Gravity#START, you can use these constants even
+   when targeting older platforms, because the start bitmask is a superset of
+   the left bitmask. Therefore, you can use gravity="start" rather than
+   gravity="left|start".)
+
+1 errors, 160 warnings
