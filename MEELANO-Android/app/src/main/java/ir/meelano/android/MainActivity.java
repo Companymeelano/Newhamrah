@@ -328,7 +328,7 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         loadMeelanoFonts();
         if (VISITOR_EDITION) prepareVisitorEditionDefaults();
-        applyTheme(prefs.getString(KEY_THEME, DEFAULT_THEME));
+        applyTheme(prefs.getString(KEY_THEME, defaultThemeId()));
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         initSpeechEngine();
         initNotificationChannel();
@@ -380,6 +380,27 @@ public class MainActivity extends Activity {
         if ("new_customer".equals(page)) { showApp("customers"); showNewCustomerRequestDialog(); return; }
         String p = page.trim();
         if (p.startsWith("store_reports:")) { storeReportsTab = p.substring(p.indexOf(':') + 1); p = "store_reports"; }
+        if ("store_checkout".equals(p) || "store_checkout_pay".equals(p)) {
+            openStoreCheckout(currentCartSnapshot(finalCartStatus()));
+            if ("store_checkout_pay".equals(p) && storeCheckout != null) {
+                try {
+                    JSONObject rs = storeCheckout.optJSONObject("receipt");
+                    rs.put("cash", 20_000_000);
+                    rs.optJSONArray("rows").put(new JSONObject().put("k", "pos").put("m", 15_000_000).put("b", 6).put("bn", "بانک تجارت • طالقانی").put("t", "482915").put("d", ""));
+                    rs.optJSONArray("cheques").put(new JSONObject().put("m", 30_000_000).put("s", "711960").put("sd", "1405/08/15").put("bn", "ملت").put("br", "").put("hs", "").put("sy", "1234567890123456").put("ri", true).put("ct", 2));
+                    storeCheckout.put("barbari", 250_000); storeCheckout.put("modpar", 30);
+                } catch (Exception ignored) { }
+                storePreviewScrollToReceipt = true;
+                renderActivePage();
+            }
+            return;
+        }
+        if ("store_receipt".equals(p)) {
+            try { openStoreReceipt(new JSONObject().put("code", "412").put("name", "سوپر مارکت امید")); } catch (Exception ignored) { }
+            try { storeReceiptState.put("cash", 10_000_000); storeReceiptState.optJSONArray("rows").put(new JSONObject().put("k", "trf").put("m", 25_000_000).put("b", 7).put("bn", "بانک ملت • مرکزی").put("t", "").put("d", "کارت به کارت")); } catch (Exception ignored) { }
+            renderActivePage();
+            return;
+        }
         if ("store_invoice_done".equals(p)) {
             showApp("cart");
             try { showStoreInvoiceDoneDialog(new JSONObject().put("no", 817).put("confirmed", true).put("total", 86_450_000d).put("man", 312_900_000d).put("customer", "سوپر مارکت امید")); } catch (Exception ignored) { }
@@ -529,13 +550,23 @@ public class MainActivity extends Activity {
             }
             visitorCartNotes = "آزمون خودکار فروشگاه";
             JSONObject snap = buildCartSnapshot("sent");
-            selfTestLog("STORE SUBMIT uniq=" + storeInvoiceUniqueId(snap) + " total=" + Math.round(snap.optDouble("grandTotal")) + " items=" + snap.optJSONArray("items").length());
+            long shmoT = (long) parseNumber(customer, 0);
+            JSONObject ref = queryStoreCheckoutRef(shmoT);
+            StringBuilder vids = new StringBuilder();
+            for (int i = 0; ref.optJSONArray("visitors") != null && i < ref.optJSONArray("visitors").length(); i++) vids.append(ref.optJSONArray("visitors").optJSONObject(i).optInt("id")).append(',');
+            JSONArray bankList = ref.optJSONArray("banks");
+            selfTestLog("STORE REF myVis=" + ref.optInt("myVis") + " visitors=" + vids + " banks=" + jsonArrayLength(bankList == null ? "[]" : bankList.toString())
+                    + " bankNames=" + (ref.optJSONArray("bankNames") == null ? 0 : ref.optJSONArray("bankNames").length()) + " terms=" + (ref.optJSONArray("terms") == null ? 0 : ref.optJSONArray("terms").length())
+                    + " anbars=" + (ref.optJSONArray("anbars") == null ? 0 : ref.optJSONArray("anbars").length()) + " man=" + Math.round(ref.optDouble("man")) + " open=" + (ref.optJSONArray("invoices") == null ? 0 : ref.optJSONArray("invoices").length()));
+            snap.put("storeVis", ref.optInt("myVis")); snap.put("storeModpar", 30); snap.put("storeBarbari", 150_000); snap.put("storeAnbar", 0);
+            selfTestLog("STORE SUBMIT uniq=" + storeInvoiceUniqueId(snap) + " total=" + Math.round(snap.optDouble("grandTotal")) + " items=" + snap.optJSONArray("items").length() + " barbari=150000 modpar=30");
             JSONObject r1 = submitStoreInvoice(snap);
             selfTestLog("STORE INVOICE1 " + r1);
             JSONObject r2 = submitStoreInvoice(snap);
             selfTestLog("STORE INVOICE2 " + r2);
             selfTestLog("STEP store_invoice " + (r1.optLong("no") > 0 && r1.optLong("no") == r2.optLong("no") && r2.optBoolean("duplicate") ? "OK" : "FAIL"));
             visitorCartItems = new JSONArray(); visitorCartDraftId = "";
+            selfTestStoreReceipts(shmoT, ref, r1);
         } catch (Throwable ex) { selfTestLog("STEP store_invoice FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
         try {
             selfTestLog("STORE location " + saveStoreLocation(31.3183, 48.6706, 120));
@@ -549,6 +580,48 @@ public class MainActivity extends Activity {
             selfTestLog("STEP store_att_out OK " + saveStoreAttendance("out", 31.31822, 48.67049, 9));
             try (Connection c = openConnection()) { selfTestLog("STORE attendance rows=" + queryStoreAttendance(c).length()); }
         } catch (Throwable ex) { selfTestLog("STEP store_attendance FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+    }
+
+    /**
+     * Receipt («دریافت») at invoice time with all five kinds (cash, card reader, card-to-card, havaleh, two cheques —
+     * one Sayad-confirmed electronic, one unconfirmed paper), a resend with the same unique id, then a
+     * receipt-only payment that settles the two oldest open invoices (DaryaftMultiFactor + tasvieh).
+     */
+    private void selfTestStoreReceipts(long shmo, JSONObject ref, JSONObject inv) {
+        try {
+            JSONArray banks = ref.optJSONArray("banks");
+            int posBank = 0, anyBank = 0;
+            for (int i = 0; banks != null && i < banks.length(); i++) { JSONObject b = banks.optJSONObject(i); if (anyBank == 0) anyBank = b.optInt("id"); if (posBank == 0 && b.optBoolean("pos")) posBank = b.optInt("id"); }
+            if (posBank == 0) posBank = anyBank;
+            String today = stringOr(ref.optString("today"), "1405/07/06");
+            JSONObject rs = newStoreReceiptState();
+            rs.put("cash", 1_000_000);
+            rs.optJSONArray("rows").put(new JSONObject().put("k", "pos").put("m", 2_000_000).put("b", posBank).put("t", "482915").put("d", ""));
+            rs.optJSONArray("rows").put(new JSONObject().put("k", "trf").put("m", 500_000).put("b", anyBank).put("t", "771200").put("d", "کارت به کارت از 6037"));
+            rs.optJSONArray("rows").put(new JSONObject().put("k", "hav").put("m", 300_000).put("b", anyBank).put("t", "H-5521").put("d", "حواله پایا"));
+            rs.optJSONArray("cheques").put(new JSONObject().put("m", 1_200_000).put("s", "711960").put("sd", MeelanoJalali.addDays(today, 30)).put("bn", "ملت").put("br", "مرکزی").put("hs", "123456").put("sy", "1234567890123456").put("ri", true).put("ct", 2));
+            rs.optJSONArray("cheques").put(new JSONObject().put("m", 800_000).put("s", "340021").put("sd", MeelanoJalali.addDays(today, 60)).put("bn", "سپه").put("br", "").put("hs", "").put("sy", "").put("ri", false).put("ct", 1));
+            double sum = storeReceiptSum(rs);
+            JSONArray alloc = storeAllocate(ref.optJSONArray("invoices"), inv.optDouble("total"), sum, true);
+            selfTestLog("STORE RECEIPT1_SPEC uid=" + rs.optString("uid") + " sum=" + Math.round(sum) + " posBank=" + posBank + " bank=" + anyBank + " alloc=" + alloc);
+            JSONObject a = submitStoreReceipt(shmo, rs, alloc, inv.optLong("no"), "بابت فاکتور " + inv.optLong("no"));
+            selfTestLog("STORE RECEIPT1 " + a);
+            JSONObject b = submitStoreReceipt(shmo, rs, alloc, inv.optLong("no"), "بابت فاکتور " + inv.optLong("no"));
+            selfTestLog("STORE RECEIPT1_DUP " + b);
+            selfTestLog("STEP store_receipt " + (a.optLong("ghno") > 0 && Math.abs(a.optDouble("total") - sum) < 1 && b.optBoolean("duplicate") && b.optLong("ghno") == a.optLong("ghno") ? "OK" : "FAIL"));
+
+            JSONObject ref2 = queryStoreCheckoutRef(shmo);
+            JSONArray open = ref2.optJSONArray("invoices");
+            if (open == null || open.length() < 2) { selfTestLog("STORE RECEIPT2 SKIP open=" + (open == null ? 0 : open.length())); return; }
+            double two = open.optJSONObject(0).optDouble("open") + open.optJSONObject(1).optDouble("open");
+            JSONObject rs2 = newStoreReceiptState();
+            rs2.put("cash", Math.round(two));
+            JSONArray alloc2 = storeAllocate(open, 0, two, false);
+            selfTestLog("STORE RECEIPT2_SPEC sum=" + Math.round(two) + " alloc=" + alloc2);
+            JSONObject c2 = submitStoreReceipt(shmo, rs2, alloc2, 0, "تسویه دو فاکتور قدیمی");
+            selfTestLog("STORE RECEIPT2 " + c2);
+            selfTestLog("STEP store_receipt_multi " + (c2.optLong("ghno") > 0 && c2.optInt("settled") >= 2 ? "OK" : "FAIL"));
+        } catch (Throwable ex) { selfTestLog("STEP store_receipt FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
     }
 
     /** Customer rule by name tag, full product load, and the new-customer request → approval → Atiran path. */
@@ -889,7 +962,11 @@ public class MainActivity extends Activity {
         if (prefs == null) return;
         String savedTheme = prefs.getString(KEY_THEME, "");
         SharedPreferences.Editor ed = prefs.edit();
-        if (savedTheme == null || savedTheme.trim().isEmpty() || (VISITOR_EDITION && "onyx_gold".equals(savedTheme))) ed.putString(KEY_THEME, STORE_EDITION ? "emerald_silk" : "azure_diamond");
+        if (savedTheme == null || savedTheme.trim().isEmpty() || (VISITOR_EDITION && "onyx_gold".equals(savedTheme))) ed.putString(KEY_THEME, defaultThemeId());
+        // Store app: move once to the emerald theme made from its green launcher icon.
+        if (STORE_EDITION && !prefs.getBoolean("store_theme_emerald_royal", false)) {
+            ed.putString(KEY_THEME, "emerald_royal").putBoolean("store_theme_emerald_royal", true);
+        }
         ed.putBoolean(KEY_QUICK_LOGIN_ENABLED, false)
                 .remove(KEY_QUICK_PIN)
                 .remove(KEY_QUICK_USER_ID)
@@ -900,9 +977,11 @@ public class MainActivity extends Activity {
                 .apply();
     }
 
+    private String defaultThemeId() { return STORE_EDITION ? "emerald_royal" : DEFAULT_THEME; }
+
     private boolean isLightThemeId(String id) {
         String v = id == null ? "" : id.trim();
-        return "azure_diamond".equals(v) || "crystal_lagoon".equals(v) || "ivory_sunrise".equals(v) ||
+        return "emerald_royal".equals(v) || "azure_diamond".equals(v) || "crystal_lagoon".equals(v) || "ivory_sunrise".equals(v) ||
                 "pearl_platinum".equals(v) || "rose_quartz_lux".equals(v) || "emerald_silk".equals(v) || "hazelnut_gold".equals(v);
     }
 
@@ -953,11 +1032,11 @@ public class MainActivity extends Activity {
     }
 
     private String normalizeThemeId(String themeId) {
-        String id = themeId == null ? DEFAULT_THEME : themeId.trim();
-        if (id.isEmpty()) return DEFAULT_THEME;
-        if ("pearl_platinum".equals(id) || "rose_quartz_lux".equals(id) || "emerald_silk".equals(id) ||
+        String id = themeId == null ? defaultThemeId() : themeId.trim();
+        if (id.isEmpty()) return defaultThemeId();
+        if ("emerald_royal".equals(id) || "pearl_platinum".equals(id) || "rose_quartz_lux".equals(id) || "emerald_silk".equals(id) ||
                 "royal_amethyst".equals(id) || "ivory_sunrise".equals(id) || "crystal_lagoon".equals(id) || "azure_diamond".equals(id) || "noir_aurora".equals(id) || "onyx_gold".equals(id) || "hazelnut_gold".equals(id) || THEME_AUTO.equals(id)) return id;
-        return DEFAULT_THEME;
+        return defaultThemeId();
     }
 
     private static final String THEME_AUTO = "auto_system";
@@ -970,7 +1049,7 @@ public class MainActivity extends Activity {
     /** Follow-system theme: light Azure Diamond by day, Noir Aurora when the phone is in dark mode. */
     private String resolveThemeId(String themeId) {
         String id = normalizeThemeId(themeId);
-        return THEME_AUTO.equals(id) ? (systemDarkMode() ? "noir_aurora" : "azure_diamond") : id;
+        return THEME_AUTO.equals(id) ? (systemDarkMode() ? "noir_aurora" : (STORE_EDITION ? "emerald_royal" : "azure_diamond")) : id;
     }
 
     private boolean lastAppliedDark = false;
@@ -1025,6 +1104,26 @@ public class MainActivity extends Activity {
             HERO_START = Color.rgb(255, 241, 244);
             HERO_END = Color.rgb(255, 249, 243);
             ON_PRIMARY = Color.rgb(50, 27, 24);
+        } else if ("emerald_royal".equals(id)) {
+            // «زمرد سلطنتی»: the store icon's deep emerald for every primary action, its champagne-gold «D»
+            // as the accent line, and an ivory-mint page so text keeps high contrast everywhere.
+            NAVY = Color.rgb(243, 249, 245);
+            SURFACE = Color.rgb(255, 255, 253);
+            SURFACE_2 = Color.rgb(223, 241, 231);
+            GOLD = Color.rgb(7, 104, 70);
+            GOLD_2 = Color.rgb(184, 142, 58);
+            SUCCESS = Color.rgb(18, 138, 92);
+            INFO = Color.rgb(26, 104, 148);
+            WARNING = Color.rgb(176, 112, 24);
+            DANGER = Color.rgb(184, 44, 64);
+            TEXT = Color.rgb(8, 36, 27);
+            MUTED = Color.rgb(60, 92, 80);
+            BORDER = Color.argb(86, 7, 104, 70);
+            HEADER_START = Color.rgb(250, 255, 252);
+            HEADER_END = Color.rgb(211, 237, 223);
+            HERO_START = Color.rgb(213, 240, 226);
+            HERO_END = Color.rgb(255, 252, 242);
+            ON_PRIMARY = Color.WHITE;
         } else if ("emerald_silk".equals(id)) {
             NAVY = Color.rgb(241, 249, 245);
             SURFACE = Color.rgb(255, 255, 252);
@@ -1275,12 +1374,13 @@ public class MainActivity extends Activity {
     }
 
     private String currentThemeId() {
-        return normalizeThemeId(prefs == null ? DEFAULT_THEME : prefs.getString(KEY_THEME, DEFAULT_THEME));
+        return normalizeThemeId(prefs == null ? defaultThemeId() : prefs.getString(KEY_THEME, defaultThemeId()));
     }
 
     private String themeName(String id) {
         if ("pearl_platinum".equals(id)) return "مروارید پلاتینیوم";
         if ("rose_quartz_lux".equals(id)) return "رز کوارتز لاکچری";
+        if ("emerald_royal".equals(id)) return "زمرد سلطنتی (هم‌رنگ آیکون فروشگاه)";
         if ("emerald_silk".equals(id)) return "زمرد ابریشمی روشن";
         if ("royal_amethyst".equals(id)) return "شب آمتیست سلطنتی";
         if ("ivory_sunrise".equals(id)) return "طلوع عاجی لوکس";
@@ -1952,8 +2052,9 @@ public class MainActivity extends Activity {
                 .setNegativeButton("بستن", null)
                 .create();
         addThemeOption(box, dialog, THEME_AUTO, "خودکار", "روشن در روز، تیره در شب — هماهنگ با گوشی", new int[]{Color.rgb(244, 251, 255), Color.rgb(0, 126, 255), Color.rgb(5, 8, 18)});
-        if (VISITOR_EDITION) addThemeOption(box, dialog, "azure_diamond", "الماس آبی", "تم پیش‌فرض " + editionTitle(), new int[]{Color.rgb(244, 251, 255), Color.rgb(0, 126, 255), Color.rgb(24, 190, 255)});
-        addThemeOption(box, dialog, "hazelnut_gold", "فندقی طلایی", "هم‌رنگ آیکون برنامه", new int[]{Color.rgb(250, 244, 234), Color.rgb(150, 92, 38), Color.rgb(201, 145, 58)});
+        if (STORE_EDITION) addThemeOption(box, dialog, "emerald_royal", "زمرد سلطنتی", "تم پیش‌فرض فروشگاه • هم‌رنگ آیکون", new int[]{Color.rgb(243, 249, 245), Color.rgb(7, 104, 70), Color.rgb(184, 142, 58)});
+        if (VISITOR_EDITION && !STORE_EDITION) addThemeOption(box, dialog, "azure_diamond", "الماس آبی", "تم پیش‌فرض " + editionTitle(), new int[]{Color.rgb(244, 251, 255), Color.rgb(0, 126, 255), Color.rgb(24, 190, 255)});
+        if (!STORE_EDITION) addThemeOption(box, dialog, "hazelnut_gold", "فندقی طلایی", "هم‌رنگ آیکون برنامه", new int[]{Color.rgb(250, 244, 234), Color.rgb(150, 92, 38), Color.rgb(201, 145, 58)});
         addThemeOption(box, dialog, "pearl_platinum", "روشن ۱", "مروارید پلاتینیوم", new int[]{Color.rgb(245, 247, 251), Color.rgb(168, 122, 44), Color.rgb(48, 96, 176)});
         addThemeOption(box, dialog, "rose_quartz_lux", "روشن ۲", "رز کوارتز لاکچری", new int[]{Color.rgb(255, 247, 248), Color.rgb(177, 102, 82), Color.rgb(111, 90, 174)});
         addThemeOption(box, dialog, "emerald_silk", "روشن ۳", "زمرد ابریشمی", new int[]{Color.rgb(241, 249, 245), Color.rgb(16, 132, 91), Color.rgb(160, 128, 55)});
@@ -3123,6 +3224,7 @@ public class MainActivity extends Activity {
     private String dockKeyFor(String page) {
         if (page == null) return STORE_EDITION ? "store_home" : "visitor_dashboard";
         if (STORE_EDITION && ("store_home".equals(page) || "store_reports".equals(page))) return page;
+        if (STORE_EDITION && "store_checkout".equals(page)) return "cart";
         if ("visitor_dashboard".equals(page) || "visit".equals(page) || "showcase".equals(page) || "cart".equals(page) || "visitor_more".equals(page)) return page;
         if ("login".equals(page)) return "";
         return "visitor_more";
@@ -3276,6 +3378,8 @@ public class MainActivity extends Activity {
             case "attendance": if (STORE_EDITION) loadStoreAttendance(); else loadAttendance(); break;
             case "store_home": loadStoreHome(); break;
             case "store_reports": loadStoreReports(); break;
+            case "store_checkout": loadStoreCheckout(); break;
+            case "store_receipt": renderStoreReceiptPage(); break;
             case "visitor_dashboard": loadVisitorDashboard(); break;
             case "visit": renderSimpleVisitPage(); break;
             case "visitor_more": if (STORE_EDITION) renderStoreMorePage(); else renderVisitorMorePage(); break;
@@ -6104,7 +6208,7 @@ public class MainActivity extends Activity {
 
     private boolean canUsePermission(String key) {
         if (key == null || key.trim().isEmpty()) return true;
-        if (STORE_EDITION && ("store_home".equals(key.trim()) || "store_reports".equals(key.trim()))) return true;
+        if (STORE_EDITION && ("store_home".equals(key.trim()) || "store_reports".equals(key.trim()) || "store_checkout".equals(key.trim()) || "store_receipt".equals(key.trim()))) return true;
         if (VISITOR_EDITION) return visitorEditionPermissionAllowed(key);
         if (isFullAccessUser()) return true;
         return currentPermissionSet().contains(key);
@@ -8205,7 +8309,7 @@ public class MainActivity extends Activity {
         if (type == null || type.trim().isEmpty()) { showNotice("نوع مرخصی را انتخاب کنید.", false); return; }
         if (start == null || start.trim().isEmpty() || end == null || end.trim().isEmpty()) { showNotice("تاریخ شروع و پایان الزامی است.", false); return; }
         if (reason == null || reason.trim().length() < 3) { showNotice("توضیح کوتاه درخواست را وارد کنید.", false); return; }
-        runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_leave_requests(username,display_name,leave_type,start_date,end_date,hours,reason) VALUES(?,?,?,?,?,?,?)")){ ps.setString(1,currentAccountName()); ps.setString(2,session==null?currentAccountName():session.userName); ps.setString(3,type); ps.setString(4,start); ps.setString(5,end); ps.setString(6,hours); ps.setString(7,reason); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("درخواست مرخصی ارسال شد.", false); showLocalNotification("درخواست مرخصی", "درخواست شما ثبت شد و برای مدیر قابل مشاهده است.", false); loadAttendance(); } @Override public void fail(Exception e){ showPageError("مرخصی",e,()->loadAttendance()); }});
+        runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_leave_requests(username,display_name,leave_type,start_date,end_date,hours,reason) VALUES(?,?,?,?,?,?,?)")){ ps.setString(1,currentAccountName()); ps.setString(2,session==null?currentAccountName():session.userName); ps.setString(3,type); ps.setString(4,start); ps.setString(5,end); ps.setString(6,hours); ps.setString(7,reason); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("درخواست مرخصی ارسال شد.", false); showLocalNotification("درخواست مرخصی", "درخواست شما ثبت شد و برای مدیر قابل مشاهده است.", false); if (STORE_EDITION) { storeDataCache = null; loadStoreAttendance(); } else loadAttendance(); } @Override public void fail(Exception e){ if (STORE_EDITION) showNotice("درخواست مرخصی ثبت نشد: " + shortError(e), true); else showPageError("مرخصی",e,()->loadAttendance()); }});
     }
 
     private void decideLeave(long id, boolean approve){ runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); try(PreparedStatement ps=c.prepareStatement("UPDATE dbo.meelano_leave_requests SET status=?, decided_at=SYSDATETIME(), manager_note=? WHERE id=?")){ ps.setString(1,approve?"approved":"rejected"); ps.setString(2,approve?"تأیید مدیر":"رد مدیر"); ps.setLong(3,id); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ loadAttendance(); } @Override public void fail(Exception e){ showPageError("مرخصی",e,()->loadAttendance()); }}); }
@@ -14580,6 +14684,8 @@ public class MainActivity extends Activity {
 
     private void showPrefactorPreviewDialogWithCheck(JSONObject snap, JSONObject check, boolean offline) {
         if (snap == null) snap = new JSONObject();
+        // Store app: the invoice is finished on its own page (visitor, term, freight, warehouse, receipt).
+        if (STORE_EDITION) { openStoreCheckout(snap); return; }
         if (check == null) check = new JSONObject();
         int accent = navAccent("cart");
         ScrollView scroll = new ScrollView(this);
@@ -20461,15 +20567,35 @@ public class MainActivity extends Activity {
         Button logout = themedActionButton("خروج از حساب ویزیتور", DANGER, false); logout.setOnClickListener(v -> showLogin("برای ورود مجدد ویزیتور اطلاعات Meelano را وارد کنید."));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(9), 0, 0); quick.addView(logout, lp);
         content.addView(quick, new LinearLayout.LayoutParams(-1, -2));
+        if (STORE_EDITION) addStoreLocationSettingsCard();
         addVisitorSecurityCard();
         addAppUpdateCard();
         addExperienceSettingsCard();
         LinearLayout about = card();
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(12), 0, 0);
         about.addView(text("درباره برنامه", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        TextView desc = text(editionTitle() + " — نسخه " + appVersionName() + "\nطراحی و برنامه‌نویسی: " + DEVELOPER_NAME + (STORE_EDITION ? "\nبرای کارکنان فروشگاه: فاکتور فروش قطعی، گزارش بدهکاران و سررسید، نمودارها و حضور و غیاب." : "\nبرای ویزیتورهای فروش: مشتری، سبد، پیش‌فاکتور و گزارش روزانه در یک برنامه."), 12, MUTED, Typeface.NORMAL);
+        TextView desc = text(editionTitle() + " — نسخه " + appVersionName() + "\nطراحی و برنامه‌نویسی: " + DEVELOPER_NAME + (STORE_EDITION ? "\nبرای کارکنان فروشگاه: فاکتور فروش قطعی با دریافت وجه (نقد، کارت‌خوان، کارت به کارت، حواله و چک)، گزارش بدهکاران و سررسید، نمودارها، حضور و مرخصی." : "\nبرای ویزیتورهای فروش: مشتری، سبد، پیش‌فاکتور و گزارش روزانه در یک برنامه."), 12, MUTED, Typeface.NORMAL);
         desc.setLineSpacing(dp(3), 1.05f); about.addView(desc, new LinearLayout.LayoutParams(-1, -2));
         content.addView(about, ap);
+    }
+
+    /** Store app: the store location for GPS attendance is set once here (while standing inside the store). */
+    private void addStoreLocationSettingsCard() {
+        JSONObject d = storeDataCache;
+        boolean known = d != null, located = known && !d.optString("storeLat").isEmpty();
+        LinearLayout c = card();
+        c.setBackground(themedSectionBg("attendance", 24));
+        c.addView(text("مکان فروشگاه برای حضور و غیاب", 15, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        String sub = !known ? "برای ثبت یا تغییر، داخل فروشگاه دکمه زیر را بزنید." : located
+                ? "ثبت شده • شعاع مجاز: " + formatNumber(parseNumber(d.optString("storeRadius"), STORE_DEFAULT_RADIUS_M)) + " متر"
+                : "هنوز ثبت نشده است؛ داخل فروشگاه دکمه زیر را بزنید.";
+        TextView t = text(sub, 11, MUTED, Typeface.NORMAL); t.setLineSpacing(dp(2), 1f);
+        c.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        Button set = themedActionButton(located ? "تغییر مکان فروشگاه" : "ثبت مکان فروشگاه (همین‌جا)", navAccent("attendance"), !located);
+        set.setOnClickListener(v -> showSetStoreLocationDialog(located));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(10), 0, 0); c.addView(set, lp);
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(12), 0, 0);
+        content.addView(c, cp);
     }
 
     private void renderSettings() {
@@ -20521,7 +20647,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2);
         ap.setMargins(0, dp(12), 0, 0);
         about.addView(text("درباره برنامه", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        TextView desc = text(editionTitle() + " — نسخه " + appVersionName() + "\nطراحی و برنامه‌نویسی: " + DEVELOPER_NAME + (STORE_EDITION ? "\nبرای کارکنان فروشگاه: فاکتور فروش قطعی، گزارش بدهکاران و سررسید، نمودارها و حضور و غیاب." : "\nبرای ویزیتورهای فروش: مشتری، سبد، پیش‌فاکتور و گزارش روزانه در یک برنامه."), 12, MUTED, Typeface.NORMAL);
+        TextView desc = text(editionTitle() + " — نسخه " + appVersionName() + "\nطراحی و برنامه‌نویسی: " + DEVELOPER_NAME + (STORE_EDITION ? "\nبرای کارکنان فروشگاه: فاکتور فروش قطعی با دریافت وجه (نقد، کارت‌خوان، کارت به کارت، حواله و چک)، گزارش بدهکاران و سررسید، نمودارها، حضور و مرخصی." : "\nبرای ویزیتورهای فروش: مشتری، سبد، پیش‌فاکتور و گزارش روزانه در یک برنامه."), 12, MUTED, Typeface.NORMAL);
         desc.setLineSpacing(dp(3), 1.05f);
         about.addView(desc, new LinearLayout.LayoutParams(-1, -2));
         content.addView(about, ap);
@@ -20935,7 +21061,8 @@ public class MainActivity extends Activity {
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 int i = 1;
                 ps.setInt(i++, (int) shmo);
-                ps.setInt(i++, staff.optInt("vis", 1));
+                int vis = snap.optInt("storeVis", 0);
+                ps.setInt(i++, vis > 0 ? vis : staff.optInt("vis", 1));
                 ps.setInt(i++, staff.optInt("uid", 1));
                 ps.setString(i++, staff.optString("user", ""));
                 ps.setString(i++, atiranPersianToday(c));
@@ -20943,7 +21070,9 @@ public class MainActivity extends Activity {
                 ps.setString(i++, storeInvoiceUniqueId(snap));
                 ps.setString(i++, x.toString());
                 ps.setDouble(i++, Math.max(0, snap.optDouble("globalDiscount", 0)));
-                ps.setInt(i, 0);
+                ps.setInt(i++, Math.max(0, Math.min(720, snap.optInt("storeModpar", 0))));
+                ps.setDouble(i++, Math.max(0, Math.round(snap.optDouble("storeBarbari", 0))));
+                ps.setInt(i, Math.max(0, snap.optInt("storeAnbar", 0)));
                 boolean isResult = ps.execute();
                 for (int guard = 0; guard < 256; guard++) {
                     if (isResult) {
@@ -21008,6 +21137,966 @@ public class MainActivity extends Activity {
         dlg.show();
     }
 
+    // ---------------------------------------------------------------- invoice details + receipt («دریافت»)
+    // The store invoice is finished on its own page: visitor (default: the signed-in staff member's own
+    // visitor row), settlement term (sailfact.modpar), freight (barbari), invoice discount, warehouse and
+    // description, plus the money received from the customer. The receipt is written by
+    // res/raw/atiran_receipt.sql exactly like Atiran's «قبض دريافت»: Daryaft + PosDetails + TemplateDaryaftCheque.
+    private JSONObject storeCheckoutSnap = null;
+    private JSONObject storeCheckout = null;
+    private JSONObject storeCheckoutRef = null;
+    private JSONObject storeReceiptCustomer = null;
+    private JSONObject storeReceiptState = null;
+    private JSONObject storeReceiptRef = null;
+    private String storeReceiptNote = "";
+    private TextView storeCheckoutTotals = null;
+    private TextView storeCheckoutAlloc = null;
+    private boolean storeCheckoutSending = false;
+    private boolean storePreviewScrollToReceipt = false;
+
+    private interface StoreFormOk { String run(); }
+
+    private JSONObject newStoreReceiptState() {
+        JSONObject rs = new JSONObject();
+        try {
+            rs.put("cash", 0); rs.put("rows", new JSONArray()); rs.put("cheques", new JSONArray()); rs.put("newFirst", true);
+            String uid = "MEELANO-DAR-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 18) + "-" + currentAccountName();
+            rs.put("uid", uid.length() > 80 ? uid.substring(0, 80) : uid);
+        } catch (Exception ignored) { }
+        return rs;
+    }
+
+    private static double storeReceiptSum(JSONObject rs) {
+        if (rs == null) return 0;
+        double s = Math.max(0, rs.optDouble("cash", 0));
+        JSONArray rows = rs.optJSONArray("rows"), ch = rs.optJSONArray("cheques");
+        for (int i = 0; rows != null && i < rows.length(); i++) s += Math.max(0, rows.optJSONObject(i).optDouble("m", 0));
+        for (int i = 0; ch != null && i < ch.length(); i++) s += Math.max(0, ch.optJSONObject(i).optDouble("m", 0));
+        return s;
+    }
+
+    private static String storeKindName(String k) {
+        if ("pos".equals(k)) return "کارت‌خوان";
+        if ("trf".equals(k)) return "کارت به کارت / انتقال";
+        if ("hav".equals(k)) return "حواله بانکی";
+        if ("chk".equals(k)) return "چک";
+        return "نقد";
+    }
+
+    private static int storeKindIcon(String k) {
+        if ("pos".equals(k)) return R.drawable.mi_point_of_sale;
+        if ("trf".equals(k)) return R.drawable.mi_swap_horiz;
+        if ("hav".equals(k)) return R.drawable.mi_account_balance;
+        if ("chk".equals(k)) return R.drawable.mi_request_quote;
+        return R.drawable.mi_payments;
+    }
+
+    /** Opens the checkout page for the current cart (called instead of the visitor app's preview dialog). */
+    private void openStoreCheckout(JSONObject snap) {
+        storeCheckoutSnap = snap;
+        String cart = snap == null ? "" : snap.optString("clientUuid", "");
+        if (storeCheckout == null || !cart.equals(storeCheckout.optString("cart"))) {
+            storeCheckout = new JSONObject();
+            try {
+                storeCheckout.put("cart", cart); storeCheckout.put("vis", 0); storeCheckout.put("modpar", 0);
+                storeCheckout.put("barbari", 0); storeCheckout.put("anbar", 0); storeCheckout.put("receipt", newStoreReceiptState());
+            } catch (Exception ignored) { }
+        }
+        storeCheckoutRef = null;
+        showApp("store_checkout");
+    }
+
+    private void loadStoreCheckout() {
+        if (storeCheckoutSnap == null || storeCheckout == null || !cartHasItems()) { showApp("cart"); return; }
+        if (storeCheckoutRef != null) { renderStoreCheckout(); return; }
+        content.removeAllViews();
+        addLoading(content, "در حال آماده‌سازی فاکتور و دریافت…");
+        final long shmo = (long) parseNumber(storeCheckoutSnap.optString("customerCode", ""), 0);
+        runDb(() -> queryStoreCheckoutRef(shmo).toString(), new DbCallback() {
+            @Override public void ok(String body) {
+                try { storeCheckoutRef = new JSONObject(body); } catch (Exception e) { storeCheckoutRef = new JSONObject(); }
+                if ("store_checkout".equals(activePage)) renderStoreCheckout();
+            }
+            @Override public void fail(Exception e) { showPageError("فاکتور فروش", e, () -> loadStoreCheckout()); }
+        });
+    }
+
+    /** Lists the page needs from Atiran: visitors, bank accounts, cheque banks, terms, warehouses and open invoices. */
+    private JSONObject queryStoreCheckoutRef(long shmo) throws Exception {
+        if (designPreview) return storeCheckoutPreviewRef();
+        JSONObject o = new JSONObject();
+        try (Connection c = openConnection()) {
+            JSONObject staff = resolveStoreStaff(c);
+            int myVis = staff.optInt("vis", 0);
+            o.put("myVis", myVis);
+            o.put("today", atiranPersianToday(c));
+            o.put("creditDays", (int) atiranSetting(c, 15, 30));
+
+            // Only real visitors (and the store row) — never the whole personnel list.
+            JSONArray vis = new JSONArray(); JSONObject mine = null;
+            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT vis_rdf, ISNULL(CAST(vis_name AS nvarchar(250)),N'') FROM dbo.visitors ORDER BY vis_rdf")) {
+                while (r.next()) {
+                    int id = r.getInt(1);
+                    String raw = stringOr(r.getString(2), "").trim().replace('ي', 'ی').replace('ك', 'ک');
+                    String name = raw.contains("/") ? raw.substring(0, raw.indexOf('/')).trim() : raw;
+                    boolean visitor = (raw.contains("ویزیتور") || raw.contains("فروشگاه")) && !raw.contains("سیستم");
+                    if (id != myVis && !visitor) continue;
+                    JSONObject v = new JSONObject(); v.put("id", id); v.put("name", name.isEmpty() ? "ویزیتور " + id : name);
+                    if (id == myVis) { v.put("mine", true); mine = v; } else vis.put(v);
+                }
+            } catch (Exception ignored) { }
+            JSONArray visOut = new JSONArray();
+            if (mine != null) visOut.put(mine);
+            else if (myVis > 0) visOut.put(new JSONObject().put("id", myVis).put("name", storeStaffDisplay(staff.optString("key"))).put("mine", true));
+            for (int i = 0; i < vis.length(); i++) visOut.put(vis.get(i));
+            o.put("visitors", visOut);
+
+            JSONArray banks = new JSONArray();
+            String bankSql = "SELECT RDF, ISNULL(CAST(BANKNAME AS nvarchar(200)),N''), ISNULL(CAST(SHOBE AS nvarchar(200)),N''), ISNULL(CAST(OWNER AS nvarchar(200)),N''), ISNULL(CAST(SHHE AS nvarchar(200)),N''), ISNULL(CAST(IsPos AS int),0), ISNULL(CAST(IsCard AS int),0) FROM dbo.BANK WHERE ISNULL(Active,1)=1";
+            for (String sql : new String[]{bankSql + " AND ISNULL(BlackList,0)=0 ORDER BY RDF", bankSql + " ORDER BY RDF"}) {
+                try (Statement st = c.createStatement(); ResultSet r = st.executeQuery(sql)) {
+                    while (r.next()) {
+                        String bn = stringOr(r.getString(2), "").replace("#حذف شده#", "").trim(), br = stringOr(r.getString(3), "").trim(), ow = stringOr(r.getString(4), "").trim();
+                        JSONObject b = new JSONObject(); b.put("id", r.getInt(1));
+                        b.put("name", ("بانک " + bn + (br.isEmpty() ? "" : " • " + br) + (ow.isEmpty() ? "" : " • " + ow)).replace('ي', 'ی').replace('ك', 'ک'));
+                        b.put("acc", stringOr(r.getString(5), "").trim()); b.put("pos", r.getInt(6) == 1); b.put("card", r.getInt(7) == 1);
+                        banks.put(b);
+                    }
+                    break;
+                } catch (Exception ignored) { banks = new JSONArray(); }
+            }
+            o.put("banks", banks);
+
+            JSONArray bankNames = new JSONArray();
+            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT ISNULL(CAST(NAMES AS nvarchar(60)),N'') FROM dbo.BANK_NAME WHERE ISNULL(Active,1)=1 ORDER BY RDF")) {
+                while (r.next()) { String n = stringOr(r.getString(1), "").trim().replace('ي', 'ی').replace('ك', 'ک'); if (!n.isEmpty()) bankNames.put(n); }
+            } catch (Exception ignored) { }
+            if (bankNames.length() == 0) for (String n : new String[]{"ملی", "ملت", "صادرات", "تجارت", "سپه", "کشاورزی", "مسکن", "رفاه کارگران", "پاسارگاد", "سامان", "پارسیان", "اقتصاد نوین", "رسالت", "توسعه تعاون", "شهر", "دی", "سینا", "آینده"}) bankNames.put(n);
+            o.put("bankNames", bankNames);
+
+            JSONArray terms = new JSONArray();
+            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT ISNULL(CAST(Description AS nvarchar(200)),N''), ISNULL(TedRooz,0) FROM dbo.SaleFactTasvieh ORDER BY TasviehID")) {
+                while (r.next()) { String n = stringOr(r.getString(1), "").trim(); int days = r.getInt(2); if (days > 0) terms.put(new JSONObject().put("name", n.isEmpty() ? days + " روزه" : n).put("days", days)); }
+            } catch (Exception ignored) { }
+            o.put("terms", terms);
+
+            JSONArray anbars = new JSONArray();
+            try {
+                String nameCol = null;
+                try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT TOP (1) * FROM dbo.anbars")) {
+                    java.sql.ResultSetMetaData md = r.getMetaData();
+                    for (int i = 1; i <= md.getColumnCount(); i++) {
+                        String n = md.getColumnName(i), l = n.toLowerCase(Locale.US);
+                        if (!l.equals("rdf_anbar") && (l.contains("nam") || l.contains("onvan") || l.contains("title"))) { nameCol = n; break; }
+                    }
+                }
+                String label = nameCol == null ? "CAST(rdf_anbar AS nvarchar(20))" : "ISNULL(CAST([" + nameCol.replace("]", "") + "] AS nvarchar(200)),N'')";
+                try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT rdf_anbar, " + label + " FROM dbo.anbars WHERE ISNULL(Active,1)=1 ORDER BY CASE WHEN Base=1 THEN 0 ELSE 1 END, rdf_anbar")) {
+                    while (r.next()) anbars.put(new JSONObject().put("id", r.getInt(1)).put("name", stringOr(r.getString(2), "انبار " + r.getInt(1)).trim().replace('ي', 'ی').replace('ك', 'ک')));
+                }
+            } catch (Exception ignored) { }
+            o.put("anbars", anbars);
+
+            if (shmo > 0) addStoreOpenInvoices(c, shmo, o);
+        }
+        return o;
+    }
+
+    /**
+     * Customer balance and the unsettled invoices with their open part, found the way Atiran's FixTasvie
+     * does it: the balance is covered by the newest unsettled invoices first. Returned oldest first.
+     */
+    private void addStoreOpenInvoices(Connection c, long shmo, JSONObject o) throws Exception {
+        double man = 0; String name = "";
+        try (PreparedStatement ps = c.prepareStatement("SELECT ISNULL(man,0), ISNULL(CAST(MONAME AS nvarchar(500)),N'') FROM dbo.CUSTOMERS WHERE SHMO=?")) {
+            ps.setLong(1, shmo);
+            try (ResultSet r = ps.executeQuery()) { if (r.next()) { man = r.getDouble(1); name = stringOr(r.getString(2), "").trim(); } }
+        }
+        o.put("man", man); o.put("customerName", name); o.put("customerCode", shmo);
+        List<JSONObject> inv = new ArrayList<>();
+        double left = man;
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (300) shfacfo, ISNULL(CAST([date] AS nvarchar(10)),N''), ISNULL([all],0) FROM dbo.sailfact WHERE active='t' AND ISNULL(Deleted,0)=0 AND tasvieh='f' AND shmo=? ORDER BY [date] DESC, shfacfo DESC")) {
+            ps.setLong(1, shmo);
+            try (ResultSet r = ps.executeQuery()) {
+                while (r.next() && left > 0.5) {
+                    double amount = Math.max(0, r.getDouble(3)); if (amount <= 0) continue;
+                    double open = Math.min(amount, left); left -= amount;
+                    JSONObject f = new JSONObject(); f.put("no", r.getLong(1)); f.put("date", stringOr(r.getString(2), "").trim()); f.put("amount", amount); f.put("open", Math.round(open));
+                    inv.add(f);
+                }
+            }
+        }
+        Collections.reverse(inv);
+        JSONArray a = new JSONArray(); for (JSONObject f : inv) a.put(f);
+        o.put("invoices", a);
+    }
+
+    private JSONObject storeCheckoutPreviewRef() throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("myVis", 3); o.put("today", "1405/07/06"); o.put("creditDays", 30);
+        o.put("visitors", new JSONArray().put(new JSONObject().put("id", 3).put("name", "فاطمه محمودی").put("mine", true)).put(new JSONObject().put("id", 6).put("name", "جواد لطیفی")).put(new JSONObject().put("id", 7).put("name", "مصطفی خدایار")).put(new JSONObject().put("id", 9).put("name", "فروشگاه")));
+        o.put("banks", new JSONArray().put(new JSONObject().put("id", 6).put("name", "بانک تجارت • طالقانی").put("pos", true)).put(new JSONObject().put("id", 4).put("name", "بانک سپه • مرکزی").put("pos", true)).put(new JSONObject().put("id", 7).put("name", "بانک ملت • مرکزی").put("card", true)));
+        o.put("bankNames", new JSONArray().put("ملی").put("ملت").put("تجارت").put("سپه").put("پاسارگاد"));
+        o.put("terms", new JSONArray().put(new JSONObject().put("name", "نقدی").put("days", 3)).put(new JSONObject().put("name", "30 روزه").put("days", 30)));
+        o.put("anbars", new JSONArray().put(new JSONObject().put("id", 1).put("name", "انبار مرکزی")));
+        o.put("man", 86_500_000); o.put("customerName", "سوپر مارکت امید"); o.put("customerCode", 412);
+        o.put("invoices", new JSONArray().put(new JSONObject().put("no", 702).put("date", "1405/06/12").put("amount", 41_500_000).put("open", 26_500_000)).put(new JSONObject().put("no", 781).put("date", "1405/07/01").put("amount", 60_000_000).put("open", 60_000_000)));
+        return o;
+    }
+
+    /**
+     * Which invoices the money pays. Unsettled invoices with their open part (oldest first) plus the new
+     * invoice (no = 0); with «newFirst» the new invoice is paid before the old ones.
+     */
+    private static JSONArray storeAllocate(JSONArray open, double newTotal, double amount, boolean newFirst) {
+        List<JSONObject> order = new ArrayList<>();
+        JSONObject fresh = null;
+        try { if (newTotal > 0.5) { fresh = new JSONObject(); fresh.put("no", 0); fresh.put("date", ""); fresh.put("open", Math.round(newTotal)); } } catch (Exception ignored) { }
+        if (fresh != null && newFirst) order.add(fresh);
+        for (int i = 0; open != null && i < open.length(); i++) if (open.optJSONObject(i) != null) order.add(open.optJSONObject(i));
+        if (fresh != null && !newFirst) order.add(fresh);
+        JSONArray out = new JSONArray();
+        double left = amount;
+        for (JSONObject f : order) {
+            if (left <= 0.5) break;
+            double o = f.optDouble("open", 0); if (o <= 0.5) continue;
+            double m = Math.min(o, left); left -= m;
+            try { out.put(new JSONObject().put("no", f.optLong("no")).put("date", f.optString("date")).put("m", Math.round(m)).put("open", Math.round(o)).put("full", m >= o - 0.5)); } catch (Exception ignored) { }
+        }
+        return out;
+    }
+
+    private String storeAllocText(JSONArray alloc, long newNo) {
+        if (alloc == null || alloc.length() == 0) return "";
+        StringBuilder b = new StringBuilder("تسویه خودکار فاکتورها:");
+        for (int i = 0; i < alloc.length(); i++) {
+            JSONObject a = alloc.optJSONObject(i);
+            long no = a.optLong("no");
+            b.append("\n• ").append(no == 0 ? (newNo > 0 ? "فاکتور " + formatNumber(newNo) + " (همین فاکتور)" : "همین فاکتور") : "فاکتور " + formatNumber(no) + "، " + MeelanoCharts.fa(a.optString("date")))
+             .append(a.optBoolean("full") ? " ← کامل تسویه می‌شود" : " ← " + money(a.optDouble("m")) + " از " + money(a.optDouble("open")));
+        }
+        return b.toString();
+    }
+
+    private double storeCheckoutPayable() {
+        JSONObject snap = storeCheckoutSnap;
+        return (snap == null ? 0 : snap.optDouble("grandTotal", 0)) + Math.max(0, storeCheckout == null ? 0 : storeCheckout.optDouble("barbari", 0));
+    }
+
+    private JSONObject storeFindById(JSONArray list, int id) {
+        for (int i = 0; list != null && i < list.length(); i++) { JSONObject o = list.optJSONObject(i); if (o != null && o.optInt("id") == id) return o; }
+        return null;
+    }
+
+    private TextView storeFieldLabel(LinearLayout parent, String label) {
+        TextView t = text(label, 10.6f, MUTED, Typeface.BOLD);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(dp(2), dp(10), dp(2), dp(4));
+        parent.addView(t, lp);
+        return t;
+    }
+
+    private LinearLayout.LayoutParams storeFieldLp(int heightDp) { return new LinearLayout.LayoutParams(-1, dp(heightDp)); }
+
+    private void renderStoreCheckout() {
+        final JSONObject snap = storeCheckoutSnap, st = storeCheckout, ref = storeCheckoutRef;
+        if (snap == null || st == null || ref == null) { loadStoreCheckout(); return; }
+        content.removeAllViews();
+        try { if (st.optInt("vis") <= 0) st.put("vis", ref.optInt("myVis", 0)); } catch (Exception ignored) { }
+        addHero("ثبت فاکتور فروش", stringOr(snap.optString("customerName"), "مشتری") + " • فاکتور قطعی در آتیران");
+        Button back = secondaryButton(withIcon("↩", "بازگشت به سبد و اقلام"));
+        back.setOnClickListener(v -> showApp("cart"));
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(-1, dp(46)); bl.setMargins(dp(4), 0, dp(4), dp(10)); content.addView(back, bl);
+
+        JSONArray items = snap.optJSONArray("items");
+        LinearLayout ic = storeCard("اقلام فاکتور", formatNumber(items == null ? 0 : items.length()) + " ردیف • جمع اقلام " + money(snap.optDouble("subtotal", 0)), GOLD);
+        for (int i = 0; items != null && i < items.length() && i < 60; i++) {
+            JSONObject it = items.optJSONObject(i); if (it == null) continue;
+            boolean low = it.has("stock") && it.optDouble("qty", 0) > it.optDouble("stock", 0) + 1e-9;
+            addStoreRow(ic, it.optString("name"), formatNumber(it.optDouble("qty", 0)) + " × " + money(it.optDouble("price", 0)) + (low ? " • موجودی فقط " + formatNumber(it.optDouble("stock", 0)) : ""),
+                    compactMoney(cartItemGross(it) - cartItemDiscount(it)), low ? WARNING : GOLD, null);
+        }
+
+        // ---- invoice details
+        LinearLayout dc = storeCard("مشخصات فاکتور", "همان فیلدهای فاکتور فروش آتیران", INFO);
+        storeFieldLabel(dc, "ویزیتور فاکتور (پیش‌فرض: ویزیتور خودتان)");
+        JSONObject vsel = storeFindById(ref.optJSONArray("visitors"), st.optInt("vis"));
+        Button visBtn = secondaryButton(withIcon("♙", vsel == null ? "ویزیتور " + st.optInt("vis") : vsel.optString("name") + (vsel.optBoolean("mine") ? " (خودم)" : "")));
+        visBtn.setOnClickListener(v -> pickStoreFromList("ویزیتور فاکتور", ref.optJSONArray("visitors"), id -> { try { st.put("vis", id); } catch (Exception ignored) { } renderStoreCheckout(); }));
+        dc.addView(visBtn, storeFieldLp(48));
+
+        storeFieldLabel(dc, "مدت تسویه (سررسید فاکتور)");
+        addStoreTermChips(dc, st, ref, this::renderStoreCheckout);
+
+        storeFieldLabel(dc, "باربری / کرایه حمل (ریال)");
+        EditText barbari = numberInput("مثلاً ۲۵۰٬۰۰۰", st.optDouble("barbari", 0), false);
+        barbari.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { try { st.put("barbari", Math.max(0, parseNumber(s.toString(), 0))); } catch (Exception ignored) { } updateStoreCheckoutTotals(); }
+        });
+        dc.addView(barbari, storeFieldLp(48));
+
+        storeFieldLabel(dc, "تخفیف کل فاکتور (ریال)");
+        EditText disc = numberInput("تخفیف ریالی روی کل فاکتور", visitorCartGlobalDiscount, false);
+        disc.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) {
+                visitorCartGlobalDiscount = Math.max(0, parseNumber(s.toString(), 0));
+                storeCheckoutSnap = buildCartSnapshot(finalCartStatus());
+                updateStoreCheckoutTotals();
+            }
+        });
+        dc.addView(disc, storeFieldLp(48));
+
+        JSONArray anbars = ref.optJSONArray("anbars");
+        if (anbars != null && anbars.length() > 1) {
+            storeFieldLabel(dc, "انبار خروج کالا");
+            JSONObject asel = storeFindById(anbars, st.optInt("anbar"));
+            Button ab = secondaryButton(withIcon("◈", asel == null ? "انبار اصلی (پیش‌فرض آتیران)" : asel.optString("name")));
+            ab.setOnClickListener(v -> pickStoreFromList("انبار خروج کالا", anbars, id -> { try { st.put("anbar", id); } catch (Exception ignored) { } renderStoreCheckout(); }));
+            dc.addView(ab, storeFieldLp(48));
+        }
+
+        storeFieldLabel(dc, "توضیحات فاکتور");
+        EditText notes = input("شرح فاکتور (در آتیران کنار فاکتور می‌آید)", visitorCartNotes, false);
+        notes.setSingleLine(false); notes.setMinLines(2); notes.setGravity(Gravity.TOP | Gravity.START); notes.setPadding(dp(14), dp(10), dp(14), dp(10));
+        notes.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { visitorCartNotes = s.toString(); }
+        });
+        dc.addView(notes, new LinearLayout.LayoutParams(-1, -2));
+
+        // ---- receipt
+        JSONObject rs = st.optJSONObject("receipt");
+        if (rs == null) { rs = newStoreReceiptState(); try { st.put("receipt", rs); } catch (Exception ignored) { } }
+        final int receiptIndex = content.getChildCount();
+        addStoreReceiptEditor(rs, ref, true, this::renderStoreCheckout);
+        if (designPreview && storePreviewScrollToReceipt) {
+            storePreviewScrollToReceipt = false;
+            content.postDelayed(() -> {
+                try {
+                    View card = content.getChildAt(receiptIndex);
+                    if (card != null && content.getParent() instanceof ScrollView) ((ScrollView) content.getParent()).scrollTo(0, Math.max(0, card.getTop() - dp(8)));
+                } catch (Exception ignored) { }
+            }, 400);
+        }
+
+        // ---- totals + submit
+        LinearLayout tc2 = storeCard("جمع‌بندی", "مبلغ نهایی همان است که به بدهی مشتری اضافه می‌شود", SUCCESS);
+        storeCheckoutTotals = text("", 12.2f, TEXT, Typeface.BOLD);
+        storeCheckoutTotals.setLineSpacing(dp(4), 1f); storeCheckoutTotals.setTextDirection(View.TEXT_DIRECTION_RTL);
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(8), 0, 0); tc2.addView(storeCheckoutTotals, tp);
+        updateStoreCheckoutTotals();
+
+        final JSONObject frs = rs;
+        Button submit = primaryButton(withIcon("✓", storeReceiptSum(rs) > 0 ? "ثبت فاکتور قطعی و دریافت" : "ثبت فاکتور قطعی"));
+        submit.setOnClickListener(v -> confirmStoreCheckout(frs));
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(56)); sp.setMargins(dp(4), dp(2), dp(4), dp(14)); content.addView(submit, sp);
+        addDeveloperCredit(content);
+    }
+
+    private void updateStoreCheckoutTotals() {
+        if (storeCheckoutTotals == null || storeCheckoutSnap == null || storeCheckout == null) return;
+        JSONObject snap = storeCheckoutSnap;
+        double barbari = Math.max(0, storeCheckout.optDouble("barbari", 0));
+        double payable = storeCheckoutPayable();
+        JSONObject rs = storeCheckout.optJSONObject("receipt");
+        double got = storeReceiptSum(rs);
+        double man = storeCheckoutRef == null ? 0 : storeCheckoutRef.optDouble("man", 0);
+        StringBuilder b = new StringBuilder();
+        b.append("جمع اقلام: ").append(money(snap.optDouble("subtotal", 0)));
+        double disc = snap.optDouble("lineDiscount", 0) + snap.optDouble("globalDiscount", 0);
+        if (disc > 0) b.append("\nتخفیف: ").append(money(disc));
+        if (snap.optDouble("taxAmount", 0) > 0) b.append("\nمالیات: ").append(money(snap.optDouble("taxAmount", 0)));
+        if (barbari > 0) b.append("\nباربری: ").append(money(barbari));
+        b.append("\nمبلغ فاکتور: ").append(money(payable));
+        if (got > 0) b.append("\nدریافت همزمان: ").append(money(got));
+        b.append("\nمانده حساب مشتری بعد از ثبت: ").append(money(man + payable - got)).append(man + payable - got > 0.5 ? " (بدهکار)" : man + payable - got < -0.5 ? " (بستانکار)" : "");
+        storeCheckoutTotals.setText(b.toString());
+        if (storeCheckoutAlloc != null && rs != null) {
+            String t = storeAllocText(storeAllocate(storeCheckoutRef == null ? null : storeCheckoutRef.optJSONArray("invoices"), payable, got, rs.optBoolean("newFirst", true)), 0);
+            storeCheckoutAlloc.setText(t); storeCheckoutAlloc.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private interface StoreIdPick { void pick(int id); }
+
+    private void pickStoreFromList(String title, JSONArray list, StoreIdPick onPick) {
+        if (list == null || list.length() == 0) { showNotice("فهرستی از آتیران دریافت نشد.", false); return; }
+        String[] names = new String[list.length()];
+        for (int i = 0; i < list.length(); i++) { JSONObject o = list.optJSONObject(i); names[i] = o.optString("name") + (o.optBoolean("mine") ? " (خودم)" : ""); }
+        AlertDialog d = new MeelanoDialogBuilder().setTitle(title).setItems(names, (di, w) -> onPick.pick(list.optJSONObject(w).optInt("id"))).setNegativeButton("بستن", null).create();
+        d.setOnShowListener(x -> styleMeelanoDialog(d, INFO));
+        d.show();
+    }
+
+    private void addStoreTermChips(LinearLayout parent, JSONObject st, JSONObject ref, Runnable rerender) {
+        List<String[]> chips = new ArrayList<>();
+        chips.add(new String[]{"پیش‌فرض آتیران (" + formatNumber(ref.optInt("creditDays", 30)) + " روز)", "0"});
+        JSONArray terms = ref.optJSONArray("terms");
+        for (int i = 0; terms != null && i < terms.length(); i++) { JSONObject t = terms.optJSONObject(i); chips.add(new String[]{MeelanoCharts.fa(t.optString("name")) + " (" + formatNumber(t.optInt("days")) + " روز)", String.valueOf(t.optInt("days"))}); }
+        int cur = st.optInt("modpar", 0);
+        boolean known = false; for (String[] c : chips) if (Integer.parseInt(c[1]) == cur) known = true;
+        chips.add(new String[]{known ? "روز دلخواه…" : formatNumber(cur) + " روز (دلخواه)", "-1"});
+        LinearLayout row = null;
+        for (int i = 0; i < chips.size(); i++) {
+            if (row == null || row.getChildCount() >= 2) {
+                row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(3), 0, dp(3)); parent.addView(row, rp);
+            }
+            final String[] c = chips.get(i);
+            int days = Integer.parseInt(c[1]);
+            boolean on = days == cur || (days == -1 && !known);
+            TextView chip = pill(c[0], INFO, on); chip.setTextSize(fs(10.4f)); chip.setPadding(dp(8), dp(10), dp(8), dp(10)); chip.setSingleLine(false); chip.setMaxLines(2);
+            chip.setOnClickListener(v -> {
+                if (days >= 0) { try { st.put("modpar", days); } catch (Exception ignored) { } rerender.run(); return; }
+                EditText e = numberInput("تعداد روز تا سررسید", cur > 0 ? cur : 0, false);
+                storeFormDialog("مدت تسویه دلخواه", e, INFO, () -> {
+                    int dd = (int) Math.round(parseNumber(e.getText().toString(), -1));
+                    if (dd < 0 || dd > 720) return "تعداد روز را بین ۰ تا ۷۲۰ وارد کنید.";
+                    try { st.put("modpar", dd); } catch (Exception ignored) { }
+                    rerender.run();
+                    return null;
+                });
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(3), 0, dp(3), 0); row.addView(chip, lp);
+        }
+    }
+
+    /** Small form dialog that stays open while «onOk» returns an error message. */
+    private void storeFormDialog(String title, View body, int accent, StoreFormOk onOk) {
+        ScrollView sc = new ScrollView(this); styleVerticalScroll(sc);
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(16), dp(8), dp(16), dp(4));
+        if (body.getParent() == null) box.addView(body, new LinearLayout.LayoutParams(-1, body instanceof EditText ? dp(50) : -2));
+        final TextView error = text("", 11, DANGER, Typeface.BOLD);
+        error.setVisibility(View.GONE); error.setPadding(dp(10), dp(8), dp(10), dp(8));
+        error.setBackground(roundedStroke(alpha(DANGER, 18), 12, alpha(DANGER, 80)));
+        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, -2); ep.setMargins(0, dp(10), 0, 0); box.addView(error, ep);
+        sc.addView(box, new ScrollView.LayoutParams(-1, -2));
+        AlertDialog dlg = new MeelanoDialogBuilder().setTitle(title).setView(sc).setNegativeButton("انصراف", null).setPositiveButton("ثبت", null).create();
+        dlg.setOnShowListener(d -> {
+            styleMeelanoDialog(dlg, accent);
+            Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (ok != null) ok.setOnClickListener(v -> {
+                String err = onOk.run();
+                if (err == null) { dlg.dismiss(); return; }
+                error.setText(err); error.setVisibility(View.VISIBLE);
+                sc.post(() -> sc.smoothScrollTo(0, error.getBottom()));
+            });
+        });
+        dlg.show();
+    }
+
+    /** Receipt part: five big buttons (نقد، کارت‌خوان، کارت به کارت، حواله، چک), the list and the settled invoices. */
+    private void addStoreReceiptEditor(JSONObject rs, JSONObject ref, boolean withNewInvoice, Runnable rerender) {
+        double got = storeReceiptSum(rs);
+        LinearLayout rc = storeCard("دریافت از مشتری", got > 0 ? "جمع دریافت: " + money(got) : "اختیاری • مبلغی که مشتری همین حالا می‌پردازد را اضافه کنید", SUCCESS);
+        String[] kinds = {"cash", "pos", "trf", "hav", "chk"};
+        int[] accents = {SUCCESS, INFO, GOLD, GOLD_2, WARNING};
+        LinearLayout row = null;
+        for (int i = 0; i < kinds.length; i++) {
+            if (row == null || row.getChildCount() >= (i < 3 ? 3 : 2)) {
+                row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(8), 0, 0); rc.addView(row, rp);
+            }
+            final String k = kinds[i]; final int accent = accents[i];
+            LinearLayout tile = new LinearLayout(this); tile.setOrientation(LinearLayout.VERTICAL); tile.setGravity(Gravity.CENTER);
+            tile.setPadding(dp(6), dp(12), dp(6), dp(10));
+            tile.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 16 : 28), 18, alpha(accent, 90)));
+            ImageView ico = new ImageView(this); ico.setImageResource(storeKindIcon(k)); ico.setColorFilter(tc(accent));
+            tile.addView(ico, new LinearLayout.LayoutParams(dp(30), dp(30)));
+            TextView tl = text(storeKindName(k), 10.6f, TEXT, Typeface.BOLD); tl.setGravity(Gravity.CENTER); tl.setMaxLines(2);
+            LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2); tlp.setMargins(0, dp(5), 0, 0); tile.addView(tl, tlp);
+            tile.setClickable(true); tile.setFocusable(true); applyTouchFeedback(tile);
+            tile.setOnClickListener(v -> showStoreReceiptDialog(k, rs, ref, withNewInvoice, rerender));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(3), 0, dp(3), 0); row.addView(tile, lp);
+        }
+
+        if (rs.optDouble("cash", 0) > 0)
+            addStoreRow(rc, "نقد", "به صندوق • برای حذف بزنید", money(rs.optDouble("cash")), SUCCESS, () -> confirmStoreReceiptRemove("cash", -1, rs, rerender));
+        JSONArray rows = rs.optJSONArray("rows");
+        for (int i = 0; rows != null && i < rows.length(); i++) {
+            JSONObject p = rows.optJSONObject(i); final int ix = i;
+            String sub = p.optString("bn") + (p.optString("t").isEmpty() ? "" : " • پیگیری " + p.optString("t")) + (p.optString("d").isEmpty() ? "" : " • " + p.optString("d"));
+            addStoreRow(rc, storeKindName(p.optString("k")), sub, money(p.optDouble("m")), "pos".equals(p.optString("k")) ? INFO : GOLD, () -> confirmStoreReceiptRemove("row", ix, rs, rerender));
+        }
+        JSONArray ch = rs.optJSONArray("cheques");
+        for (int i = 0; ch != null && i < ch.length(); i++) {
+            JSONObject c = ch.optJSONObject(i); final int ix = i;
+            String sub = "بانک " + c.optString("bn") + " • شماره " + c.optString("s") + " • سررسید " + MeelanoCharts.fa(c.optString("sd"))
+                    + "\n" + (c.optInt("ct", 1) == 2 ? "الکترونیک" : "کاغذی") + (c.optString("sy").isEmpty() ? "" : " • صیاد " + c.optString("sy"))
+                    + " • " + (c.optBoolean("ri") ? "تأیید سامانه ✓" : "عدم تأیید سامانه");
+            addStoreRow(rc, "چک", sub, money(c.optDouble("m")), c.optBoolean("ri") ? WARNING : DANGER, () -> confirmStoreReceiptRemove("chk", ix, rs, rerender));
+        }
+
+        JSONArray open = ref == null ? null : ref.optJSONArray("invoices");
+        boolean anyOpen = open != null && open.length() > 0;
+        if (got > 0 && (withNewInvoice || anyOpen)) {
+            if (withNewInvoice && anyOpen) {
+                LinearLayout order = new LinearLayout(this); order.setOrientation(LinearLayout.HORIZONTAL);
+                boolean nf = rs.optBoolean("newFirst", true);
+                TextView a = pill("اول همین فاکتور", SUCCESS, nf), b = pill("اول فاکتورهای قدیمی", SUCCESS, !nf);
+                for (TextView t : new TextView[]{a, b}) { t.setTextSize(fs(10.4f)); t.setPadding(dp(8), dp(9), dp(8), dp(9)); }
+                a.setOnClickListener(v -> { try { rs.put("newFirst", true); } catch (Exception ignored) { } rerender.run(); });
+                b.setOnClickListener(v -> { try { rs.put("newFirst", false); } catch (Exception ignored) { } rerender.run(); });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(3), 0, dp(3), 0);
+                order.addView(a, lp); order.addView(b, new LinearLayout.LayoutParams(lp));
+                LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(-1, -2); op.setMargins(0, dp(12), 0, 0); rc.addView(order, op);
+            }
+            storeCheckoutAlloc = text("", 10.8f, TEXT, Typeface.BOLD);
+            storeCheckoutAlloc.setLineSpacing(dp(3), 1f); storeCheckoutAlloc.setTextDirection(View.TEXT_DIRECTION_RTL);
+            storeCheckoutAlloc.setPadding(dp(10), dp(8), dp(10), dp(8));
+            storeCheckoutAlloc.setBackground(roundedStroke(alpha(SUCCESS, isLightTheme() ? 12 : 22), 14, alpha(SUCCESS, 60)));
+            LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(8), 0, 0); rc.addView(storeCheckoutAlloc, ap);
+            double newTotal = withNewInvoice ? storeCheckoutPayable() : 0;
+            String t = storeAllocText(storeAllocate(open, newTotal, got, withNewInvoice && rs.optBoolean("newFirst", true)), 0);
+            storeCheckoutAlloc.setText(t); storeCheckoutAlloc.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE);
+        } else storeCheckoutAlloc = null;
+    }
+
+    private void confirmStoreReceiptRemove(String what, int ix, JSONObject rs, Runnable rerender) {
+        AlertDialog d = new MeelanoDialogBuilder().setTitle("حذف از دریافت").setMessage("این مورد از دریافت حذف شود؟")
+                .setNegativeButton("خیر", null).setPositiveButton("حذف", (di, w) -> {
+                    try {
+                        if ("cash".equals(what)) rs.put("cash", 0);
+                        else if ("row".equals(what)) rs.optJSONArray("rows").remove(ix);
+                        else rs.optJSONArray("cheques").remove(ix);
+                    } catch (Exception ignored) { }
+                    rerender.run();
+                }).create();
+        d.setOnShowListener(x -> styleMeelanoDialog(d, DANGER));
+        d.show();
+    }
+
+    private Button storeChoiceButton(String label, int accent) {
+        Button b = secondaryButton(label); b.setAllCaps(false); b.setTextColor(tc(accent));
+        return b;
+    }
+
+    /** One receipt line: cash, card reader, card-to-card / transfer, havaleh or a cheque. */
+    private void showStoreReceiptDialog(String kind, JSONObject rs, JSONObject ref, boolean withNewInvoice, Runnable rerender) {
+        double payable = withNewInvoice ? storeCheckoutPayable() : Math.max(0, ref == null ? 0 : ref.optDouble("man", 0));
+        double remain = Math.max(0, payable - storeReceiptSum(rs) + ("cash".equals(kind) ? rs.optDouble("cash", 0) : 0));
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL);
+        storeFieldLabel(box, "مبلغ (ریال)");
+        EditText amount = numberInput("مبلغ", "cash".equals(kind) ? rs.optDouble("cash", 0) : 0, false);
+        box.addView(amount, storeFieldLp(50));
+        if (remain > 0.5) {
+            Button all = storeChoiceButton(withIcon("✓", "کل مانده: " + money(remain)), SUCCESS);
+            all.setOnClickListener(v -> amount.setText(plainNumber(Math.round(remain))));
+            LinearLayout.LayoutParams lp = storeFieldLp(42); lp.setMargins(0, dp(6), 0, 0); box.addView(all, lp);
+        }
+        final int[] bank = {0};
+        EditText track = null, desc = null;
+        final EditText[] chk = new EditText[5];
+        final String[] chkBank = {""};
+        final int[] chkType = {1};
+        final boolean[] sayadOk = {false};
+        if (!"cash".equals(kind) && !"chk".equals(kind)) {
+            JSONArray banks = ref == null ? null : ref.optJSONArray("banks");
+            for (int i = 0; banks != null && i < banks.length() && bank[0] == 0; i++) {
+                JSONObject b = banks.optJSONObject(i);
+                if ("pos".equals(kind) ? b.optBoolean("pos") : b.optBoolean("card")) bank[0] = b.optInt("id");
+            }
+            if (bank[0] == 0 && banks != null && banks.length() > 0) bank[0] = banks.optJSONObject(0).optInt("id");
+            JSONArray rows = rs.optJSONArray("rows");
+            for (int i = rows == null ? -1 : rows.length() - 1; i >= 0; i--) if (kind.equals(rows.optJSONObject(i).optString("k"))) { bank[0] = rows.optJSONObject(i).optInt("b"); break; }
+            storeFieldLabel(box, "pos".equals(kind) ? "حساب بانکی کارت‌خوان" : "به حساب بانکی");
+            JSONObject bsel = storeFindById(banks, bank[0]);
+            Button bb = storeChoiceButton(withIcon("◉", bsel == null ? "انتخاب حساب" : bsel.optString("name")), INFO);
+            bb.setOnClickListener(v -> pickStoreFromList("حساب بانکی", banks, id -> { bank[0] = id; JSONObject s = storeFindById(banks, id); bb.setText(withIcon("◉", s == null ? "حساب " + id : s.optString("name"))); }));
+            box.addView(bb, storeFieldLp(48));
+            storeFieldLabel(box, "pos".equals(kind) ? "شماره پیگیری / مرجع (اختیاری)" : "hav".equals(kind) ? "شماره حواله" : "شماره پیگیری (اختیاری)");
+            track = input("شماره", "", false); box.addView(track, storeFieldLp(48));
+            if (!"pos".equals(kind)) {
+                storeFieldLabel(box, "trf".equals(kind) ? "از کارت / حساب (اختیاری)" : "توضیح (اختیاری)");
+                desc = input("trf".equals(kind) ? "مثلاً چهار رقم آخر کارت مشتری" : "توضیح", "", false); box.addView(desc, storeFieldLp(48));
+            }
+        }
+        if ("chk".equals(kind)) {
+            storeFieldLabel(box, "شماره چک (سریال)");
+            chk[0] = input("مثلاً ۷۱۱۹۶۰", "", false); chk[0].setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(chk[0], storeFieldLp(48));
+            storeFieldLabel(box, "تاریخ سررسید");
+            String today = ref == null ? "" : ref.optString("today");
+            chk[1] = input("۱۴۰۵/۰۸/۱۵", "", false); box.addView(chk[1], storeFieldLp(48));
+            if (!today.isEmpty()) {
+                LinearLayout quick = new LinearLayout(this); quick.setOrientation(LinearLayout.HORIZONTAL);
+                int[] offs = {0, 30, 60, 90}; String[] ol = {"امروز", "یک ماه", "دو ماه", "سه ماه"};
+                for (int i = 0; i < offs.length; i++) {
+                    final int off = offs[i];
+                    TextView q = pill(ol[i], WARNING, false); q.setPadding(dp(6), dp(7), dp(6), dp(7));
+                    q.setOnClickListener(v -> chk[1].setText(MeelanoJalali.addDays(today, off)));
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(2), dp(5), dp(2), 0); quick.addView(q, lp);
+                }
+                box.addView(quick, new LinearLayout.LayoutParams(-1, -2));
+            }
+            storeFieldLabel(box, "بانک صادرکننده");
+            JSONArray names = ref == null ? new JSONArray() : ref.optJSONArray("bankNames");
+            Button bn = storeChoiceButton(withIcon("◉", "انتخاب بانک"), INFO);
+            bn.setOnClickListener(v -> {
+                String[] arr = new String[names == null ? 0 : names.length()];
+                for (int i = 0; i < arr.length; i++) arr[i] = names.optString(i);
+                AlertDialog d = new MeelanoDialogBuilder().setTitle("بانک چک").setItems(arr, (di, w) -> { chkBank[0] = arr[w]; bn.setText(withIcon("◉", "بانک " + arr[w])); }).setNegativeButton("بستن", null).create();
+                d.setOnShowListener(x -> styleMeelanoDialog(d, INFO)); d.show();
+            });
+            box.addView(bn, storeFieldLp(48));
+            storeFieldLabel(box, "شعبه (اختیاری)");
+            chk[2] = input("نام یا کد شعبه", "", false); box.addView(chk[2], storeFieldLp(48));
+            storeFieldLabel(box, "شناسه صیاد ۱۶ رقمی");
+            chk[3] = input("شناسه ۱۶ رقمی روی چک", "", false); chk[3].setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(chk[3], storeFieldLp(48));
+            storeFieldLabel(box, "وضعیت ثبت در سامانه صیاد");
+            LinearLayout sy = new LinearLayout(this); sy.setOrientation(LinearLayout.HORIZONTAL);
+            TextView yes = pill("تأیید سامانه", SUCCESS, false), no = pill("عدم تأیید سامانه", DANGER, true);
+            for (TextView t : new TextView[]{yes, no}) { t.setTextSize(fs(10.6f)); t.setPadding(dp(8), dp(10), dp(8), dp(10)); }
+            yes.setOnClickListener(v -> { sayadOk[0] = true; yes.setBackground(rounded(tc(SUCCESS), 999)); yes.setTextColor(onColorFor(SUCCESS)); no.setBackground(roundedStroke(alpha(DANGER, 16), 999, alpha(DANGER, 90))); no.setTextColor(tc(DANGER)); });
+            no.setOnClickListener(v -> { sayadOk[0] = false; no.setBackground(rounded(tc(DANGER), 999)); no.setTextColor(onColorFor(DANGER)); yes.setBackground(roundedStroke(alpha(SUCCESS, 16), 999, alpha(SUCCESS, 90))); yes.setTextColor(tc(SUCCESS)); });
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, -2, 1f); slp.setMargins(dp(3), 0, dp(3), 0);
+            sy.addView(yes, slp); sy.addView(no, new LinearLayout.LayoutParams(slp));
+            box.addView(sy, new LinearLayout.LayoutParams(-1, -2));
+            storeFieldLabel(box, "نوع چک");
+            LinearLayout ty = new LinearLayout(this); ty.setOrientation(LinearLayout.HORIZONTAL);
+            TextView paper = pill("کاغذی", INFO, true), ele = pill("الکترونیک", INFO, false);
+            for (TextView t : new TextView[]{paper, ele}) { t.setTextSize(fs(10.6f)); t.setPadding(dp(8), dp(10), dp(8), dp(10)); }
+            paper.setOnClickListener(v -> { chkType[0] = 1; paper.setBackground(rounded(tc(INFO), 999)); paper.setTextColor(onColorFor(INFO)); ele.setBackground(roundedStroke(alpha(INFO, 16), 999, alpha(INFO, 90))); ele.setTextColor(tc(INFO)); });
+            ele.setOnClickListener(v -> { chkType[0] = 2; ele.setBackground(rounded(tc(INFO), 999)); ele.setTextColor(onColorFor(INFO)); paper.setBackground(roundedStroke(alpha(INFO, 16), 999, alpha(INFO, 90))); paper.setTextColor(tc(INFO)); });
+            ty.addView(paper, slp); ty.addView(ele, new LinearLayout.LayoutParams(slp));
+            box.addView(ty, new LinearLayout.LayoutParams(-1, -2));
+            storeFieldLabel(box, "شماره حساب چک (اختیاری)");
+            chk[4] = input("شماره حساب صادرکننده", "", false); box.addView(chk[4], storeFieldLp(48));
+        }
+        final EditText fTrack = track, fDesc = desc;
+        storeFormDialog(storeKindName(kind), box, "chk".equals(kind) ? WARNING : SUCCESS, () -> {
+            double m = Math.round(parseNumber(amount.getText().toString(), 0));
+            if (m <= 0 && !"cash".equals(kind)) return "مبلغ را وارد کنید.";
+            try {
+                if ("cash".equals(kind)) { rs.put("cash", Math.max(0, m)); }
+                else if ("chk".equals(kind)) {
+                    String serial = normalizeDigits(chk[0].getText().toString()).trim();
+                    String due = normalizeDigits(chk[1].getText().toString()).trim().replace('-', '/');
+                    String sayad = normalizeDigits(chk[3].getText().toString()).replace(" ", "").trim();
+                    if (serial.isEmpty()) return "شماره چک را وارد کنید.";
+                    if (MeelanoJalali.parse(due) < 0) return "تاریخ سررسید را به شکل ۱۴۰۵/۰۸/۱۵ وارد کنید.";
+                    due = MeelanoJalali.addDays(due, 0);
+                    if (chkBank[0].isEmpty()) return "بانک چک را انتخاب کنید.";
+                    if (!sayad.isEmpty() && !sayad.matches("\\d{16}")) return "شناسه صیاد باید ۱۶ رقم باشد.";
+                    if (chkType[0] == 2 && sayad.isEmpty()) return "برای چک الکترونیک، شناسه صیاد لازم است.";
+                    JSONObject c = new JSONObject();
+                    c.put("m", m); c.put("s", serial); c.put("sd", due); c.put("bn", chkBank[0]); c.put("br", chk[2].getText().toString().trim());
+                    c.put("hs", normalizeDigits(chk[4].getText().toString()).trim()); c.put("sy", sayad); c.put("ri", sayadOk[0]); c.put("ct", chkType[0]);
+                    rs.optJSONArray("cheques").put(c);
+                } else {
+                    if (bank[0] <= 0) return "حساب بانکی را انتخاب کنید.";
+                    String t = fTrack == null ? "" : normalizeDigits(fTrack.getText().toString()).trim();
+                    if ("hav".equals(kind) && t.isEmpty()) return "شماره حواله را وارد کنید.";
+                    JSONObject bsel = storeFindById(ref == null ? null : ref.optJSONArray("banks"), bank[0]);
+                    String d = fDesc == null ? "" : fDesc.getText().toString().trim();
+                    if ("trf".equals(kind)) d = "کارت به کارت" + (d.isEmpty() ? "" : " از " + d);
+                    JSONObject p = new JSONObject();
+                    p.put("k", kind); p.put("m", m); p.put("b", bank[0]); p.put("bn", bsel == null ? "" : bsel.optString("name")); p.put("t", t); p.put("d", d);
+                    rs.optJSONArray("rows").put(p);
+                }
+            } catch (Exception e) { return "ثبت نشد: " + e.getMessage(); }
+            rerender.run();
+            return null;
+        });
+    }
+
+    private void confirmStoreCheckout(JSONObject rs) {
+        if (storeCheckoutSending) return;
+        double got = storeReceiptSum(rs), payable = storeCheckoutPayable();
+        String m = "فاکتور قطعی به مبلغ " + money(payable) + " برای «" + storeCheckoutSnap.optString("customerName") + "» ثبت می‌شود"
+                + (got > 0 ? " و قبض دریافت به مبلغ " + money(got) + " هم صادر می‌شود." : ".")
+                + "\nاز موجودی انبار کم و به بدهی مشتری اضافه می‌شود.";
+        AlertDialog d = new MeelanoDialogBuilder().setTitle("ثبت نهایی").setMessage(m).setNegativeButton("بازگشت", null)
+                .setPositiveButton("ثبت", (di, w) -> submitStoreCheckout(rs)).create();
+        d.setOnShowListener(x -> styleMeelanoDialog(d, SUCCESS));
+        d.show();
+    }
+
+    private void submitStoreCheckout(JSONObject rs) {
+        if (designPreview) { showNotice("در پیش‌نمایش، فاکتور ارسال نمی‌شود.", false); return; }
+        if (storeCheckoutSending) return;
+        final JSONObject snap = buildCartSnapshot(finalCartStatus());
+        final JSONObject st = storeCheckout;
+        final JSONArray open = storeCheckoutRef == null ? null : storeCheckoutRef.optJSONArray("invoices");
+        try {
+            snap.put("storeVis", st.optInt("vis")); snap.put("storeModpar", st.optInt("modpar")); snap.put("storeBarbari", Math.max(0, st.optDouble("barbari", 0)));
+            snap.put("storeAnbar", st.optInt("anbar"));
+        } catch (Exception ignored) { }
+        storeCheckoutSending = true;
+        showNotice("در حال ثبت فاکتور فروش در آتیران…", false);
+        runDb(() -> {
+            JSONObject inv = submitStoreInvoice(snap);
+            JSONObject out = new JSONObject(); out.put("invoice", inv);
+            if (storeReceiptSum(rs) > 0) {
+                long no = inv.optLong("no");
+                JSONArray alloc = storeAllocate(open, inv.optDouble("total", 0), storeReceiptSum(rs), rs.optBoolean("newFirst", true));
+                try { out.put("receipt", submitStoreReceipt((long) parseNumber(snap.optString("customerCode"), 0), rs, alloc, no, "بابت فاکتور " + no)); }
+                catch (Exception e) { out.put("receiptError", e instanceof DbException ? e.getMessage() : shortError(e)); }
+                out.put("alloc", alloc);
+            }
+            return out.toString();
+        }, new DbCallback() {
+            @Override public void ok(String body) {
+                storeCheckoutSending = false;
+                try {
+                    JSONObject r = new JSONObject(body);
+                    removeLocalDraft(snap.optString("clientUuid", ""));
+                    if (prefs != null) prefs.edit().remove(KEY_CART_DRAFT).apply();
+                    resetCartState();
+                    if (r.has("receiptError")) {
+                        // The invoice is in Atiran; keep the receipt (same unique id) so it can be sent again safely.
+                        storeReceiptCustomer = new JSONObject().put("code", snap.optString("customerCode")).put("name", snap.optString("customerName"));
+                        storeReceiptState = rs; storeReceiptRef = null; storeReceiptNote = "بابت فاکتور " + r.optJSONObject("invoice").optLong("no");
+                    }
+                    storeCheckout = null; storeCheckoutSnap = null; storeCheckoutRef = null;
+                    showStoreCheckoutDoneDialog(r);
+                } catch (Exception e) { showNotice("فاکتور ثبت شد.", true); }
+            }
+            @Override public void fail(Exception e) {
+                storeCheckoutSending = false;
+                // Nothing was registered (or the same unique id will return the first invoice), so retrying is safe.
+                showNotice("فاکتور ثبت نشد: " + shortError(e), true, "دوباره", () -> submitStoreCheckout(rs));
+            }
+        });
+    }
+
+    private void showStoreCheckoutDoneDialog(JSONObject r) {
+        JSONObject inv = r.optJSONObject("invoice"), rec = r.optJSONObject("receipt");
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(16), dp(14), dp(16), dp(6));
+        ImageView ok = new ImageView(this); ok.setImageResource(r.has("receiptError") ? R.drawable.mi_warning : R.drawable.mi_check_circle); ok.setColorFilter(tc(r.has("receiptError") ? WARNING : SUCCESS));
+        box.addView(ok, new LinearLayout.LayoutParams(-1, dp(58)));
+        TextView t = text(rec != null ? "فاکتور و دریافت ثبت شد" : "فاکتور فروش قطعی شد", 17, TEXT, Typeface.BOLD); t.setGravity(Gravity.CENTER); box.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        StringBuilder m = new StringBuilder(inv == null ? "" : storeInvoiceMessage(inv));
+        if (rec != null) m.append("\n\n").append(storeReceiptMessage(rec)).append(r.optJSONArray("alloc") == null ? "" : "\n" + storeAllocText(r.optJSONArray("alloc"), inv == null ? 0 : inv.optLong("no")));
+        if (r.has("receiptError")) m.append("\n\nدریافت ثبت نشد: ").append(r.optString("receiptError")).append("\nفاکتور ثبت شده است؛ دریافت را از «ثبت دوباره دریافت» بفرستید (دوبار ثبت نمی‌شود).");
+        TextView mt = text(m.toString(), 11.2f, MUTED, Typeface.BOLD); mt.setGravity(Gravity.CENTER); mt.setLineSpacing(dp(3), 1f);
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, -2); mp.setMargins(0, dp(8), 0, 0); box.addView(mt, mp);
+        ScrollView sc = new ScrollView(this); sc.addView(box);
+        MeelanoDialogBuilder b = new MeelanoDialogBuilder().setView(sc);
+        if (r.has("receiptError")) b.setPositiveButton("ثبت دوباره دریافت", (d, w) -> showApp("store_receipt")).setNegativeButton("خانه", (d, w) -> showApp("store_home"));
+        else b.setPositiveButton("فاکتور جدید", (d, w) -> showApp("cart")).setNegativeButton("خانه", (d, w) -> showApp("store_home"));
+        AlertDialog dlg = b.create();
+        dlg.setOnShowListener(d -> styleMeelanoDialog(dlg, r.has("receiptError") ? WARNING : SUCCESS));
+        dlg.show();
+    }
+
+    private String storeReceiptMessage(JSONObject r) {
+        String m = (r.optBoolean("duplicate") ? "این دریافت قبلاً ثبت شده بود. " : "") + "قبض دریافت شماره " + formatNumber(r.optLong("ghno")) + " به مبلغ " + money(r.optDouble("total")) + " در آتیران ثبت شد."
+                + "\nمانده جدید مشتری: " + money(r.optDouble("man"));
+        if (!r.optString("note").isEmpty()) m += "\nسند حسابداری دریافت ساخته نشد: " + r.optString("note");
+        return m;
+    }
+
+    /** Runs res/raw/atiran_receipt.sql (Atiran's Daryaft → PosDetails → TemplateDaryaftCheque → settlement). */
+    private JSONObject submitStoreReceipt(long shmo, JSONObject rs, JSONArray alloc, long newNo, String desc) throws Exception {
+        if (shmo <= 0) throw new DbException("مشتری دریافت مشخص نیست.");
+        if (storeReceiptSum(rs) <= 0) throw new DbException("مبلغ دریافت صفر است.");
+        StringBuilder x = new StringBuilder("<r>");
+        JSONArray rows = rs.optJSONArray("rows"), ch = rs.optJSONArray("cheques");
+        for (int i = 0; rows != null && i < rows.length(); i++) {
+            JSONObject p = rows.optJSONObject(i);
+            x.append("<p k=\"").append(xmlAttr(p.optString("k"))).append("\" m=\"").append(Math.round(p.optDouble("m"))).append("\" b=\"").append(p.optInt("b"))
+             .append("\" t=\"").append(xmlAttr(atiranText(p.optString("t"), 90))).append("\" d=\"").append(xmlAttr(atiranText(p.optString("d"), 280))).append("\"/>");
+        }
+        for (int i = 0; ch != null && i < ch.length(); i++) {
+            JSONObject c = ch.optJSONObject(i);
+            x.append("<c m=\"").append(Math.round(c.optDouble("m"))).append("\" s=\"").append(xmlAttr(atiranText(c.optString("s"), 45))).append("\" sd=\"").append(xmlAttr(c.optString("sd")))
+             .append("\" bn=\"").append(xmlAttr(atiranText(c.optString("bn"), 90))).append("\" br=\"").append(xmlAttr(atiranText(c.optString("br"), 190)))
+             .append("\" hs=\"").append(xmlAttr(atiranText(c.optString("hs"), 45))).append("\" sy=\"").append(xmlAttr(c.optString("sy")))
+             .append("\" ri=\"").append(c.optBoolean("ri") ? 1 : 0).append("\" ct=\"").append(c.optInt("ct", 1)).append("\" d=\"\"/>");
+        }
+        for (int i = 0; alloc != null && i < alloc.length(); i++) {
+            JSONObject a = alloc.optJSONObject(i);
+            long no = a.optLong("no") == 0 ? newNo : a.optLong("no");
+            if (no > 0 && a.optDouble("m") > 0) x.append("<f n=\"").append(no).append("\" m=\"").append(Math.round(a.optDouble("m"))).append("\"/>");
+        }
+        x.append("</r>");
+        try (Connection c = openConnection()) {
+            JSONObject staff = resolveStoreStaff(c);
+            try (PreparedStatement ps = c.prepareStatement(atiranRawSql(R.raw.atiran_receipt))) {
+                int i = 1;
+                ps.setInt(i++, (int) shmo);
+                ps.setInt(i++, staff.optInt("uid", 1));
+                ps.setString(i++, staff.optString("user", ""));
+                ps.setString(i++, atiranPersianToday(c));
+                ps.setString(i++, atiranText(stringOr(desc, ""), 440));
+                ps.setString(i++, rs.optString("uid"));
+                ps.setDouble(i++, Math.max(0, Math.round(rs.optDouble("cash", 0))));
+                ps.setString(i, x.toString());
+                boolean isResult = ps.execute();
+                for (int guard = 0; guard < 256; guard++) {
+                    if (isResult) {
+                        try (ResultSet r = ps.getResultSet()) {
+                            java.sql.ResultSetMetaData md = r.getMetaData();
+                            if (md.getColumnCount() >= 6 && "ghno".equalsIgnoreCase(md.getColumnLabel(1)) && r.next()) {
+                                JSONObject o = new JSONObject();
+                                o.put("ghno", r.getLong(1)); o.put("duplicate", r.getInt(2) == 1); o.put("man", r.getDouble(3));
+                                o.put("total", r.getDouble(4)); o.put("settled", r.getInt(5)); o.put("note", stringOr(r.getString(6), ""));
+                                storeDataCache = null;
+                                return o;
+                            }
+                        }
+                    } else if (ps.getUpdateCount() == -1) break;
+                    isResult = ps.getMoreResults();
+                }
+            }
+        }
+        throw new DbException("آتیران شماره قبض دریافت را برنگرداند.");
+    }
+
+    // ---------------------------------------------------------------- «دریافت وجه» page (receipt without a new invoice)
+    private void openStoreReceipt(JSONObject customer) {
+        if (customer != null) { storeReceiptCustomer = customer; storeReceiptState = newStoreReceiptState(); storeReceiptRef = null; storeReceiptNote = ""; }
+        showApp("store_receipt");
+    }
+
+    private void renderStoreReceiptPage() {
+        content.removeAllViews();
+        if (storeReceiptCustomer == null) { renderStoreReceiptCustomerSearch(""); return; }
+        long shmo = (long) parseNumber(storeReceiptCustomer.optString("code"), 0);
+        if (storeReceiptRef == null || storeReceiptRef.optLong("customerCode") != shmo) {
+            addLoading(content, "در حال دریافت مانده و فاکتورهای باز مشتری…");
+            runDb(() -> queryStoreCheckoutRef(shmo).toString(), new DbCallback() {
+                @Override public void ok(String body) {
+                    try { storeReceiptRef = new JSONObject(body); if (designPreview) storeReceiptRef.put("customerCode", shmo); } catch (Exception e) { storeReceiptRef = new JSONObject(); }
+                    if ("store_receipt".equals(activePage)) renderStoreReceiptPage();
+                }
+                @Override public void fail(Exception e) { showPageError("دریافت وجه", e, () -> renderStoreReceiptPage()); }
+            });
+            return;
+        }
+        if (storeReceiptState == null) storeReceiptState = newStoreReceiptState();
+        JSONObject ref = storeReceiptRef, rs = storeReceiptState;
+        double man = ref.optDouble("man", 0);
+        addHero("دریافت وجه", stringOr(ref.optString("customerName"), storeReceiptCustomer.optString("name")) + " • قبض دریافت آتیران");
+        LinearLayout top = new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL);
+        Button change = secondaryButton(withIcon("⌕", "مشتری دیگر"));
+        change.setOnClickListener(v -> { storeReceiptCustomer = null; storeReceiptRef = null; storeReceiptState = null; renderStoreReceiptPage(); });
+        top.addView(change, weightedButtonLp());
+        LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(-1, dp(46)); tl.setMargins(dp(2), 0, dp(2), dp(10)); content.addView(top, tl);
+
+        JSONArray open = ref.optJSONArray("invoices");
+        LinearLayout sc = storeCard("مانده حساب: " + money(Math.abs(man)) + (man > 0.5 ? " بدهکار" : man < -0.5 ? " بستانکار" : ""), formatNumber(open == null ? 0 : open.length()) + " فاکتور تسویه‌نشده", man > 0.5 ? DANGER : SUCCESS);
+        for (int i = 0; open != null && i < open.length() && i < 12; i++) {
+            JSONObject f = open.optJSONObject(i);
+            addStoreRow(sc, "فاکتور " + formatNumber(f.optLong("no")), MeelanoCharts.fa(f.optString("date")) + " • مبلغ فاکتور " + money(f.optDouble("amount")), "باز: " + compactMoney(f.optDouble("open")), WARNING, null);
+        }
+
+        addStoreReceiptEditor(rs, ref, false, this::renderStoreReceiptPage);
+
+        LinearLayout nc = storeCard("شرح دریافت", "اختیاری • در آتیران کنار قبض می‌آید", INFO);
+        EditText note = input("مثلاً بابت فاکتورهای مهر", storeReceiptNote, false);
+        note.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { storeReceiptNote = s.toString(); }
+        });
+        nc.addView(note, storeFieldLp(48));
+
+        double got = storeReceiptSum(rs);
+        Button send = primaryButton(withIcon("✓", got > 0 ? "ثبت قبض دریافت " + money(got) : "ابتدا مبلغ دریافت را اضافه کنید"));
+        send.setEnabled(got > 0);
+        send.setOnClickListener(v -> {
+            AlertDialog d = new MeelanoDialogBuilder().setTitle("ثبت قبض دریافت").setMessage("قبض دریافت به مبلغ " + money(got) + " برای «" + ref.optString("customerName") + "» در آتیران ثبت شود؟")
+                    .setNegativeButton("بازگشت", null).setPositiveButton("ثبت", (di, w) -> submitStoreReceiptPage()).create();
+            d.setOnShowListener(x -> styleMeelanoDialog(d, SUCCESS)); d.show();
+        });
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(56)); sp.setMargins(dp(4), dp(2), dp(4), dp(14)); content.addView(send, sp);
+        addDeveloperCredit(content);
+    }
+
+    private void submitStoreReceiptPage() {
+        if (designPreview) { showNotice("در پیش‌نمایش ثبت نمی‌شود.", false); return; }
+        if (storeCheckoutSending || storeReceiptCustomer == null || storeReceiptState == null) return;
+        final JSONObject rs = storeReceiptState, ref = storeReceiptRef;
+        final long shmo = (long) parseNumber(storeReceiptCustomer.optString("code"), 0);
+        final String note = storeReceiptNote;
+        storeCheckoutSending = true;
+        showNotice("در حال ثبت قبض دریافت در آتیران…", false);
+        runDb(() -> {
+            JSONArray alloc = storeAllocate(ref == null ? null : ref.optJSONArray("invoices"), 0, storeReceiptSum(rs), false);
+            JSONObject r = submitStoreReceipt(shmo, rs, alloc, 0, note);
+            r.put("alloc", alloc);
+            return r.toString();
+        }, new DbCallback() {
+            @Override public void ok(String body) {
+                storeCheckoutSending = false;
+                try {
+                    JSONObject r = new JSONObject(body);
+                    storeReceiptState = null; storeReceiptRef = null; storeReceiptNote = "";
+                    AlertDialog d = new MeelanoDialogBuilder().setTitle("قبض دریافت ثبت شد").setMessage(storeReceiptMessage(r) + "\n" + storeAllocText(r.optJSONArray("alloc"), 0))
+                            .setPositiveButton("دریافت دیگر", (di, w) -> { storeReceiptCustomer = null; showApp("store_receipt"); })
+                            .setNegativeButton("خانه", (di, w) -> showApp("store_home")).create();
+                    d.setOnShowListener(x -> styleMeelanoDialog(d, SUCCESS)); d.show();
+                    renderStoreReceiptPage();
+                } catch (Exception e) { showNotice("دریافت ثبت شد.", true); }
+            }
+            @Override public void fail(Exception e) {
+                storeCheckoutSending = false;
+                showNotice("دریافت ثبت نشد: " + (e instanceof DbException ? e.getMessage() : shortError(e)), true, "دوباره", () -> submitStoreReceiptPage());
+            }
+        });
+    }
+
+    private void renderStoreReceiptCustomerSearch(String query) {
+        content.removeAllViews();
+        addHero("دریافت وجه", "مشتری را پیدا کنید؛ مانده و فاکتورهای بازش نمایش داده می‌شود");
+        LinearLayout sc = storeCard("جستجوی مشتری", "نام، کد یا شماره تلفن", INFO);
+        EditText q = input("نام یا کد مشتری", query, false);
+        q.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        sc.addView(q, storeFieldLp(50));
+        Button go = primaryButton(withIcon("⌕", "جستجو"));
+        LinearLayout.LayoutParams gp = storeFieldLp(46); gp.setMargins(0, dp(8), 0, 0); sc.addView(go, gp);
+        LinearLayout results = new LinearLayout(this); results.setOrientation(LinearLayout.VERTICAL);
+        sc.addView(results, new LinearLayout.LayoutParams(-1, -2));
+        Runnable search = () -> {
+            String s = q.getText().toString().trim();
+            if (s.length() < 2) { showNotice("حداقل دو حرف یا رقم وارد کنید.", false); return; }
+            results.removeAllViews();
+            results.addView(text("در حال جستجو…", 10.6f, MUTED, Typeface.BOLD));
+            runDb(() -> queryStoreReceiptCustomers(s).toString(), new DbCallback() {
+                @Override public void ok(String body) {
+                    results.removeAllViews();
+                    try {
+                        JSONArray a = new JSONArray(body);
+                        if (a.length() == 0) results.addView(text("مشتری‌ای پیدا نشد.", 10.6f, MUTED, Typeface.BOLD));
+                        for (int i = 0; i < a.length(); i++) {
+                            JSONObject o = a.optJSONObject(i);
+                            double man = o.optDouble("man");
+                            addStoreRow(results, o.optString("name"), "کد " + o.optString("code"), man > 0.5 ? "بدهکار " + compactMoney(man) : man < -0.5 ? "بستانکار " + compactMoney(-man) : "بی‌حساب", man > 0.5 ? DANGER : SUCCESS, () -> openStoreReceipt(o));
+                        }
+                    } catch (Exception e) { results.addView(text("پاسخ نامعتبر بود.", 10.6f, MUTED, Typeface.BOLD)); }
+                }
+                @Override public void fail(Exception e) { results.removeAllViews(); results.addView(text("جستجو انجام نشد: " + shortError(e), 10.6f, DANGER, Typeface.BOLD)); }
+            });
+        };
+        go.setOnClickListener(v -> search.run());
+        q.setOnEditorActionListener((v, a, e) -> { search.run(); return true; });
+        addDeveloperCredit(content);
+    }
+
+    private JSONArray queryStoreReceiptCustomers(String query) throws Exception {
+        JSONArray a = new JSONArray();
+        if (designPreview) { a.put(new JSONObject().put("code", "412").put("name", "سوپر مارکت امید").put("man", 86_500_000)); return a; }
+        try (Connection c = openConnection()) {
+            List<String> parts = new ArrayList<>(); List<Object> params = new ArrayList<>();
+            for (String v : searchVariants(query)) { parts.add("CAST(MONAME AS nvarchar(500)) LIKE N'%' + ? + N'%'"); params.add(v); }
+            String digits = normalizeDigits(query).trim();
+            if (digits.matches("\\d{1,12}")) { parts.add("SHMO = ?"); params.add(Long.parseLong(digits)); parts.add("ISNULL(CAST(cell AS nvarchar(60)),N'') LIKE N'%' + ? + N'%'"); params.add(digits); }
+            String sql = "SELECT TOP (30) SHMO, ISNULL(CAST(MONAME AS nvarchar(500)),N''), ISNULL(man,0) FROM dbo.CUSTOMERS WHERE " + join(parts, " OR ") + " ORDER BY CASE WHEN man > 0 THEN 0 ELSE 1 END, MONAME";
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                setParams(ps, params);
+                try (ResultSet r = ps.executeQuery()) {
+                    while (r.next()) a.put(new JSONObject().put("code", String.valueOf(r.getLong(1))).put("name", stringOr(r.getString(2), "").trim()).put("man", r.getDouble(3)));
+                }
+            }
+        }
+        return a;
+    }
+
     // ---------------------------------------------------------------- store data (one read for all pages)
     private JSONObject storeData(boolean force) throws Exception {
         if (!force && storeDataCache != null && System.currentTimeMillis() - storeDataCacheAt < 120_000) return storeDataCache;
@@ -21051,7 +22140,13 @@ public class MainActivity extends Activity {
                 try (ResultSet r = ps.executeQuery()) { if (r.next()) { JSONObject o = new JSONObject(); o.put("count", r.getDouble(1)); o.put("sum", r.getDouble(2)); out.put("mineToday", o); } }
             }
             out.put("monthly", rowsJson(c, "SELECT LEFT(s.[date],7), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s WHERE" + live + "AND s.[date]>=? GROUP BY LEFT(s.[date],7) ORDER BY 1", new String[]{"month", "count", "sum"}, from6m));
-            out.put("byUser", rowsJson(c, "SELECT ISNULL(CAST(u.user_name AS nvarchar(100)),N'—'), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s LEFT JOIN dbo.sys_users u ON u.user_id=s.userid WHERE" + live + "AND s.[date]>=? GROUP BY u.user_name ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
+            // Sales of this month per visitor (sailfact.vis_rdf), not per system user.
+            JSONArray byVis = rowsJson(c, "SELECT x.nm, COUNT(*), ISNULL(SUM(x.a),0) FROM (SELECT ISNULL(CAST(v.vis_name AS nvarchar(250)), N'ویزیتور ' + CAST(s.vis_rdf AS nvarchar(12))) AS nm, s.[all] AS a FROM dbo.sailfact s LEFT JOIN dbo.visitors v ON v.vis_rdf=s.vis_rdf WHERE" + live + "AND s.[date]>=?) x GROUP BY x.nm ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month);
+            for (int i = 0; i < byVis.length(); i++) {
+                JSONObject o = byVis.optJSONObject(i); String n = o.optString("name").trim();
+                if (n.contains("/")) o.put("name", n.substring(0, n.indexOf('/')).trim());
+            }
+            out.put("byUser", byVis);
             out.put("topCustomers", rowsJson(c, "SELECT TOP (8) CAST(MAX(cu.MONAME) AS nvarchar(500)), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s JOIN dbo.CUSTOMERS cu ON cu.SHMO=s.shmo WHERE" + live + "AND s.[date]>=? GROUP BY s.shmo ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
             out.put("topProducts", rowsJson(c, "SELECT TOP (8) CAST(MAX(d.naka) AS nvarchar(500)), ISNULL(SUM(d.TEDVAH),0), ISNULL(SUM(d.LINESUM),0) FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=? GROUP BY d.SHKA ORDER BY 3 DESC", new String[]{"name", "qty", "sum"}, month));
             String from60 = MeelanoJalali.addDays(today, -59);
@@ -21064,6 +22159,7 @@ public class MainActivity extends Activity {
             }
             queryStoreDebts(c, out, todayDay, creditDays);
             out.put("attendance", queryStoreAttendance(c));
+            try { out.put("myLeaves", queryLeaveRequestsForUser(c, currentAccountName())); } catch (Exception e) { out.put("myLeaves", new JSONArray()); }
             String lat = chatSetting(c, "work_lat", ""), lng = chatSetting(c, "work_lng", "");
             out.put("storeLat", lat); out.put("storeLng", lng); out.put("storeRadius", chatSetting(c, "work_radius", String.valueOf(STORE_DEFAULT_RADIUS_M)));
         }
@@ -21192,9 +22288,10 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
-    /** Attendance of both staff members for the last 40 days, newest first. */
+    /** Attendance of the signed-in staff member for the last 40 days, newest first. */
     private JSONArray queryStoreAttendance(Connection c) {
         JSONArray a = new JSONArray();
+        String me = storeStaffKey(currentAccountName(), session == null ? "" : session.userName);
         try {
             ensureMeelanoCollabTables(c); ensureAttendanceGeoColumns(c);
             try (PreparedStatement ps = c.prepareStatement("SELECT TOP (400) username, ISNULL(display_name,username), event_type, CONVERT(nvarchar(19),event_time,120), ISNULL(distance_m,-1) FROM dbo.meelano_attendance "
@@ -21203,6 +22300,7 @@ public class MainActivity extends Activity {
                     while (r.next()) {
                         JSONObject o = new JSONObject();
                         String key = storeStaffKey(r.getString(1), r.getString(2));
+                        if (!me.isEmpty() && !me.equals(key)) continue;
                         o.put("staff", key); o.put("name", storeStaffDisplay(key)); o.put("type", stringOr(r.getString(3), ""));
                         o.put("time", stringOr(r.getString(4), "")); o.put("distance", r.getDouble(5));
                         a.put(o);
@@ -21488,9 +22586,15 @@ public class MainActivity extends Activity {
                 {"طلب از مشتریان", compactMoney(cust == null ? 0 : cust.optDouble("debt")), formatNumber(d.optInt("debtorsCount")) + " بدهکار"}
         }, new int[]{GOLD, SUCCESS, INFO, DANGER}, new int[]{R.drawable.mi_trending_up, R.drawable.mi_receipt_long, R.drawable.mi_bar_chart, R.drawable.mi_account_balance_wallet});
 
+        LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
         Button newInvoice = primaryButton(withIcon("⊕", "فاکتور فروش جدید"));
         newInvoice.setOnClickListener(v -> showApp("cart"));
-        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.setMargins(dp(4), 0, dp(4), dp(12)); content.addView(newInvoice, bp);
+        Button receive = secondaryButton(withIcon("☷", "دریافت وجه"));
+        receive.setOnClickListener(v -> openStoreReceipt(null));
+        LinearLayout.LayoutParams a1 = new LinearLayout.LayoutParams(0, -1, 1.35f); a1.setMargins(dp(3), 0, dp(3), 0);
+        LinearLayout.LayoutParams a2 = new LinearLayout.LayoutParams(0, -1, 1f); a2.setMargins(dp(3), 0, dp(3), 0);
+        actions.addView(newInvoice, a1); actions.addView(receive, a2);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.setMargins(dp(1), 0, dp(1), dp(12)); content.addView(actions, bp);
 
         JSONArray daily = d.optJSONArray("daily");
         List<MeelanoCharts.Point> pts = new ArrayList<>();
@@ -21519,8 +22623,9 @@ public class MainActivity extends Activity {
                 new VisitorToolSpec("کالاها", "قیمت و موجودی", "◈", navAccent("showcase"), () -> showApp("showcase"), true),
                 new VisitorToolSpec("بدهکاران", "به تفکیک ویزیتور", "↗", DANGER, () -> openStoreReports("debtors"), true),
                 new VisitorToolSpec("سررسید گذشته", "پیگیری وصول", "◷", WARNING, () -> openStoreReports("overdue"), true),
-                new VisitorToolSpec("حضور و غیاب", "ورود، خروج، گزارش", "◷", navAccent("attendance"), () -> showApp("attendance"), true),
-                new VisitorToolSpec("گزارش فروش", "روزانه و ماهانه", "↗", GOLD, () -> openStoreReports("sales"), true)
+                new VisitorToolSpec("حضور و مرخصی", "ورود، خروج، مرخصی", "◷", navAccent("attendance"), () -> showApp("attendance"), true),
+                new VisitorToolSpec("گزارش فروش", "به تفکیک ویزیتور", "↗", GOLD, () -> openStoreReports("sales"), true),
+                new VisitorToolSpec("دریافت وجه", "نقد، کارت، چک، حواله", "☷", SUCCESS, () -> openStoreReceipt(null), true)
         });
         addDeveloperCredit(content);
     }
@@ -21568,10 +22673,10 @@ public class MainActivity extends Activity {
         }
         boolean located = !d.optString("storeLat").isEmpty();
         int accent = in.isEmpty() ? SUCCESS : out.isEmpty() ? WARNING : INFO;
-        LinearLayout c = storeCard("حضور امروز", located ? "ورود: " + stringOr(MeelanoCharts.fa(in), "—") + "   •   خروج: " + stringOr(MeelanoCharts.fa(out), "—") : "مکان فروشگاه هنوز ثبت نشده است؛ یک بار داخل فروشگاه آن را تنظیم کنید.", accent);
+        LinearLayout c = storeCard("حضور امروز", located ? "ورود: " + stringOr(MeelanoCharts.fa(in), "—") + "   •   خروج: " + stringOr(MeelanoCharts.fa(out), "—") : "مکان فروشگاه هنوز ثبت نشده است؛ یک بار داخل فروشگاه از «تنظیمات» آن را ثبت کنید.", accent);
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
         if (!located) {
-            Button set = primaryButton(withIcon("⌖", "تنظیم مکان فروشگاه")); set.setOnClickListener(v -> showSetStoreLocationDialog(false));
+            Button set = primaryButton(withIcon("⚙", "تنظیم در تنظیمات")); set.setOnClickListener(v -> showApp("settings"));
             row.addView(set, weightedButtonLp());
         } else {
             Button bIn = in.isEmpty() ? primaryButton(withIcon("↘", "ثبت ورود")) : secondaryButton(withIcon("↘", "ورود"));
@@ -21579,7 +22684,7 @@ public class MainActivity extends Activity {
             Button bOut = !in.isEmpty() && out.isEmpty() ? primaryButton(withIcon("↗", "ثبت خروج")) : secondaryButton(withIcon("↗", "خروج"));
             bOut.setOnClickListener(v -> recordStoreAttendance("out"));
             row.addView(bIn, weightedButtonLp()); row.addView(bOut, weightedButtonLp());
-            if (compact) { Button more = secondaryButton("گزارش"); more.setOnClickListener(v -> showApp("attendance")); row.addView(more, weightedButtonLp()); }
+            if (compact) { Button more = secondaryButton("حضور من"); more.setOnClickListener(v -> showApp("attendance")); row.addView(more, weightedButtonLp()); }
         }
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(10), 0, 0); c.addView(row, rp);
     }
@@ -21593,7 +22698,7 @@ public class MainActivity extends Activity {
         JSONObject d = storeDataCache; if (d == null) { loadStoreReports(); return; }
         content.removeAllViews();
         addHero("گزارش‌های فروشگاه", d.optString("weekday") + " " + MeelanoCharts.fa(MeelanoJalali.shortLabel(d.optString("today"))) + " • به‌روز از آتیران");
-        String[][] tabs = {{"debtors", "بدهکاران"}, {"overdue", "سررسید گذشته"}, {"sales", "فروش"}, {"products", "کالاها"}, {"customers", "مشتریان"}, {"attendance", "حضور و غیاب"}};
+        String[][] tabs = {{"debtors", "بدهکاران"}, {"overdue", "سررسید گذشته"}, {"sales", "فروش"}, {"products", "کالاها"}, {"customers", "مشتریان"}};
         HorizontalScrollView hs = new HorizontalScrollView(this); hs.setHorizontalScrollBarEnabled(false);
         LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) chips.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
@@ -21612,7 +22717,6 @@ public class MainActivity extends Activity {
             case "sales": renderStoreSales(d); break;
             case "products": renderStoreProducts(d); break;
             case "customers": renderStoreCustomers(d); break;
-            case "attendance": renderStoreAttendanceReport(d); break;
             case "debtors":
             default: renderStoreDebtors(d); break;
         }
@@ -21678,7 +22782,7 @@ public class MainActivity extends Activity {
         LinearLayout c1 = storeCard("فروش ۳۰ روز اخیر", formatNumber(cnt) + " فاکتور • " + compactMoney(sum) + " • میانگین روزانه " + compactMoney(sum / 30), GOLD);
         addStoreChart(c1, storeArea().setPoints(pts, STORE_MONEY), 200);
         addStoreBarsCard("فروش ماه‌های اخیر", "جمع مبلغ فاکتورها در هر ماه", d.optJSONArray("monthly"), INFO, true);
-        addStoreBarsCard("فروش " + d.optString("month") + " به تفکیک کاربر", "چه کسی چقدر فاکتور زده است", d.optJSONArray("byUser"), SUCCESS, false);
+        addStoreBarsCard("فروش " + d.optString("month") + " به تفکیک ویزیتور", "سهم هر ویزیتور از فاکتورهای فروش", d.optJSONArray("byUser"), SUCCESS, false);
         addStoreBarsCard("بهترین مشتریان " + d.optString("month"), "بر اساس مبلغ خرید", d.optJSONArray("topCustomers"), GOLD_2, false);
     }
 
@@ -21752,49 +22856,42 @@ public class MainActivity extends Activity {
         addStoreBarsCard("بهترین مشتریان " + d.optString("month"), "بر اساس مبلغ خرید", d.optJSONArray("topCustomers"), GOLD_2, false);
     }
 
-    private void renderStoreAttendanceReport(JSONObject d) {
-        List<JSONObject> days = attendanceDays(d.optJSONArray("attendance"));
-        String month = MeelanoJalali.monthStart(d.optString("today"));
-        Map<String, int[]> sum = new LinkedHashMap<>(); // staff → {days, minutes}
-        sum.put("mahmodi", new int[2]); sum.put("nazari", new int[2]);
-        for (JSONObject day : days) {
-            if (day.optString("date").compareTo(month) < 0) continue;
-            int[] s = sum.get(day.optString("staff")); if (s == null) continue;
-            s[0]++; s[1] += day.optInt("minutes");
-        }
-        LinearLayout c = storeCard("حضور " + d.optString("month"), "روزهای حضور و ساعت کار ثبت‌شده با GPS فروشگاه", navAccent("attendance"));
-        List<MeelanoCharts.Point> pts = new ArrayList<>(); int[] pal = {INFO, GOLD};
-        int i = 0;
-        for (Map.Entry<String, int[]> e : sum.entrySet()) {
-            pts.add(new MeelanoCharts.Point(storeStaffDisplay(e.getKey()) + "، " + formatNumber(e.getValue()[0]) + " روز حضور", e.getValue()[1] / 60.0, tc(pal[i++ % 2])));
-        }
-        addStoreChart(c, storeBars(INFO).setPoints(pts, v -> MeelanoCharts.fa(String.valueOf(Math.round(v))) + " ساعت"), 0);
-        ((LinearLayout.LayoutParams) c.getChildAt(c.getChildCount() - 1).getLayoutParams()).height = MeelanoCharts.Bars.heightFor(pts.size(), getResources().getDisplayMetrics().density);
-        LinearLayout list = storeCard("ریز ورود و خروج (۴۰ روز اخیر)", null, navAccent("attendance"));
-        int n = 0;
-        for (JSONObject day : days) {
-            addStoreRow(list, day.optString("name") + "، " + MeelanoJalali.weekday(day.optString("date")) + " " + MeelanoCharts.fa(day.optString("date")),
-                    "ورود: " + stringOr(MeelanoCharts.fa(day.optString("in")), "—") + "   خروج: " + stringOr(MeelanoCharts.fa(day.optString("out")), "—"),
-                    hoursText(day.optInt("minutes")), day.optString("out").isEmpty() ? WARNING : SUCCESS, null);
-            if (++n >= 80) break;
-        }
-        if (n == 0) list.addView(text("هنوز حضوری ثبت نشده است.", 10.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-    }
-
-    /** Store version of the «حضور» page: store location, entry/exit buttons and the report. */
+    /** Store version of the «حضور» page: only the signed-in staff member — entry/exit, leave request, own history. */
     private void loadStoreAttendance() { storeLoad("در حال دریافت حضور و غیاب…", this::renderStoreAttendancePage); }
 
     private void renderStoreAttendancePage() {
         JSONObject d = storeDataCache; if (d == null) { loadStoreAttendance(); return; }
         content.removeAllViews();
-        addHero("حضور و غیاب", "ثبت ورود و خروج فقط داخل محدوده فروشگاه");
+        addHero("حضور و مرخصی", "ثبت ورود و خروج فقط داخل محدوده فروشگاه • درخواست مرخصی");
         addStoreAttendanceCard(d, false);
-        boolean located = !d.optString("storeLat").isEmpty();
-        LinearLayout loc = storeCard("مکان فروشگاه", located ? "ثبت شده • شعاع مجاز: " + formatNumber(parseNumber(d.optString("storeRadius"), STORE_DEFAULT_RADIUS_M)) + " متر" : "هنوز ثبت نشده است", navAccent("attendance"));
-        Button set = secondaryButton(withIcon("⌖", located ? "تغییر مکان فروشگاه" : "تنظیم مکان فروشگاه"));
-        set.setOnClickListener(v -> showSetStoreLocationDialog(located));
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(46)); sp.setMargins(0, dp(8), 0, 0); loc.addView(set, sp);
-        renderStoreAttendanceReport(d);
+
+        Button leave = primaryButton(withIcon("☘", "درخواست مرخصی"));
+        leave.setOnClickListener(v -> showLeaveRequestDialog());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(52)); lp.setMargins(dp(4), 0, dp(4), dp(12)); content.addView(leave, lp);
+
+        JSONArray leaves = d.optJSONArray("myLeaves");
+        LinearLayout lc = storeCard("درخواست‌های مرخصی من", leaves == null || leaves.length() == 0 ? "هنوز درخواستی ثبت نکرده‌اید" : formatNumber(leaves.length()) + " درخواست اخیر", navAccent("attendance"));
+        for (int i = 0; leaves != null && i < leaves.length() && i < 20; i++) {
+            JSONObject r = leaves.optJSONObject(i);
+            String st = r.optString("status");
+            int accent = "approved".equals(st) ? SUCCESS : "rejected".equals(st) ? DANGER : WARNING;
+            addStoreRow(lc, r.optString("type"), MeelanoCharts.fa(r.optString("start")) + (r.optString("end").equals(r.optString("start")) ? "" : " تا " + MeelanoCharts.fa(r.optString("end"))) + (r.optString("reason").isEmpty() ? "" : " • " + r.optString("reason")),
+                    leaveStatusFa(st), accent, null);
+        }
+
+        List<JSONObject> days = attendanceDays(d.optJSONArray("attendance"));
+        String month = MeelanoJalali.monthStart(d.optString("today"));
+        int mDays = 0, mMin = 0;
+        for (JSONObject day : days) if (day.optString("date").compareTo(month) >= 0) { mDays++; mMin += day.optInt("minutes"); }
+        LinearLayout list = storeCard("حضور من در " + d.optString("month"), formatNumber(mDays) + " روز حضور • " + hoursText(mMin) + " کار ثبت‌شده", navAccent("attendance"));
+        int n = 0;
+        for (JSONObject day : days) {
+            addStoreRow(list, MeelanoJalali.weekday(day.optString("date")) + " " + MeelanoCharts.fa(day.optString("date")),
+                    "ورود: " + stringOr(MeelanoCharts.fa(day.optString("in")), "—") + "   خروج: " + stringOr(MeelanoCharts.fa(day.optString("out")), "—"),
+                    hoursText(day.optInt("minutes")), day.optString("out").isEmpty() ? WARNING : SUCCESS, null);
+            if (++n >= 40) break;
+        }
+        if (n == 0) list.addView(text("هنوز حضوری ثبت نشده است.", 10.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         addDeveloperCredit(content);
     }
 
@@ -21815,10 +22912,6 @@ public class MainActivity extends Activity {
                 for (int i = 0; u != null && i < u.length(); i++) b.append("• ").append(u.optJSONObject(i).optString("name")).append(": ").append(formatNumber(u.optJSONObject(i).optDouble("sum"))).append(" ریال\n");
                 break;
             }
-            case "attendance": {
-                for (JSONObject day : attendanceDays(d.optJSONArray("attendance"))) b.append("• ").append(day.optString("name")).append(" ").append(day.optString("date")).append(" ورود ").append(stringOr(day.optString("in"), "—")).append(" خروج ").append(stringOr(day.optString("out"), "—")).append("\n");
-                break;
-            }
             default: {
                 JSONArray g = d.optJSONArray("debtGroups");
                 b.append("بدهی مشتریان به تفکیک ویزیتور\n");
@@ -21835,20 +22928,21 @@ public class MainActivity extends Activity {
     private void renderStoreMorePage() {
         content.removeAllViews();
         addHero("ابزارهای فروشگاه", editionTitle() + " • " + storeStaffDisplay(storeStaffKey(currentAccountName(), session == null ? "" : session.userName)));
-        addVisitorMoreGroup("گزارش‌ها", "بدهکاران، سررسید، فروش، کالا و حضور", new VisitorToolSpec[]{
+        addVisitorMoreGroup("گزارش‌ها", "بدهکاران، سررسید، فروش و کالا", new VisitorToolSpec[]{
                 new VisitorToolSpec("بدهکاران", "به تفکیک ویزیتور", "↗", DANGER, () -> openStoreReports("debtors"), true),
                 new VisitorToolSpec("سررسید گذشته", "پیگیری وصول", "◷", WARNING, () -> openStoreReports("overdue"), true),
-                new VisitorToolSpec("فروش", "روزانه، ماهانه، کاربر", "↗", GOLD, () -> openStoreReports("sales"), true),
+                new VisitorToolSpec("فروش", "روزانه، ماهانه، ویزیتور", "↗", GOLD, () -> openStoreReports("sales"), true),
                 new VisitorToolSpec("کالاها", "پرفروش و رو به اتمام", "◈", SUCCESS, () -> openStoreReports("products"), true)
         });
-        addVisitorMoreGroup("فروش و مشتری", "فاکتور قطعی و اطلاعات مشتری", new VisitorToolSpec[]{
+        addVisitorMoreGroup("فروش و مشتری", "فاکتور قطعی، دریافت وجه و اطلاعات مشتری", new VisitorToolSpec[]{
                 new VisitorToolSpec("فاکتور جدید", "ثبت قطعی در آتیران", "⊕", navAccent("cart"), () -> showApp("cart"), true),
+                new VisitorToolSpec("دریافت وجه", "نقد، کارت، چک، حواله", "☷", SUCCESS, () -> openStoreReceipt(null), true),
                 new VisitorToolSpec("مشتریان", "لیست کامل", "♙", navAccent("customers"), () -> showApp("customers"), true),
                 new VisitorToolSpec("کالاها", "قیمت و موجودی", "◈", navAccent("showcase"), () -> showApp("showcase"), true),
                 new VisitorToolSpec("کدخوان", "جستجوی کالا", "⌕", navAccent("visitor_more"), () -> showBarcodeSearchDialog(), true)
         });
-        addVisitorMoreGroup("کارکنان", "حضور، پیام و تنظیمات", new VisitorToolSpec[]{
-                new VisitorToolSpec("حضور و غیاب", "ورود و خروج با GPS", "◷", navAccent("attendance"), () -> showApp("attendance"), true),
+        addVisitorMoreGroup("من", "حضور، مرخصی، پیام و تنظیمات", new VisitorToolSpec[]{
+                new VisitorToolSpec("حضور و مرخصی", "ورود و خروج با GPS", "◷", navAccent("attendance"), () -> showApp("attendance"), true),
                 new VisitorToolSpec("گفتگو", "پیام‌ها", "✉", navAccent("visitor_more"), () -> showApp("chat"), canOpenPage("chat")),
                 new VisitorToolSpec("تنظیمات", "تم و دسترسی", "⚙", navAccent("settings"), () -> showApp("settings"), canOpenPage("settings")),
                 new VisitorToolSpec("وضعیت اتصال", "سرور آتیران", "⇅", navAccent("visitor_more"), () -> showApp("health"), canOpenPage("health"))
@@ -21891,16 +22985,20 @@ public class MainActivity extends Activity {
         JSONArray monthly = new JSONArray(); String[] ms = {"1405/02", "1405/03", "1405/04", "1405/05", "1405/06", "1405/07"}; double[] mv = {18.2e9, 21.4e9, 19.9e9, 24.6e9, 27.1e9, 6.48e9};
         for (int i = 0; i < ms.length; i++) monthly.put(new JSONObject().put("month", ms[i]).put("count", 240 + i * 11).put("sum", mv[i]));
         o.put("monthly", monthly);
-        o.put("byUser", new JSONArray().put(new JSONObject().put("name", "خانم نظري").put("count", 41).put("sum", 3.1e9)).put(new JSONObject().put("name", "خانم محمودي").put("count", 33).put("sum", 2.6e9)).put(new JSONObject().put("name", "الهام حمداني").put("count", 12).put("sum", 0.78e9)));
+        o.put("byUser", new JSONArray().put(new JSONObject().put("name", "مصطفی خدایار").put("count", 29).put("sum", 2.4e9)).put(new JSONObject().put("name", "جواد لطیفی").put("count", 24).put("sum", 1.9e9)).put(new JSONObject().put("name", "فروشگاه").put("count", 21).put("sum", 1.4e9)).put(new JSONObject().put("name", "فاطمه محمودی").put("count", 12).put("sum", 0.78e9)));
         o.put("topCustomers", new JSONArray().put(new JSONObject().put("name", "سوپر مارکت امید").put("count", 6).put("sum", 1.2e9)).put(new JSONObject().put("name", "آجیل و خشکبار نگین").put("count", 4).put("sum", 0.94e9)).put(new JSONObject().put("name", "فروشگاه پسته طلایی").put("count", 3).put("sum", 0.61e9)));
         o.put("lowStock", new JSONArray().put(new JSONObject().put("name", "پسته کله قوچی براق").put("stock", 2).put("code", 628)).put(new JSONObject().put("name", "مغز گردو A امسالی").put("stock", 0).put("code", 786)));
         o.put("stock", new JSONObject().put("total", 1801).put("inStock", 1240));
         JSONArray att = new JSONArray();
         String now = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
         att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "in").put("time", now + " 08:12:00").put("distance", 14));
-        att.put(new JSONObject().put("staff", "nazari").put("name", "خانم نظری").put("type", "out").put("time", "2026-09-27 17:05:00").put("distance", 9));
-        att.put(new JSONObject().put("staff", "nazari").put("name", "خانم نظری").put("type", "in").put("time", "2026-09-27 08:31:00").put("distance", 21));
+        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "out").put("time", "2026-09-27 17:05:00").put("distance", 9));
+        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "in").put("time", "2026-09-27 08:31:00").put("distance", 21));
+        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "out").put("time", "2026-09-26 16:48:00").put("distance", 11));
+        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "in").put("time", "2026-09-26 08:05:00").put("distance", 17));
         o.put("attendance", att);
+        o.put("myLeaves", new JSONArray().put(new JSONObject().put("id", 7).put("type", "مرخصی ساعتی").put("start", "1405/07/09").put("end", "1405/07/09").put("hours", "2").put("reason", "کار بانکی").put("status", "pending"))
+                .put(new JSONObject().put("id", 4).put("type", "مرخصی استحقاقی").put("start", "1405/06/20").put("end", "1405/06/21").put("hours", "").put("reason", "سفر خانوادگی").put("status", "approved")));
         o.put("storeLat", "31.3183"); o.put("storeLng", "48.6706"); o.put("storeRadius", "120");
         return o;
     }

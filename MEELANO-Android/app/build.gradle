@@ -8,8 +8,8 @@ android {
         applicationId 'ir.meelano.visitor'
         minSdk 24
         targetSdk 36
-        versionCode 98
-        versionName '5.3.0'
+        versionCode 99
+        versionName '5.4.0'
     }
 
     // Two installable apps from one code base:

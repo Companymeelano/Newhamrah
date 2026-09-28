@@ -1,0 +1,8 @@
+<resources>
+    <!-- Store app («میلانو فروشگاه»): start-up colours match its emerald launcher icon. -->
+    <color name="meelano_navy">#F3F9F5</color>
+    <color name="meelano_surface">#FFFFFD</color>
+    <color name="meelano_gold">#076846</color>
+    <color name="meelano_gold_light">#B88E3A</color>
+    <color name="white">#FFFFFF</color>
+</resources>

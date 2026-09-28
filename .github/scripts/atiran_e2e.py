@@ -382,8 +382,59 @@ def verify_store(cur, out, checks):
         out["errors"].append("stock compare: %s" % ex)
     man_after = rows(cur, "SELECT man FROM dbo.CUSTOMERS WHERE SHMO=412")["rows"][0][0]
     out["store_man412"] = {"before": before.get("man412"), "after": man_after, "invoice_all": h.get("all")}
+    # v5.4.0: invoice fields (freight, settlement days, visitor) and the receipts written right after it.
+    def logged(prefix):
+        x = [s for s in st if s.startswith(prefix + " ")]
+        try:
+            return json.loads(x[0].split(" ", 2)[2]) if x else {}
+        except Exception:
+            return {}
+    rc1, rc1dup, rc2 = logged("STORE RECEIPT1"), logged("STORE RECEIPT1_DUP"), logged("STORE RECEIPT2")
+    out["store_receipts"] = {"r1": rc1, "r1dup": rc1dup, "r2": rc2}
+    sub = re.search(r"STORE SUBMIT \S+ total=(\d+)", joined)
+    checks["store_invoice_barbari_150000"] = bool(h) and abs(float(h.get("barbari") or 0) - 150000) < 1
+    checks["store_invoice_modpar_30"] = bool(h) and int(h.get("modpar") or 0) == 30 and str(h.get("t_date")) != str(h.get("date"))
+    checks["store_invoice_total_includes_barbari"] = bool(sub) and bool(h) and abs(float(h.get("all") or 0) - (float(sub.group(1)) + 150000)) < 2
+    refm = re.search(r"STORE REF myVis=(\d+) visitors=(\S*) banks=(\d+) bankNames=(\d+) terms=(\d+) anbars=(\d+)", joined)
+    checks["store_ref_default_visitor_3_and_lists"] = bool(refm) and refm.group(1) == "3" and refm.group(2).startswith("3,") and int(refm.group(3)) > 0 and int(refm.group(4)) > 0 and int(refm.group(6)) > 0
+    checks["store_ref_only_visitors"] = bool(refm) and all(v not in ("1",) for v in refm.group(2).split(",") if v) and len([v for v in refm.group(2).split(",") if v]) <= 6
+    g1, g2 = int(rc1.get("ghno", 0) or 0), int(rc2.get("ghno", 0) or 0)
+    dar = safe_rows(cur, out, "SELECT ghno, shmo, naghd, mab, mabcheck, ted_chk, shfac, UniqueID, IsFinal, Active, darDescriptionTypeID, CAST(d_p_dis AS nvarchar(300)) FROM dbo.dar WHERE UniqueID LIKE 'MEELANO-DAR-%' ORDER BY ghno")
+    out["store_dar"] = dar
+    dr = dar.get("rows", [])
+    checks["store_receipt_saved_once_each"] = g1 > 0 and len(dr) == (2 if g2 else 1) and int(rc1dup.get("ghno", 0) or 0) == g1 and bool(rc1dup.get("duplicate"))
+    d1 = next((r for r in dr if int(r[0]) == g1), None)
+    checks["store_receipt1_cash_and_total"] = bool(d1) and abs(float(d1[2] or 0) - 1000000) < 1 and abs(float(rc1.get("total", 0) or 0) - 5800000) < 1
+    checks["store_receipt1_for_new_invoice"] = bool(d1) and int(d1[6] or 0) == no
+    pos = safe_rows(cur, out, "SELECT MabPos, PosBankRdf, ShPeigiri, IsHavaleh, CAST(PosDesc AS nvarchar(300)) FROM dbo.PosDetails WHERE ghno=%s ORDER BY ID" % g1)
+    out["store_pos"] = pos
+    pr = pos.get("rows", [])
+    checks["store_receipt1_pos_trf_hav_rows"] = [int(float(r[0])) for r in pr] == [2000000, 500000, 300000] and [str(r[3]) in ("1", "True") for r in pr] == [False, True, True]
+    chk = safe_rows(cur, out, "SELECT getchkmab, sardate, CAST(getchbank AS nvarchar(100)), shgetchk, ShenaseSayad, RegistrationInquiry, CheckTypeID, shmo, ghno FROM dbo.getchk WHERE ghno=%s ORDER BY rdf" % g1)
+    out["store_getchk"] = chk
+    cr = chk.get("rows", [])
+    checks["store_receipt1_two_cheques"] = len(cr) == 2 and sorted(int(float(r[0])) for r in cr) == [800000, 1200000]
+    checks["store_receipt1_cheque_sayad_flags"] = len(cr) == 2 and any(str(r[4]).strip() == "1234567890123456" and str(r[5]) in ("1", "True") for r in cr) and any(str(r[5]) in ("0", "False", "None") for r in cr)
+    out["store_tpl_cheque"] = safe_rows(cur, out, "SELECT * FROM dbo.TemplateDaryaftCheque WHERE Ghno=%s" % g1)
+    ca = safe_rows(cur, out, "SELECT act_id, act_bes, act_bed, ghno FROM dbo.cust_act WHERE shmo=412 AND ghno IN (%s, %s) ORDER BY rdf_" % (g1, g2 or g1))
+    out["store_receipt_cust_act"] = ca
+    checks["store_receipt_cust_act_rows"] = len(ca.get("rows", [])) >= 3
+    inv_now = safe_rows(cur, out, "SELECT MabDaryaftFactor, tasvieh FROM dbo.sailfact WHERE shfacfo=%s" % no)
+    out["store_invoice_after_receipt"] = inv_now
+    checks["store_invoice_mabdaryaft_5800000"] = bool(inv_now.get("rows")) and abs(float(inv_now["rows"][0][0] or 0) - 5800000) < 1
+    if g2:
+        mf = safe_rows(cur, out, "SELECT Shfacfo, Price, IsTasvieh FROM dbo.DaryaftMultiFactor WHERE GhnoDar=%s ORDER BY Shfacfo" % g2)
+        out["store_multifactor"] = mf
+        checks["store_receipt2_multifactor_two_rows"] = len(mf.get("rows", [])) == 2
+        if mf.get("rows"):
+            ts = safe_rows(cur, out, "SELECT shfacfo, tasvieh, MabDaryaftFactor, [all] FROM dbo.sailfact WHERE shfacfo IN (%s)" % ",".join(str(int(r[0])) for r in mf["rows"]))
+            out["store_multifactor_invoices"] = ts
+            checks["store_receipt2_invoices_settled"] = len(ts.get("rows", [])) == 2 and all(str(r[1]) == "t" for r in ts["rows"])
     try:
-        checks["store_customer_debt_increased_by_invoice"] = abs(float(man_after) - float(before.get("man412")) - float(h.get("all"))) < 1
+        paid = float(rc1.get("total", 0) or 0) + float(rc2.get("total", 0) or 0)
+        out["store_man412"]["receipts"] = paid
+        checks["store_customer_debt_increased_by_invoice"] = abs(float(man_after) - float(before.get("man412")) - float(h.get("all")) + paid) < 1
+        checks["store_receipt_man_matches"] = abs(float(rc2.get("man", rc1.get("man", 0)) or 0) - float(man_after)) < 1
     except Exception:
         checks["store_customer_debt_increased_by_invoice"] = False
     out["store_cust_act"] = safe_rows(cur, out, "SELECT TOP (5) * FROM dbo.cust_act WHERE shmo=412 ORDER BY 1 DESC")

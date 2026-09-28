@@ -98,3 +98,12 @@ widgets
 wifi
 apps
 badge
+payments
+credit_card
+swap_horiz
+request_quote
+point_of_sale
+event
+local_shipping
+warehouse
+notes

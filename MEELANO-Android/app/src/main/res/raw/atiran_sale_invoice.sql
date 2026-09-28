@@ -9,7 +9,8 @@ SET XACT_ABORT ON;
 --   4. dbo.FactorConfirmation      makes the invoice final (Status=1, TaeedUser, visitor commission)
 -- The client's UniqueID makes a repeated send return the first invoice instead of a second one.
 DECLARE @shmo int = ?, @vis int = ?, @uid int = ?, @user nvarchar(100) = ?, @date char(10) = ?,
-        @desc nvarchar(500) = ?, @uniq nvarchar(50) = ?, @lines nvarchar(max) = ?, @gdisc money = ?, @modpar int = ?;
+        @desc nvarchar(500) = ?, @uniq nvarchar(50) = ?, @lines nvarchar(max) = ?, @gdisc money = ?, @modpar int = ?,
+        @barbari money = ?, @anbarIn int = ?;
 
 DECLARE @old bigint = (SELECT TOP (1) shfacfo FROM dbo.sailfact WHERE UniqueID = @uniq AND active = 't' ORDER BY shfacfo DESC);
 IF @old IS NOT NULL
@@ -62,7 +63,10 @@ DECLARE @ltaf money = (SELECT SUM(lt) FROM @L);
 DECLARE @tax money = (SELECT SUM(tx) FROM @L);
 DECLARE @vazn decimal(18, 2) = (SELECT SUM(tv) FROM @L);
 DECLARE @tafif money = @ltaf + ISNULL(@gdisc, 0);
-DECLARE @all money = @sum - @tafif + @tax;
+SET @barbari = CASE WHEN ISNULL(@barbari, 0) < 0 THEN 0 ELSE ISNULL(@barbari, 0) END;
+SET @modpar = CASE WHEN ISNULL(@modpar, 0) < 0 THEN 0 ELSE ISNULL(@modpar, 0) END;
+-- Payable = lines - discounts + tax + freight («باربري»), the amount AddInvoice puts on the customer.
+DECLARE @all money = @sum - @tafif + @tax + @barbari;
 IF @all < 0
 BEGIN
     RAISERROR (N'تخفيف از جمع فاکتور بيشتر است', 16, 1);
@@ -79,11 +83,12 @@ SET @tahbarg = ISNULL(@tahbarg, 2);
 SET @nahpar = ISNULL(@nahpar, 2);
 DECLARE @anbar int = ISNULL((SELECT TOP (1) rdf_anbar FROM dbo.anbars WHERE ISNULL(Active, 1) = 1
                              ORDER BY CASE WHEN Base = 1 THEN 0 ELSE 1 END, rdf_anbar), 1);
+IF ISNULL(@anbarIn, 0) > 0 AND EXISTS (SELECT 1 FROM dbo.anbars WHERE rdf_anbar = @anbarIn) SET @anbar = @anbarIn;
 DECLARE @id bigint;
 
 BEGIN TRANSACTION;
 EXEC dbo.AddInvoice
-     @username = @user, @date = @date, @shmo = @shmo, @barbari = 0, @description = @desc, @vis_rdf = @vis,
+     @username = @user, @date = @date, @shmo = @shmo, @barbari = @barbari, @description = @desc, @vis_rdf = @vis,
      @sumlineall = @sum, @all = @all, @tafif = @tafif, @SumTafifAghlam = @ltaf, @done_date = @date,
      @panevis = @panevis, @modpar = @modpar, @rdf_tahbarg = @tahbarg, @nah_par = @nahpar, @nah_d_text = N'',
      @driver_name = '', @rdf_driver = 0, @mamorp_name = '', @rdf_mamorp = 0, @bamandeh = 1, @shpish = N'',
