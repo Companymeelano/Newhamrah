@@ -23157,7 +23157,7 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- shared store UI pieces
     /** Chart colours; neighbours must look different in every theme (in the green theme GOLD and SUCCESS are both green). */
-    private int[] storePalette() { return new int[]{GOLD, GOLD_2, INFO, DANGER, WARNING, SUCCESS, mix(INFO, SUCCESS, .5f), mix(GOLD, DANGER, .4f)}; }
+    private int[] storePalette() { return new int[]{GOLD, WARNING, INFO, DANGER, GOLD_2, SUCCESS, mix(INFO, SUCCESS, .5f), mix(GOLD, DANGER, .4f)}; }
 
     private void storeLoad(String title, Runnable render) {
         content.removeAllViews();
