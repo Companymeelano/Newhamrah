@@ -38,6 +38,14 @@ final class MeelanoCharts {
         return b.toString();
     }
 
+    /** Full amount in rials, grouped three by three: «۱۲٬۴۵۰٬۰۰۰ ریال». */
+    static String rial(double v) {
+        return fa(new java.text.DecimalFormat("#,##0", java.text.DecimalFormatSymbols.getInstance(java.util.Locale.US)).format(Math.round(v)).replace(',', '٬')) + " ریال";
+    }
+
+    /** Amounts are always shown in full rials; only the y-axis scale of a chart stays short. */
+    static final Formatter RIAL = MeelanoCharts::rial;
+
     /** Short amount: 1.2 میلیارد / 350 میلیون / 12 هزار (in the unit given by the caller). */
     static String compact(double v) {
         double a = Math.abs(v);
@@ -160,7 +168,7 @@ final class MeelanoCharts {
             float axisSize = dp(9.5f) * sc;
             text.setFakeBoldText(false); text.setTextSize(axisSize); text.setColor(muted);
             String[] yl = new String[4]; float yw = 0;
-            for (int g = 0; g <= 3; g++) { yl[g] = g == 3 ? fa("0") : formatter.format(max * (3 - g) / 3.0); yw = Math.max(yw, text.measureText(yl[g])); }
+            for (int g = 0; g <= 3; g++) { yl[g] = g == 3 ? fa("0") : (formatter == RIAL ? compact(max * (3 - g) / 3.0) : formatter.format(max * (3 - g) / 3.0)); yw = Math.max(yw, text.measureText(yl[g])); }
             float left = Math.min(w * 0.32f, yw + dp(10)), right = w - dp(10);
             float tipH = dp(11) * sc + dp(12);
             float top = tipH + dp(8), bottom = h - (axisSize + dp(12));

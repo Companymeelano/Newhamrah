@@ -6846,9 +6846,81 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    // Store edition: every customer except suppliers and personnel. Manager overrides live in
+    // meelano_chat_settings (store_customer_excluded_groups / store_customer_hidden / store_customer_shown).
+    private volatile String storeExcludedGroupsSetting = "", storeHiddenCustomersSetting = "", storeShownCustomersSetting = "";
+    private volatile long storeCustomerSettingsAt = 0;
+
+    private void refreshStoreCustomerSettings(Connection c) {
+        if (!STORE_EDITION || c == null || System.currentTimeMillis() - storeCustomerSettingsAt < 5 * 60_000L) return;
+        storeExcludedGroupsSetting = storeIntList(chatSetting(c, "store_customer_excluded_groups", ""));
+        storeHiddenCustomersSetting = storeIntList(chatSetting(c, "store_customer_hidden", ""));
+        storeShownCustomersSetting = storeIntList(chatSetting(c, "store_customer_shown", ""));
+        storeCustomerSettingsAt = System.currentTimeMillis();
+    }
+
+    /** "2, 5;x 7" -> "2,5,7" (digits only, so the value is always safe inside SQL). */
+    static String storeIntList(String raw) {
+        StringBuilder b = new StringBuilder();
+        for (String part : String.valueOf(raw == null ? "" : raw).replace('،', ',').split("[^0-9۰-۹٠-٩]+")) {
+            String d = part.trim(); if (d.isEmpty()) continue;
+            StringBuilder n = new StringBuilder();
+            for (char ch : d.toCharArray()) n.append(ch >= '۰' && ch <= '۹' ? (char) ('0' + ch - '۰') : (ch >= '٠' && ch <= '٩' ? (char) ('0' + ch - '٠') : ch));
+            if (n.length() > 9) continue;
+            if (b.length() > 0) b.append(',');
+            b.append(Long.parseLong(n.toString()));
+        }
+        return b.toString();
+    }
+
+    private static String storeGroupNameExpr(String alias) {
+        return "REPLACE(REPLACE(CAST(" + alias + ".group_name AS nvarchar(200)),N'ي',N'ی'),N'ك',N'ک')";
+    }
+
+    /**
+     * Who a store user must NOT see (Atiran data, checked on the backup):
+     *  - anyone we have a purchase invoice from (buyfact) — suppliers, whatever their group;
+     *  - personnel groups (ویزیتورها، مامورین پخش/مطالبات، راننده‌ها، پرسنل دفتری، کارگران) and names with «پرسنل»/«ویزیتور»;
+     *  - the suppliers group («تامین کنندگان») — except accounts that carry a visitor tag (07، 08…) or have a sales invoice,
+     *    because many real customers were filed in that group.
+     */
+    private String storeCustomerExclusion(Set<String> cols, String p) {
+        String shmo = resolveFlexible(cols, "SHMO", "shmo");
+        if (shmo == null) return "";
+        String group = resolveFlexible(cols, "group_rdf");
+        String name = resolveFlexible(cols, "MONAME", "Name", "CusName");
+        String id = p + "[" + shmo + "]";
+        String nm = name == null ? "N''" : "REPLACE(REPLACE(CAST(" + p + "[" + name + "] AS nvarchar(400)),N'ي',N'ی'),N'ك',N'ک')";
+        String g = group == null ? "0" : "ISNULL(" + p + "[" + group + "],0)";
+        List<String> hide = new ArrayList<>();
+        hide.add("EXISTS (SELECT 1 FROM dbo.buyfact mbx WHERE mbx.shmo=" + id + " AND mbx.active='t')");
+        if (name != null) hide.add("(" + nm + " LIKE N'%پرسنل%' OR " + nm + " LIKE N'%/ویزیتور%' OR " + nm + " LIKE N'%ویزیتور سیستم%')");
+        String custom = storeExcludedGroupsSetting;
+        if (group != null) {
+            if (!custom.isEmpty()) hide.add(g + " IN (" + custom + ")");
+            else {
+                String gn = storeGroupNameExpr("mgx");
+                hide.add(g + " IN (SELECT mgx.group_rdf FROM dbo.custgroup mgx WHERE " + gn + " LIKE N'%ویزیتور%' OR " + gn + " LIKE N'%مامور%' OR " + gn + " LIKE N'%مأمور%' OR "
+                        + gn + " LIKE N'%راننده%' OR " + gn + " LIKE N'%کارگر%' OR " + gn + " LIKE N'%پرسنل%' OR " + gn + " LIKE N'%کارمند%')");
+                hide.add("(" + g + " IN (SELECT mgx.group_rdf FROM dbo.custgroup mgx WHERE " + gn + " LIKE N'%تامین%' OR " + gn + " LIKE N'%تأمین%')"
+                        + (name == null ? "" : " AND " + nm + " NOT LIKE N'%0[0-9]%'")
+                        + " AND NOT EXISTS (SELECT 1 FROM dbo.sailfact msx WHERE msx.shmo=" + id + " AND msx.active='t'))");
+            }
+        }
+        // The four personal accounts of the store and visitors, the store's own row and the system visitor.
+        String hidden = "2692,2693,2696,2697" + (storeHiddenCustomersSetting.isEmpty() ? "" : "," + storeHiddenCustomersSetting);
+        hide.add(id + " IN (" + hidden + ")");
+        String cond = "NOT (" + join(hide, " OR ") + ")";
+        if (!storeShownCustomersSetting.isEmpty()) cond = "(" + id + " IN (" + storeShownCustomersSetting + ") OR " + cond + ")";
+        return cond;
+    }
+
     private String customerScopeCondition(Set<String> cols, String alias, List<Object> params) {
         List<String> conditions = new ArrayList<>();
         String p = alias == null || alias.trim().isEmpty() ? "" : alias.trim() + ".";
+        if (STORE_EDITION) {
+            try { String ex = storeCustomerExclusion(cols, p); if (!ex.isEmpty()) conditions.add(ex); } catch (Exception ignored) { }
+        }
         String latifiNameScope = customerName08RestrictionCondition(cols, alias);
         if (!latifiNameScope.isEmpty()) return latifiNameScope; // name tag replaces the visitor filter
         if (restrictCustomerData()) {
@@ -9874,7 +9946,8 @@ public class MainActivity extends Activity {
         addUniqueValue(out, q.replace('ي','ی').replace('ك','ک'));
         addUniqueValue(out, q.replace('ی','ي').replace('ک','ك'));
         addUniqueValue(out, normalizeDigits(q).replace(" ", "").replace("-", ""));
-        while (out.size() > 5) out.remove(out.size() - 1);
+        addUniqueValue(out, q.replace('ی','ي').replace('ک','ك').replace('آ','ا'));
+        while (out.size() > 6) out.remove(out.size() - 1);
         return out;
     }
 
@@ -9934,18 +10007,16 @@ public class MainActivity extends Activity {
         if (rows == null) return out;
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) return rows;
-        List<String> variants = searchVariants(q);
+        MeelanoSearch.Query sq = new MeelanoSearch.Query(q);
+        List<Object[]> ranked = new ArrayList<>();
         for (int i = 0; i < rows.length(); i++) {
             JSONObject r = rows.optJSONObject(i);
             if (r == null) continue;
-            String hay = normalizeDigits((r.optString("نام", "") + " " + r.optString("کد", "") + " " + r.optString("همراه", "") + " " + r.optString("تلفن", "") + " " + r.optString("تلفن۲", "") + " " + r.optString("نشانی", "")).toLowerCase(Locale.US));
-            boolean match = false;
-            for (String v : variants) {
-                String needle = normalizeDigits(v == null ? "" : v).toLowerCase(Locale.US).trim();
-                if (!needle.isEmpty() && hay.contains(needle)) { match = true; break; }
-            }
-            if (match) out.put(r);
+            int rank = sq.rank(r.optString("نام", ""), r.optString("کد", ""), r.optString("همراه", "") + " " + r.optString("تلفن", "") + " " + r.optString("تلفن۲", "") + " " + r.optString("نشانی", ""));
+            if (rank >= 0) ranked.add(new Object[]{rank, i, r});
         }
+        Collections.sort(ranked, (x, y) -> { int c = Integer.compare((Integer) x[0], (Integer) y[0]); return c != 0 ? c : Integer.compare((Integer) x[1], (Integer) y[1]); });
+        for (Object[] o : ranked) out.put(o[2]);
         return out;
     }
 
@@ -10016,6 +10087,7 @@ public class MainActivity extends Activity {
 
     private String queryCustomers(String search, String filter) throws Exception {
         try (Connection c = openConnection()) {
+            refreshStoreCustomerSettings(c);
             Set<String> cols = columns(c, "CUSTOMERS");
             Set<String> saleCols = columns(c, "sailfact");
             Set<String> checkCols = columns(c, "getchk");
@@ -10027,7 +10099,7 @@ public class MainActivity extends Activity {
             String phone3 = resolve(cols, "tell2", "tell3");
             String address = resolveFlexible(cols, "address", "Address", "ADDRESS", "adr", "addr", "ADDR", "Adress", "adress", "address1", "Address1", "customer_address", "CustomerAddress", "neshani", "Neshani", "NESHANI", "نشانی", "نشاني", "آدرس", "ادرس", "manzel", "Manzel", "MOADD", "MOADR", "moneshan", "MONESHAN");
             String balance = resolveFlexible(cols, "mande_hesab", "مانده_حساب", "man", "MAN", "Balance", "Mandeh", "mande", "mandeh", "account_balance", "hesab", "بدهی", "مانده");
-            String credit = resolveFlexible(cols, "etebar", "credit", "Credit", "credit_limit", "سقف_اعتبار", "اعتبار");
+            String credit = resolveFlexible(cols, "cred", "etebar", "credit", "Credit", "credit_limit", "سقف_اعتبار", "اعتبار");
             String debitCol = resolveFlexible(cols, "bed", "debit", "bedehkar", "bedehi", "بد", "بدهکار");
             String creditCol = resolveFlexible(cols, "bes", "creditor", "bestankar", "طلب", "بستانکار");
             String balanceExpr = balance != null ? sqlNumberExpr("c", balance, "decimal(19,2)") : (debitCol != null && creditCol != null ? "(" + sqlNumberExpr("c", debitCol, "decimal(19,2)") + "-" + sqlNumberExpr("c", creditCol, "decimal(19,2)") + ")" : "CAST(0 AS decimal(19,2))");
@@ -12120,9 +12192,7 @@ public class MainActivity extends Activity {
         if (p == null) return false;
         String q = query == null ? "" : query.trim();
         if (!q.isEmpty()) {
-            String hay = normalizeDigits((p.optString("نام", "") + " " + p.optString("کد", "") + " " + p.optString("بارکد", "") + " " + p.optString("گروه", "")).toLowerCase(Locale.US));
-            String needle = normalizeDigits(q.toLowerCase(Locale.US));
-            if (!hay.contains(needle)) return false;
+            if (new MeelanoSearch.Query(q).rank(p.optString("نام", ""), p.optString("کد", ""), p.optString("بارکد", "") + " " + p.optString("گروه", "")) < 0) return false;
         }
         String f = filter == null ? "all" : filter;
         if ("stock".equals(f)) return jsonDouble(p, "موجودی", 0) > 0;
@@ -12160,18 +12230,15 @@ public class MainActivity extends Activity {
         JSONArray out = new JSONArray();
         String q = query == null ? "" : query.trim();
         String f = filter == null || filter.trim().isEmpty() ? "all" : filter;
-        List<String> variants = searchVariants(q);
+        MeelanoSearch.Query sq = new MeelanoSearch.Query(q);
+        List<Object[]> ranked = new ArrayList<>();
         for (int i = 0; rows != null && i < rows.length(); i++) {
             JSONObject r = rows.optJSONObject(i);
             if (r == null) continue;
-            if (!q.isEmpty()) {
-                String hay = normalizeDigits((r.optString("نام", "") + " " + r.optString("کد", "") + " " + r.optString("بارکد", "") + " " + r.optString("گروه", "") + " " + r.optString("واحد", "")).toLowerCase(Locale.US));
-                boolean match = false;
-                for (String v : variants) {
-                    String needle = normalizeDigits(v == null ? "" : v).toLowerCase(Locale.US).trim();
-                    if (!needle.isEmpty() && hay.contains(needle)) { match = true; break; }
-                }
-                if (!match) continue;
+            int rank = 50;
+            if (!sq.isEmpty()) {
+                rank = sq.rank(r.optString("نام", ""), r.optString("کد", ""), r.optString("بارکد", "") + " " + r.optString("گروه", "") + " " + r.optString("واحد", ""));
+                if (rank < 0) continue;
             }
             double stock = jsonDouble(r, "موجودی", 0);
             double p1 = jsonDouble(r, "قیمت_فروش", 0);
@@ -12185,11 +12252,14 @@ public class MainActivity extends Activity {
             if ("idle".equals(f) && (sold > 0 || bought > 0)) continue;
             if ("priced".equals(f) && !(p1 > 0 || p2 > 0)) continue;
             if ("price2".equals(f) && !(p2 > 0)) continue;
-            if ("image".equals(f) && (img == null || img.trim().length() <= 20)) continue;
+            if ("image".equals(f) && (img == null || img.trim().length() <= 20) && r.optLong("تصویر_آتیران", 0) <= 0) continue;
             if ("package".equals(f) && !(pack > 1)) continue;
             if ("top".equals(f) && !(sold > 0)) continue;
-            out.put(r);
+            ranked.add(new Object[]{rank, ranked.size(), r});
         }
+        // Best matches first; the original order (sort of the list) is kept inside each rank.
+        if (!sq.isEmpty()) Collections.sort(ranked, (x, y) -> { int c = Integer.compare((Integer) x[0], (Integer) y[0]); return c != 0 ? c : Integer.compare((Integer) x[1], (Integer) y[1]); });
+        for (Object[] o : ranked) out.put(o[2]);
         return out;
     }
 
@@ -12634,11 +12704,11 @@ public class MainActivity extends Activity {
         Button add1 = themedActionButton(PRICE1_BUTTON, accent, true);
         add1.setTextSize(fs(9.4f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
         add1.setContentDescription("افزودن یک عدد با قیمت فروش ۱");
-        add1.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+        add1.setOnClickListener(v -> cardAddToCart(r, 1, query, filter));
         Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", accent, false);
         add2.setTextSize(fs(9.4f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .42f);
         add2.setContentDescription("افزودن یک عدد با قیمت فروش ۲");
-        add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+        add2.setOnClickListener(v -> cardAddToCart(r, 2, query, filter));
         Button addM = themedActionButton(MANUAL_PRICE_BUTTON, GOLD_2, false);
         addM.setTextSize(fs(9.0f));
         addM.setContentDescription("افزودن با قیمت دستی");
@@ -12748,9 +12818,9 @@ public class MainActivity extends Activity {
             actions.setOrientation(LinearLayout.HORIZONTAL);
             Button detail = themedActionButton("جزئیات", accent, false); detail.setTextSize(fs(8.9f)); detail.setOnClickListener(v -> showShowcaseProductDialog(r, query, filter));
             Button add2 = themedActionButton(price2Ok ? PRICE2_BUTTON : "قیمت ۲ ندارد", navAccent("cart"), false); add2.setTextSize(fs(8.8f)); add2.setEnabled(price2Ok); add2.setAlpha(price2Ok ? 1f : .48f);
-            add2.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 2); showNotice("یک عدد با قیمت ۲ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+            add2.setOnClickListener(v -> cardAddToCart(r, 2, query, filter));
             Button add1 = themedActionButton(PRICE1_BUTTON, navAccent("cart"), true); add1.setTextSize(fs(8.9f)); add1.setEnabled(price1Ok); add1.setAlpha(price1Ok ? 1f : .48f);
-            add1.setOnClickListener(v -> confirmStockThen(r, () -> { incrementCartItem(r, 1); showNotice("یک عدد با قیمت ۱ به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); }));
+            add1.setOnClickListener(v -> cardAddToCart(r, 1, query, filter));
             Button addM = themedActionButton(MANUAL_PRICE_BUTTON, GOLD_2, false); addM.setTextSize(fs(8.6f));
             addM.setContentDescription("افزودن با قیمت دستی");
             addM.setOnClickListener(v -> confirmStockThen(r, () -> showManualPriceDialog(r, () -> rerenderShowcaseFast(query, filter))));
@@ -12863,6 +12933,93 @@ public class MainActivity extends Activity {
     }
 
     /** Runs {@code go} directly, or after a confirmation when the product has no stock (B11). */
+    /** Store: a price button on a product card asks how much (count / weight, or by rial amount) before adding. */
+    private void cardAddToCart(JSONObject r, int tier, String query, String filter) {
+        if (STORE_EDITION) { showStoreQtyDialog(r, tier, () -> rerenderShowcaseFast(query, filter)); return; }
+        confirmStockThen(r, () -> { incrementCartItem(r, tier); showNotice("یک عدد با قیمت " + (tier == 2 ? "۲" : "۱") + " به سبد اضافه شد.", false); rerenderShowcaseFast(query, filter); });
+    }
+
+    private void showStoreQtyDialog(JSONObject r, int tier, Runnable after) {
+        if (r == null) return;
+        final double p1 = jsonDouble(r, "قیمت_فروش", 0);
+        final double price = tier == 2 ? price2ByRule(p1, jsonDouble(r, "قیمت_فروش۲", 0)) : p1;
+        final String name = safeDisplayText(r.opt("نام"), "کالا");
+        if (price <= 0) { showNotice("«" + name + "» قیمت فروش " + (tier == 2 ? "۲" : "۱") + " ندارد؛ از «قیمت دستی» استفاده کنید.", true); return; }
+        final double stock = jsonDouble(r, "موجودی", 0), pack = Math.max(1, jsonDouble(r, "تعداد_در_بسته", 1));
+        final String unit = safeDisplayText(r.opt("واحد"), "");
+        final String code = safeDisplayText(r.opt("کد"), "");
+        int accent = navAccent("cart");
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(14), dp(12), dp(14), dp(6));
+        TextView title = text(name, 15.5f, TEXT, Typeface.BOLD); title.setMaxLines(2); box.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        box.addView(text("قیمت " + (tier == 2 ? "۲" : "۱") + ": " + money(price) + (unit.isEmpty() ? "" : " • هر " + unit)
+                + "\nموجودی: " + formatNumber(stock) + (unit.isEmpty() ? "" : " " + unit) + (pack > 1 ? " • هر کارتن " + formatNumber(pack) + " عدد" : ""), 10.4f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        final boolean[] byAmount = {false};
+        LinearLayout modes = new LinearLayout(this); modes.setOrientation(LinearLayout.HORIZONTAL);
+        Button mQty = themedActionButton("تعداد / مقدار", accent, true), mAmt = themedActionButton("بر اساس مبلغ", accent, false);
+        modes.addView(mQty, weightedButtonLp()); modes.addView(mAmt, weightedButtonLp());
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(46)); mp.setMargins(0, dp(10), 0, 0); box.addView(modes, mp);
+        final EditText qty = qtyInput("تعداد یا مقدار" + (unit.isEmpty() ? "" : " (" + unit + ")"), cartFindIndex(code) >= 0 ? cartQtyFor(code) : "1");
+        LinearLayout.LayoutParams qp = new LinearLayout.LayoutParams(-1, dp(52)); qp.setMargins(0, dp(8), 0, 0); box.addView(qty, qp);
+        final EditText amount = numberInput("مبلغ به ریال", 0, false); amount.setText(""); amount.setVisibility(View.GONE);
+        box.addView(amount, new LinearLayout.LayoutParams(-1, dp(52)));
+        LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL);
+        List<double[]> quick = new ArrayList<>();
+        if (pack > 1) quick.add(new double[]{pack, 1});
+        for (double q : new double[]{0.5, 1, 2, 5, 10}) if (quick.size() < 5) quick.add(new double[]{q, 0});
+        for (double[] q : quick) {
+            Button b = themedActionButton(q[1] == 1 ? "۱ کارتن" : formatNumber(q[0]), INFO, false); b.setTextSize(fs(9f));
+            b.setOnClickListener(v -> { if (byAmount[0]) mQty.performClick(); qty.setText(plainNumber(q[0])); qty.setSelection(qty.getText().length()); });
+            chips.addView(b, weightedButtonLp());
+        }
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, dp(42)); cp.setMargins(0, dp(6), 0, 0); box.addView(chips, cp);
+        final TextView total = text("", 12.6f, TEXT, Typeface.BOLD);
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(10), 0, dp(4)); box.addView(total, tp);
+        final boolean[] busy = {false};
+        Runnable refresh = () -> {
+            double q = parseNumber(qty.getText().toString(), 0);
+            String warn = q > stock + 1e-9 ? "\n⚠ بیشتر از موجودی (" + formatNumber(stock) + ")" : "";
+            total.setText(q > 0 ? "جمع این ردیف: " + money(Math.round(q * price)) + warn : "مقدار را وارد کنید.");
+            total.setTextColor(tc(warn.isEmpty() ? SUCCESS : WARNING));
+        };
+        qty.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable x) { refresh.run(); }
+        });
+        amount.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable x) {
+                if (busy[0] || !byAmount[0]) return;
+                double a = parseNumber(x.toString(), 0);
+                busy[0] = true; qty.setText(a > 0 ? plainNumber(Math.round(a / price * 1000.0) / 1000.0) : ""); busy[0] = false;
+            }
+        });
+        mQty.setOnClickListener(v -> { byAmount[0] = false; amount.setVisibility(View.GONE); qty.setEnabled(true); styleModeButton(mQty, accent, true); styleModeButton(mAmt, accent, false); });
+        mAmt.setOnClickListener(v -> { byAmount[0] = true; amount.setVisibility(View.VISIBLE); qty.setEnabled(false); amount.requestFocus(); styleModeButton(mQty, accent, false); styleModeButton(mAmt, accent, true); });
+        refresh.run();
+        AlertDialog dlg = new MeelanoDialogBuilder().setView(box).setNegativeButton("انصراف", null).setPositiveButton("افزودن به فاکتور", null).create();
+        dlg.setOnShowListener(x -> {
+            styleMeelanoDialog(dlg, accent);
+            Button ok = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (ok != null) ok.setOnClickListener(v -> {
+                double q = parseNumber(qty.getText().toString(), 0);
+                if (q <= 0) { total.setText("مقدار باید بیشتر از صفر باشد."); total.setTextColor(tc(DANGER)); return; }
+                addOrUpdateCartItem(r, plainNumber(Math.round(q * 1000.0) / 1000.0), tier);
+                dlg.dismiss();
+                showNotice(formatNumber(q) + (unit.isEmpty() ? "" : " " + unit) + " «" + name + "» در فاکتور ثبت شد (" + money(Math.round(q * price)) + ").", false);
+                if (after != null) after.run();
+            });
+            qty.requestFocus(); qty.setSelection(qty.getText().length());
+        });
+        dlg.show();
+    }
+
+    private void styleModeButton(Button b, int accent, boolean on) {
+        b.setBackground(on ? rounded(accent, 16) : roundedStroke(alpha(accent, isLightTheme() ? 18 : 30), 16, alpha(accent, 90)));
+        b.setTextColor(on ? onColorFor(accent) : tc(accent));
+    }
+
     private void confirmStockThen(JSONObject r, Runnable go) {
         if (!isOutOfStock(r)) { go.run(); return; }
         new MeelanoDialogBuilder()
@@ -14382,7 +14539,7 @@ public class MainActivity extends Activity {
         head.addView(cart3dIcon("♙", accent, 18f), new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL); copy.setPadding(dp(10), 0, dp(8), 0);
         copy.addView(text("انتخاب مشتری سبد", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        copy.addView(text("تا ۳۰ مشتری نمایش داده می‌شود؛ برای مشتری دیگر نام، کد یا موبایل را جستجو کنید.", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        copy.addView(text(STORE_EDITION ? "همه " + formatNumber(rows == null ? 0 : rows.length()) + " مشتری (به جز تامین‌کنندگان و پرسنل)؛ با «نمایش بیشتر» یا جستجو پیدا کنید." : "تا ۳۰ مشتری نمایش داده می‌شود؛ برای مشتری دیگر نام، کد یا موبایل را جستجو کنید.", 9.7f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         head.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         box.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
@@ -14409,10 +14566,23 @@ public class MainActivity extends Activity {
         LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL);
         JSONArray displayRows = pickerRows;
         if (displayRows.length() == 0) addEmptyTo(list, "مشتری مطابق این جستجو پیدا نشد.");
-        int maxRows = Math.min(displayRows.length(), 30);
-        String currentCode = visitorCartCustomer == null ? "" : visitorCartCustomer.optString("code", "");
-        for (int i = 0; i < maxRows; i++) {
-            JSONObject r = displayRows.optJSONObject(i); if (r == null) continue;
+        final int pageSize = STORE_EDITION ? 40 : 30;
+        int maxRows = Math.min(displayRows.length(), pageSize);
+        final String currentCode = visitorCartCustomer == null ? "" : visitorCartCustomer.optString("code", "");
+        for (int i = 0; i < maxRows; i++) addCartPickerCustomerRow(list, displayRows.optJSONObject(i), currentCode, dlg);
+        if (displayRows.length() > maxRows) {
+            if (STORE_EDITION) addCartPickerMoreRow(list, displayRows, maxRows, pageSize, currentCode, dlg);
+            else addEmptyTo(list, "برای نمایش مشتریان بیشتر، نام/کد/موبایل را جستجو کنید.");
+        }
+        scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(360)); lp.setMargins(0, dp(8), 0, 0); box.addView(scroll, lp);
+        dlg[0] = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create();
+        styleMeelanoDialog(dlg[0], accent);
+        dlg[0].show();
+    }
+
+    private void addCartPickerCustomerRow(LinearLayout list, JSONObject r, String currentCode, AlertDialog[] dlg) {
+            if (r == null) return;
             boolean risky = r.optDouble("balance", 0) > 0 || r.optBoolean("blocked", false);
             boolean isCurrent = !currentCode.isEmpty() && currentCode.equals(r.optString("code", ""));
             int rowAccent = risky ? WARNING : SUCCESS;
@@ -14445,23 +14615,37 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2); ap.setMargins(0, dp(6), 0, 0); card.addView(address, ap);
             }
             LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(7), 0, 0); list.addView(card, cp);
-        }
-        if (displayRows.length() > maxRows) addEmptyTo(list, "برای نمایش مشتریان بیشتر، نام/کد/موبایل را جستجو کنید.");
-        scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(360)); lp.setMargins(0, dp(8), 0, 0); box.addView(scroll, lp);
-        dlg[0] = new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن", null).create();
-        styleMeelanoDialog(dlg[0], accent);
-        dlg[0].show();
+    }
+
+    /** Appends the next page of the picker in place, so a long customer list never needs a search. */
+    private void addCartPickerMoreRow(LinearLayout list, JSONArray rows, int shown, int pageSize, String currentCode, AlertDialog[] dlg) {
+        int accent = navAccent("customers");
+        LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL);
+        int left = rows.length() - shown;
+        Button more = themedActionButton("نمایش " + formatNumber(Math.min(pageSize, left)) + " مشتری دیگر", accent, true);
+        Button all = themedActionButton("نمایش همه (" + formatNumber(rows.length()) + ")", accent, false);
+        bar.addView(more, weightedButtonLp()); bar.addView(all, weightedButtonLp());
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2); bp.setMargins(0, dp(9), 0, dp(4));
+        list.addView(bar, bp);
+        View.OnClickListener grow = v -> {
+            int upTo = v == all ? rows.length() : Math.min(rows.length(), shown + pageSize);
+            list.removeView(bar);
+            for (int i = shown; i < upTo; i++) addCartPickerCustomerRow(list, rows.optJSONObject(i), currentCode, dlg);
+            if (upTo < rows.length()) addCartPickerMoreRow(list, rows, upTo, pageSize, currentCode, dlg);
+        };
+        more.setOnClickListener(grow); all.setOnClickListener(grow);
     }
 
     private String queryCartCustomers(String search) throws Exception {
         try (Connection c = openConnection()) {
+            refreshStoreCustomerSettings(c);
             Set<String> cols = columns(c, "CUSTOMERS");
             String shmo = resolveFlexible(cols, "SHMO", "shmo", "CustomerCode", "customer_code", "code", "Code", "کد");
             String name = resolveFlexible(cols, "MONAME", "Name", "CusName", "CustomerName", "name", "نام", "نام_مشتری");
             String balance = resolveFlexible(cols, "man", "Balance", "Mandeh", "mande", "مانده");
             String phone = resolveFlexible(cols, "cell", "mobile", "Mobile", "tell1", "tel1", "phone", "Phone", "تلفن", "موبایل");
-            String credit = resolveFlexible(cols, "credit", "Credit", "credit_limit", "Limit", "etebar", "Etebar", "سقف_اعتبار");
+            String credit = resolveFlexible(cols, "cred", "credit", "Credit", "credit_limit", "Limit", "etebar", "Etebar", "سقف_اعتبار");
+            String blackList = resolveFlexible(cols, "black_list");
             String address = resolveFlexible(cols, "address", "Address", "addr", "Adress", "آدرس", "نشانی");
             String blocked = resolveFlexible(cols, "blocked", "blacklist", "lock", "is_blocked", "active", "Active");
             String route = resolveFlexible(cols, "route", "Route", "masir", "Masir", "مسیر", "مسير", "day", "Day", "visit_day", "VisitDay", "rooz", "Rooz", "روز");
@@ -14474,13 +14658,15 @@ public class MainActivity extends Activity {
                 for (String sv : searchVariants(search.trim())) for (String col : new String[]{shmo, name, phone}) if (col != null) { parts.add("TRY_CONVERT(nvarchar(400),c.[" + col + "]) LIKE N'%' + ? + N'%'"); params.add(sv); }
                 if (!parts.isEmpty()) where.add("(" + join(parts, " OR ") + ")");
             }
-            String sql = "SELECT TOP (5) TRY_CONVERT(nvarchar(100),c.[" + shmo + "]), " + label + ", " +
+            // Store: the whole (scoped) list — the picker pages it. Visitor app keeps the quick 5-row lookup.
+            String sql = "SELECT " + (STORE_EDITION ? "" : "TOP (5) ") + "TRY_CONVERT(nvarchar(100),c.[" + shmo + "]), " + label + ", " +
                     (balance == null ? "CAST(0 AS decimal(19,2))" : "TRY_CONVERT(decimal(19,2),c.[" + balance + "])") + ", " +
                     (phone == null ? "CAST(NULL AS nvarchar(100))" : "TRY_CONVERT(nvarchar(100),c.[" + phone + "])") + ", " +
                     (credit == null ? "CAST(0 AS decimal(19,2))" : "TRY_CONVERT(decimal(19,2),c.[" + credit + "])") + ", " +
                     (address == null ? "CAST(NULL AS nvarchar(500))" : "TRY_CONVERT(nvarchar(500),c.[" + address + "])") + ", " +
                     (blocked == null ? "CAST(NULL AS nvarchar(40))" : "TRY_CONVERT(nvarchar(40),c.[" + blocked + "])") + ", " +
-                    (route == null ? "CAST(NULL AS nvarchar(100))" : "TRY_CONVERT(nvarchar(100),c.[" + route + "])") +
+                    (route == null ? "CAST(NULL AS nvarchar(100))" : "TRY_CONVERT(nvarchar(100),c.[" + route + "])") + ", " +
+                    (blackList == null ? "CAST(0 AS int)" : "ISNULL(TRY_CONVERT(int,c.[" + blackList + "]),0)") +
                     " FROM dbo.CUSTOMERS c " + (where.isEmpty() ? "" : " WHERE " + join(where, " AND ")) + " ORDER BY " + label;
             JSONArray arr = new JSONArray();
             try (PreparedStatement ps = c.prepareStatement(sql)) {
@@ -14494,7 +14680,7 @@ public class MainActivity extends Activity {
                         o.put("creditLimit", r.getDouble(5)); o.put("address", stringOr(r.getString(6), ""));
                         String bv = stringOr(r.getString(7), ""); o.put("blockedRaw", bv);
                         String bl = normalizeDigits(bv).toLowerCase(Locale.US);
-                        o.put("blocked", bl.equals("0") || bl.contains("blocked") || bl.contains("lock") || bl.contains("مسدود"));
+                        o.put("blocked", bl.equals("0") || bl.equals("f") || bl.contains("blocked") || bl.contains("lock") || bl.contains("مسدود") || r.getInt(9) != 0);
                         o.put("route", stringOr(r.getString(8), "")); arr.put(o);
                     }
                 }
@@ -15987,14 +16173,14 @@ public class MainActivity extends Activity {
         String buyApply = buyKey != null ? "OUTER APPLY (SELECT " + (buyQty == null ? "CAST(0 AS decimal(19,3))" : "ISNULL(SUM(" + sqlNumberExpr("b", buyQty, "decimal(19,3)") + "),0)") + " buy_qty FROM dbo.subbuyfact b WHERE TRY_CONVERT(nvarchar(100),b.[" + buyKey + "])=TRY_CONVERT(nvarchar(100),i.[" + shka + "])" + activeAnd(buyCols, "b") + (buySoft.isEmpty()?"":" AND "+buySoft) + ") ba " : "OUTER APPLY (SELECT CAST(0 AS decimal(19,3)) buy_qty) ba ";
         String relPriceSoft = softDeleteCondition(relPriceCols == null ? new HashSet<String>() : relPriceCols, "pr");
         String priceApply = relPriceTable != null && relPriceKey != null ? "OUTER APPLY (SELECT TOP (1) " + sqlNumberExpr("pr", relPrice1, "decimal(19,2)") + " price1, " + sqlNumberExpr("pr", relPrice2, "decimal(19,2)") + " price2 FROM dbo.[" + relPriceTable + "] pr WHERE TRY_CONVERT(nvarchar(100),pr.[" + relPriceKey + "])=TRY_CONVERT(nvarchar(100),i.[" + shka + "])" + activeAnd(relPriceCols, "pr") + (relPriceSoft.isEmpty()?"":" AND "+relPriceSoft) + relatedTopOrder(relPriceCols, "pr") + ") prx " : "OUTER APPLY (SELECT CAST(NULL AS decimal(19,2)) price1, CAST(NULL AS decimal(19,2)) price2) prx ";
-        String stockApply = relatedStockApply(relStockTable, relStockCols, relStockKey, relStockBalance, relStockIn, relStockOut, relStockQty, relStockDir, "i", shka, "stx");
+        String stockApply = atiranStockLedger(c) ? atiranStockApply("i", "stx") : relatedStockApply(relStockTable, relStockCols, relStockKey, relStockBalance, relStockIn, relStockOut, relStockQty, relStockDir, "i", shka, "stx");
         String invP1 = sqlNumberExpr("i", price1, "decimal(19,2)");
         String invP2 = sqlNumberExpr("i", price2, "decimal(19,2)");
         String p1Expr = "COALESCE(NULLIF(prx.price1,0)," + invP1 + ",0)";
         String p2RawExpr = "COALESCE(NULLIF(prx.price2,0)," + invP2 + ",0)";
         String p2FinalExpr = "CASE WHEN ISNULL(" + p2RawExpr + ",0)>0 THEN " + p2RawExpr + " WHEN ISNULL(" + p1Expr + ",0)>0 THEN ROUND(" + p1Expr + "*1.06,0) ELSE 0 END";
         String movement = "(ISNULL(ba.buy_qty,0)-ISNULL(sa.sale_qty,0))";
-        String invStock = stock == null ? "CAST(NULL AS decimal(19,3))" : sqlNumberExpr("i", stock, "decimal(19,3)");
+        String invStock = atiranStockLedger(c) ? ATIRAN_INVENTORY_PIECES : stock == null ? "CAST(NULL AS decimal(19,3))" : sqlNumberExpr("i", stock, "decimal(19,3)");
         String stockExpr = "CASE WHEN ISNULL(stx.stock_rows,0)>0 THEN ISNULL(stx.stock_qty,0) ELSE COALESCE(" + invStock + "," + movement + ",0) END";
         boolean hasReliableStockSource = relStockTable != null || stock != null || (saleKey != null && saleQty != null && buyKey != null && buyQty != null);
         String sql = "SELECT " + stockExpr + " AS st," + p1Expr + " AS p1," + p2FinalExpr + " AS p2 FROM dbo.inventory i " + saleApply + buyApply + priceApply + stockApply + " WHERE TRY_CONVERT(nvarchar(100),i.[" + shka + "])=?";
@@ -16730,6 +16916,42 @@ public class MainActivity extends Activity {
         return "CASE WHEN " + dir + " LIKE N'%OUT%' OR " + dir + " LIKE N'%ISSUE%' OR " + dir + " LIKE N'%EXIT%' OR " + dir + " LIKE N'%SALE%' OR " + dir + " LIKE N'%SELL%' OR " + dir + " LIKE N'%خروج%' OR " + dir + " LIKE N'%حواله%' OR " + dir + " LIKE N'%فروش%' OR " + dir + " LIKE N'%مصرف%' THEN -" + qty + " WHEN " + dir + " LIKE N'%IN%' OR " + dir + " LIKE N'%RECEIPT%' OR " + dir + " LIKE N'%BUY%' OR " + dir + " LIKE N'%PURCHASE%' OR " + dir + " LIKE N'%ورود%' OR " + dir + " LIKE N'%رسید%' OR " + dir + " LIKE N'%خرید%' OR " + dir + " LIKE N'%دریافت%' THEN " + qty + " ELSE " + qty + " END";
     }
 
+    // ---------------------------------------------------------------- Atiran stock, exactly as Atiran computes it
+    /**
+     * Movement types that REDUCE stock in dbo.UpdateMojodiInventory (Atiran's own procedure): sale 20, waste 18,
+     * return to supplier 26, raw material used by production 85 and the rest of Atiran's list. Everything else —
+     * purchase 11, opening 47, additions 25, returns 17/27, production output 86, 132 … — adds.
+     */
+    static final String ATIRAN_STOCK_OUT_ACTS = "20,22,5,19,18,48,26,85,133";
+    /** Stock in pieces from the columns Atiran keeps (mojkavah = whole units, mojkajoz = remaining pieces). */
+    static final String ATIRAN_INVENTORY_PIECES = "(CAST(ISNULL(i.mojkavah,0) AS decimal(19,3))*ISNULL(NULLIF(TRY_CONVERT(decimal(19,3),i.mohvah),0),1)+CAST(ISNULL(i.mojkajoz,0) AS decimal(19,3)))";
+    private volatile Boolean atiranLedgerOk = null;
+
+    /** True when the database is Atiran (ka_act ledger + inventory.mohvah/mojkavah/mojkajoz). */
+    private boolean atiranStockLedger(Connection c) {
+        Boolean ok = atiranLedgerOk;
+        if (ok != null) return ok;
+        try {
+            Set<String> k = columns(c, "ka_act"), inv = columns(c, "inventory");
+            ok = resolve(k, "shka") != null && resolve(k, "act_id") != null && resolve(k, "tedvah") != null && resolve(k, "tedjoz") != null && resolve(k, "active") != null
+                    && resolve(inv, "shka") != null && resolve(inv, "mohvah") != null && resolve(inv, "mojkavah") != null && resolve(inv, "mojkajoz") != null;
+        } catch (Exception e) { ok = false; }
+        atiranLedgerOk = ok;
+        return ok;
+    }
+
+    /**
+     * Live stock of every product, in pieces, straight from Atiran's stock ledger (ka_act, active rows) with the
+     * same signs as dbo.UpdateMojodiInventory — so production (output 86, raw material 85), waste, additions,
+     * returns and cancelled sales are all counted even if inventory.mojkavah was not refreshed yet.
+     */
+    static String atiranStockApply(String inv, String alias) {
+        String sign = "CASE WHEN k.act_id IN (" + ATIRAN_STOCK_OUT_ACTS + ") THEN -1 ELSE 1 END";
+        return "OUTER APPLY (SELECT CAST(1 AS bigint) stock_rows, CAST(ISNULL(SUM(CAST(ISNULL(k.tedvah,0) AS decimal(19,3))*" + sign + "),0)"
+                + "*ISNULL(NULLIF(TRY_CONVERT(decimal(19,3)," + inv + ".mohvah),0),1)+ISNULL(SUM(CAST(ISNULL(k.tedjoz,0) AS decimal(19,3))*" + sign + "),0) AS decimal(19,3)) stock_qty "
+                + "FROM dbo.ka_act k WHERE k.shka=" + inv + ".shka AND k.active='t') " + alias + " ";
+    }
+
     private String relatedStockApply(String table, Set<String> cols, String keyCol, String balanceCol, String inCol, String outCol, String qtyCol, String directionCol, String invAlias, String invKeyCol, String outAlias) {
         String a = outAlias == null || outAlias.trim().isEmpty() ? "stx" : outAlias.trim();
         if (table == null || keyCol == null) return "OUTER APPLY (SELECT CAST(0 AS bigint) stock_rows, CAST(NULL AS decimal(19,3)) stock_qty) " + a + " ";
@@ -16989,7 +17211,7 @@ public class MainActivity extends Activity {
             select.add("CAST(1 AS int) AS قیمت_فروش۲_محاسباتی");
             select.add(sqlNumberExpr("i", buyPrice, "decimal(19,2)") + " AS بهای_خرید");
             String movementStockExpr = "(ISNULL(ba.buy_qty,0)-ISNULL(sa.sale_qty,0))";
-            String invStockExpr = stock == null ? "CAST(NULL AS decimal(19,3))" : sqlNumberExpr("i", stock, "decimal(19,3)");
+            String invStockExpr = atiranStockLedger(c) ? ATIRAN_INVENTORY_PIECES : stock == null ? "CAST(NULL AS decimal(19,3))" : sqlNumberExpr("i", stock, "decimal(19,3)");
             String stockExpr = "CASE WHEN ISNULL(stx.stock_rows,0)>0 THEN ISNULL(stx.stock_qty,0) ELSE COALESCE(" + invStockExpr + "," + movementStockExpr + ",0) END";
             String unitFallbackRaw = unitText != null ? "TRY_CONVERT(nvarchar(80),i.[" + unitText + "])" : (unitRef != null ? "TRY_CONVERT(nvarchar(80),i.[" + unitRef + "])" : "CAST(NULL AS nvarchar(80))");
             String unitFallback = sqlCleanTextExpr(unitFallbackRaw);
@@ -16999,6 +17221,11 @@ public class MainActivity extends Activity {
             select.add(packCount == null ? "CAST(1 AS decimal(19,3)) AS تعداد_در_بسته" : "ISNULL(" + sqlNumberExpr("i", packCount, "decimal(19,3)") + ",1) AS تعداد_در_بسته");
             select.add(imageBinary && imageCol != null ? "master.dbo.fn_varbintohexstr(i.[" + imageCol + "]) AS تصویر" : (!imageText ? "CAST(NULL AS nvarchar(max)) AS تصویر" : "TRY_CONVERT(nvarchar(max),i.[" + imageCol + "]) AS تصویر"));
             select.add(groupName != null && groupKey != null && groupId != null ? "TRY_CONVERT(nvarchar(250),g.[" + groupName + "]) AS گروه" : "CAST(NULL AS nvarchar(250)) AS گروه");
+            // Atiran keeps product photos in dbo.ka_image (one row per product); only the size is read here —
+            // the photo itself is fetched lazily for the cards on screen (MeelanoAtiranImages).
+            Set<String> kaImageCols = columns(c, "ka_image");
+            boolean kaImages = resolve(kaImageCols, "shka") != null && resolve(kaImageCols, "pic") != null;
+            select.add(kaImages ? "ISNULL(kim.pic_len,0) AS تصویر_آتیران" : "CAST(0 AS bigint) AS تصویر_آتیران");
             select.add("ISNULL(sa.sale_qty,0) AS تعداد_فروش");
             select.add("ISNULL(sa.sale_amount,0) AS مبلغ_فروش");
             select.add("ISNULL(ba.buy_qty,0) AS تعداد_خرید");
@@ -17016,8 +17243,9 @@ public class MainActivity extends Activity {
             String relPriceSoft = softDeleteCondition(relPriceCols == null ? new HashSet<String>() : relPriceCols, "pr");
             String priceApply = relPriceTable != null && relPriceKey != null ? "OUTER APPLY (SELECT TOP (1) " +
                     sqlNumberExpr("pr", relPrice1, "decimal(19,2)") + " price1, " + sqlNumberExpr("pr", relPrice2, "decimal(19,2)") + " price2 FROM dbo.[" + relPriceTable + "] pr WHERE TRY_CONVERT(nvarchar(100),pr.[" + relPriceKey + "])=TRY_CONVERT(nvarchar(100),i.[" + shka + "])" + activeAnd(relPriceCols, "pr") + (relPriceSoft.isEmpty()?"":" AND "+relPriceSoft) + relatedTopOrder(relPriceCols, "pr") + ") prx " : "OUTER APPLY (SELECT CAST(NULL AS decimal(19,2)) price1, CAST(NULL AS decimal(19,2)) price2) prx ";
-            String stockApply = relatedStockApply(relStockTable, relStockCols, relStockKey, relStockBalance, relStockIn, relStockOut, relStockQty, relStockDir, "i", shka, "stx");
+            String stockApply = atiranStockLedger(c) ? atiranStockApply("i", "stx") : relatedStockApply(relStockTable, relStockCols, relStockKey, relStockBalance, relStockIn, relStockOut, relStockQty, relStockDir, "i", shka, "stx");
             String unitJoin = unitTable != null && unitRef != null && unitKey != null && unitName != null ? "LEFT JOIN dbo.[" + unitTable + "] u ON TRY_CONVERT(nvarchar(100),u.[" + unitKey + "])=TRY_CONVERT(nvarchar(100),i.[" + unitRef + "]) " : "";
+            String kaImageApply = kaImages ? "OUTER APPLY (SELECT TOP (1) CAST(DATALENGTH(ki.pic) AS bigint) pic_len FROM dbo.ka_image ki WHERE ki.shka=i.[" + shka + "] AND DATALENGTH(ki.pic)>100 ORDER BY ki.rdf DESC) kim " : "";
             String groupJoin = groupName != null && groupKey != null && groupId != null ? "LEFT JOIN dbo.kagroup g ON TRY_CONVERT(nvarchar(100),g.[" + groupKey + "])=TRY_CONVERT(nvarchar(100),i.[" + groupId + "]) " : "";
 
             List<String> where = new ArrayList<>();
@@ -17035,18 +17263,19 @@ public class MainActivity extends Activity {
             if ("idle".equals(filter)) where.add("ISNULL(sa.sale_qty,0)=0 AND ISNULL(ba.buy_qty,0)=0");
             if ("priced".equals(filter)) where.add("(ISNULL(" + priceExpr + ",0)>0 OR ISNULL(" + price2FinalExpr + ",0)>0)");
             if ("price2".equals(filter)) where.add("ISNULL(" + price2FinalExpr + ",0)>0");
-            if ("image".equals(filter) && imageCol != null) where.add(imageBinary ? "DATALENGTH(i.[" + imageCol + "])>20" : "LEN(LTRIM(RTRIM(TRY_CONVERT(nvarchar(max),i.[" + imageCol + "]))))>20");
+            if ("image".equals(filter) && kaImages) where.add("ISNULL(kim.pic_len,0)>0");
+            else if ("image".equals(filter) && imageCol != null) where.add(imageBinary ? "DATALENGTH(i.[" + imageCol + "])>20" : "LEN(LTRIM(RTRIM(TRY_CONVERT(nvarchar(max),i.[" + imageCol + "]))))>20");
             if ("package".equals(filter) && packCount != null) where.add("ISNULL(" + sqlNumberExpr("i", packCount, "decimal(19,3)") + ",0)>1");
             String order = "top".equals(filter) ? " ORDER BY مبلغ_فروش DESC, نام" : ("low".equals(filter) ? " ORDER BY موجودی ASC, نام" : ("price2".equals(filter) ? " ORDER BY قیمت_فروش۲ DESC, نام" : " ORDER BY نام, کد"));
             int productTopLimit = VISITOR_EDITION ? 6000 : 160; // visitor: every product is loaded once at login
-            String sql = "SELECT TOP (" + productTopLimit + ") " + join(select, ",") + " FROM dbo.[inventory] i " + unitJoin + groupJoin + saleApply + buyApply + priceApply + stockApply +
+            String sql = "SELECT TOP (" + productTopLimit + ") " + join(select, ",") + " FROM dbo.[inventory] i " + unitJoin + groupJoin + kaImageApply + saleApply + buyApply + priceApply + stockApply +
                     (where.isEmpty() ? "" : " WHERE " + join(where, " AND ")) + order;
             try {
                 return executeRowsJson(c, sql, params);
             } catch (Exception stockEx) {
                 if (relStockTable == null) throw stockEx;
                 String fallbackStockApply = relatedStockApply(null, null, null, null, null, null, null, null, "i", shka, "stx");
-                String fallbackSql = "SELECT TOP (" + productTopLimit + ") " + join(select, ",") + " FROM dbo.[inventory] i " + unitJoin + groupJoin + saleApply + buyApply + priceApply + fallbackStockApply +
+                String fallbackSql = "SELECT TOP (" + productTopLimit + ") " + join(select, ",") + " FROM dbo.[inventory] i " + unitJoin + groupJoin + kaImageApply + saleApply + buyApply + priceApply + fallbackStockApply +
                         (where.isEmpty() ? "" : " WHERE " + join(where, " AND ")) + order;
                 return executeRowsJson(c, fallbackSql, params);
             }
@@ -17260,6 +17489,7 @@ public class MainActivity extends Activity {
 
     private boolean hasProductImage(JSONObject r) {
         if (visitorProductImageOverrideBitmap(r) != null) return true;
+        if (atiranImageLength(r) > 0) return true;
         String raw = r == null ? "" : r.optString("تصویر", "");
         if (raw == null) return false;
         raw = raw.trim();
@@ -17276,13 +17506,29 @@ public class MainActivity extends Activity {
 
     private void applyProductImage(ImageView img, JSONObject r) { applyProductImage(img, r, true); }
 
+    private MeelanoAtiranImages atiranImages;
+
+    private MeelanoAtiranImages atiranImages() {
+        if (atiranImages == null) atiranImages = new MeelanoAtiranImages(getCacheDir(), this::openConnection, dp(170));
+        return atiranImages;
+    }
+
+    private long atiranImageLength(JSONObject r) { return r == null ? 0 : r.optLong("تصویر_آتیران", 0); }
+
     private void applyProductImage(ImageView img, JSONObject r, boolean decodeRealImage) {
         if (img == null) return;
+        // The photo stays inside the card's rounded frame.
+        img.setClipToOutline(true);
+        if (img.getScaleType() != ImageView.ScaleType.CENTER_CROP) img.setScaleType(ImageView.ScaleType.CENTER_CROP);
         Bitmap local = visitorProductImageOverrideBitmap(r);
-        if (local != null) { img.clearColorFilter(); img.setImageBitmap(local); return; }
+        if (local != null) { if (atiranImages != null) atiranImages.forget(img); img.clearColorFilter(); img.setImageBitmap(local); return; }
         Bitmap smart = bundledProductPhoto(r);
         if (smart == null) smart = smartProductBitmap(r);
         if (smart != null) { img.clearColorFilter(); img.setImageBitmap(smart); } else { img.setImageResource(R.drawable.mi_inventory_2); img.setColorFilter(alpha(MUTED, 200)); }
+        // The product's own photo in Atiran replaces the placeholder as soon as it arrives.
+        long kaLen = atiranImageLength(r);
+        if (kaLen > 0 && !designPreview) { atiranImages().load(img, (long) parseNumber(r.optString("کد", ""), 0), kaLen); return; }
+        if (atiranImages != null) atiranImages.forget(img);
         if (!decodeRealImage || !hasProductImage(r)) return;
         String raw = r.optString("تصویر", "").trim();
         String cacheKey = "db_image|" + r.optString("کد", "") + "|" + raw.length() + "|" + raw.hashCode();
@@ -21125,16 +21371,13 @@ public class MainActivity extends Activity {
         return formatNumber(value) + " ریال";
     }
 
+    /** Amounts are shown in full rials everywhere, grouped three by three (no «میلیون / میلیارد» shortening). */
     private String compactMoney(Object value) {
         if (privacyMode()) return "••••";
         if (value == null || JSONObject.NULL.equals(value)) return "۰ ریال";
         try {
             double v = value instanceof Number ? ((Number) value).doubleValue() : Double.parseDouble(String.valueOf(value));
-            double a = Math.abs(v);
-            if (a >= 1000000000000d) return formatNumber(v / 1000000000000d) + " همت";
-            if (a >= 1000000000d) return formatNumber(v / 1000000000d) + " میلیارد";
-            if (a >= 1000000d) return formatNumber(v / 1000000d) + " میلیون";
-            return money(v);
+            return money(Math.round(v));
         } catch (Exception ignored) { return money(value); }
     }
 
@@ -23905,8 +24148,8 @@ public class MainActivity extends Activity {
             out.put("topCustomers", rowsJson(c, "SELECT TOP (8) CAST(MAX(cu.MONAME) AS nvarchar(500)), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s JOIN dbo.CUSTOMERS cu ON cu.SHMO=s.shmo WHERE" + live + "AND s.[date]>=? GROUP BY s.shmo ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
             out.put("topProducts", rowsJson(c, "SELECT TOP (8) CAST(MAX(d.naka) AS nvarchar(500)), ISNULL(SUM(d.TEDVAH),0), ISNULL(SUM(d.LINESUM),0) FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=? GROUP BY d.SHKA ORDER BY 3 DESC", new String[]{"name", "qty", "sum"}, month));
             String from60 = MeelanoJalali.addDays(today, -59);
-            out.put("lowStock", rowsJson(c, "SELECT TOP (40) CAST(i.naka AS nvarchar(500)), ISNULL(i.mojkavah,0), i.shka FROM dbo.inventory i WHERE ISNULL(i.mojkavah,0) <= 5 AND i.shka IN (SELECT d.SHKA FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=?) ORDER BY ISNULL(i.mojkavah,0), i.naka", new String[]{"name", "stock", "code"}, from60));
-            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT COUNT(*), SUM(CASE WHEN ISNULL(mojkavah,0)*ISNULL(NULLIF(mohvah,0),1)+ISNULL(mojkajoz,0) > 0 THEN 1 ELSE 0 END) FROM dbo.inventory")) {
+            out.put("lowStock", rowsJson(c, "SELECT TOP (40) CAST(i.naka AS nvarchar(500)), ISNULL(stx.stock_qty,0), i.shka FROM dbo.inventory i " + atiranStockApply("i", "stx") + "WHERE ISNULL(stx.stock_qty,0) <= 5*ISNULL(NULLIF(TRY_CONVERT(decimal(19,3),i.mohvah),0),1) AND i.shka IN (SELECT d.SHKA FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=?) ORDER BY ISNULL(stx.stock_qty,0), i.naka", new String[]{"name", "stock", "code"}, from60));
+            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT COUNT(*), SUM(CASE WHEN ISNULL(stx.stock_qty,0) > 0 THEN 1 ELSE 0 END) FROM dbo.inventory i " + atiranStockApply("i", "stx"))) {
                 if (r.next()) { JSONObject o = new JSONObject(); o.put("total", r.getLong(1)); o.put("inStock", r.getLong(2)); out.put("stock", o); }
             } catch (Exception ignored) { }
             // Customers of the scope only: own customers + latifi's and khodayar's (same rule as the visitor app).
@@ -25111,7 +25354,7 @@ public class MainActivity extends Activity {
     private MeelanoCharts.Bars storeBars(int accent) { return new MeelanoCharts.Bars(this, tc(accent), TEXT, MUTED, MEELANO_BOLD); }
     private MeelanoCharts.Donut storeDonut() { return new MeelanoCharts.Donut(this, tc(GOLD), TEXT, MUTED, MEELANO_BOLD); }
 
-    private static final MeelanoCharts.Formatter STORE_MONEY = v -> MeelanoCharts.compact(v) + (Math.abs(v) >= 1000 ? "" : " ریال");
+    private static final MeelanoCharts.Formatter STORE_MONEY = MeelanoCharts.RIAL;
 
     private void addStoreKpis(String[][] rows, int[] accents, int[] icons) {
         LinearLayout row = null;
@@ -25354,7 +25597,7 @@ public class MainActivity extends Activity {
         if (other > 0) pts.add(new MeelanoCharts.Point("سایر", other, alpha(MUTED, 160)));
         boolean wide = getResources().getConfiguration().screenWidthDp >= 600;
         LinearLayout row = new LinearLayout(this); row.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL); row.setGravity(Gravity.CENTER);
-        MeelanoCharts.Donut donut = storeDonut(); donut.setCenterTitle("کل بدهی"); donut.setPoints(pts, v -> MeelanoCharts.compact(v));
+        MeelanoCharts.Donut donut = storeDonut(); donut.setCenterTitle("کل بدهی"); donut.setPoints(pts, MeelanoCharts.RIAL);
         int donutSize = wide ? dp(180) : Math.min(dp(200), (int) (getResources().getDisplayMetrics().widthPixels * 0.5f));
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(donutSize, donutSize); dlp.gravity = Gravity.CENTER_HORIZONTAL;
         row.addView(donut, dlp);

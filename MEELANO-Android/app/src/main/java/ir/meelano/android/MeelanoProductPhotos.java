@@ -28,12 +28,16 @@ final class MeelanoProductPhotos {
     static String keyFor(String text) {
         if (text == null || text.trim().isEmpty()) return null;
         String t = norm(text);
-        // Sweets and snacks that only taste of nuts or fruit (in the Atiran list: آبنبات فندقی، ویفر فندقی،
-        // تافی بادام زمینی، آدامس توت فرنگی…) keep the drawn picture.
-        if (has(t, "کره", "روغن", "بستنی", "شکلات", "کیک", "بیسکو", "آبنبات", "ابنبات", "ابنیات", "آدامس", "ادامس", "تافی",
-                "ویفر", "پاستیل", "دراژه", "اسمارتیز", "شوکو", "توت فرنگی", "توتفرنگی", "طعم", "چیپس", "بایکیت", "تابلت", "اچاچی", "آچاچی")
-                // whole words only: «کرم» is inside «کرمان», «پفک» inside «انجیر پفکی» (a kind of dried fig)
-                || hasWord(t, "شیر", "کرم", "نانی", "پفک", "آرد", "ارد")) return null;
+        // Things made from nuts or fruit that are not the nut itself keep the drawn picture.
+        if (has(t, "کره", "روغن", "بستنی", "کیک", "بیسکو", "ویفر", "شوکو", "بایکیت", "تابلت", "کلوچه")
+                // whole words only: «کرم» is inside «کرمان»
+                || hasWord(t, "شیر", "کرم", "نان", "نانی", "آرد", "ارد")) return null;
+        // Chocolates, sweets and snacks (Atiran group «شکلات و آبنبات ها»).
+        if (has(t, "شکلات", "کاکائو", "پرالین", "ترافل")) return "chocolate";
+        if (has(t, "آبنبات", "ابنبات", "ابنیات", "آدامس", "ادامس", "تافی", "پاستیل", "دراژه", "اسمارتیز", "اچاچی", "آچاچی", "نبات", "سوهان", "گز ")
+                || hasWord(t, "گز", "آبنبات")) return "candy";
+        if (has(t, "چیپس", "پاپ کورن", "پاپکورن", "اسنک") || hasWord(t, "پفک", "ذرت بوداده")) return "snacks";
+        if (has(t, "توت فرنگی", "توتفرنگی", "طعم")) return null;
         if (has(t, "میوه خشک", "خشک میوه")) return "dried_fruit";
         if (hasWord(t, "آجیل", "اجیل", "مخلوط", "چهارمغز", "چهار مغز", "شب یلدا", "نخودچی")) return "nuts";
         if (has(t, "بادام زمینی", "بادوم زمینی", "بادامزمینی")) return "peanut";
@@ -42,10 +46,15 @@ final class MeelanoProductPhotos {
         if (has(t, "فندق")) return "hazelnut";
         if (has(t, "گردو", "گردوی")) return "walnut";
         if (has(t, "بادام", "بادوم")) return "almond";
-        if (has(t, "تخمه", "تخم کدو", "تخم هندوانه", "تخم آفتابگردان", "آفتابگردان", "شاهدانه")) return "seeds";
+        if (has(t, "تخمه کدو", "تخم کدو", "کدو گوشتی", "کدو ")) return "pumpkin_seeds";
+        if (has(t, "تخمه", "تخم هندوانه", "تخم آفتابگردان", "آفتابگردان", "شاهدانه")) return "seeds";
+        if (has(t, "زرشک")) return "barberry";
+        if (has(t, "زعفران")) return "saffron";
         if (has(t, "کشمش", "مویز", "سبزه")) return "raisin";
         if (has(t, "خرما", "رطب", "مضافتی", "پیارم", "زاهدی", "کبکاب")) return "dates";
-        if (has(t, "برگه", "انجیر", "قیسی", "قیصی", "زردآلو", "زرد آلو", "آلو بخارا", "آلوبخارا", "آلوچه", "الوچه", "برگ زرد")
+        if (has(t, "انجیر")) return "fig";
+        if (has(t, "قیسی", "قیصی", "زردآلو", "زرد آلو") || hasWord(t, "برگه")) return "dried_apricot";
+        if (has(t, "آلو بخارا", "آلوبخارا", "آلوچه", "الوچه", "برگ زرد", "برگه")
                 || hasWord(t, "آلو", "الو", "توت", "توت خشک", "هلو خشک", "سیب خشک", "کیوی خشک")) return "dried_fruit";
         if (has(t, "خشکبار")) return "nuts";
         return null;
@@ -55,7 +64,8 @@ final class MeelanoProductPhotos {
     static String norm(String value) {
         String t = value == null ? "" : value.toLowerCase(Locale.US);
         t = t.replace('ي', 'ی').replace('ك', 'ک').replace('أ', 'ا').replace('إ', 'ا').replace('ؤ', 'و').replace('ۀ', 'ه').replace('ة', 'ه');
-        t = t.replace('\u200c', ' ').replace('\u200f', ' ').replace('\u200e', ' ');
+        t = t.replace('\u200c', ' ').replace('\u200f', ' ').replace('\u200e', ' ').replace('\u00a0', ' ').replace('\u200d', ' ');
+        t = t.replace('آ', 'ا').replaceAll("[\u0640\u064b-\u0652]", "");
         t = t.replaceAll("[\\p{Punct}\\[\\]{}()\\-_/\\\\|،؛]+", " ");
         return " " + t.replaceAll("\\s+", " ").trim() + " ";
     }
