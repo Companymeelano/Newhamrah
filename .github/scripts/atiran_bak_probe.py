@@ -401,6 +401,45 @@ def stage8(c, cur, q, out):
     q("s8_image_tables", "SELECT t.name, c.name, ty.name, (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id=t.object_id AND p.index_id IN (0,1)) FROM sys.tables t JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE ty.name IN ('image','varbinary') ORDER BY 1,2")
 
 
+
+def stage9(c, cur, q, out):
+    """سامانه مودیان: everything Atiran keeps that a tax invoice needs. Read-only."""
+    like = ["tax", "maliat", "moadian", "modian", "sstid", "shenase", "eghtesad", "economic", "melli", "national", "posti", "postal",
+            "avarez", "vat", "fiscal", "memory", "hafeze", "irtax", "uniq", "sayad", "tins", "tinb", "khadamat", "stuff", "iran"]
+    cond = " OR ".join("o.name LIKE '%%%s%%'" % k for k in like)
+    q("s9_objects", "SELECT o.name, o.type_desc FROM sys.objects o WHERE o.is_ms_shipped=0 AND o.type IN ('P','FN','TF','IF','V','U','TR') AND (" + cond + ") ORDER BY o.type_desc, o.name")
+    ccond = " OR ".join("c.name LIKE '%%%s%%'" % k for k in like + ["code", "cod_"])
+    q("s9_columns", "SELECT t.name, c.name, ty.name, c.max_length FROM sys.tables t JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON c.user_type_id=ty.user_type_id "
+                    "WHERE (" + ccond + ") ORDER BY t.name, c.column_id")
+    for t in ("sailfact", "subsailfact", "CUSTOMERS", "inventory", "subsailtemp", "kagroup", "vahed", "units"):
+        q("s9_cols_" + t, "SELECT c.name, ty.name, c.max_length FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.%s') ORDER BY c.column_id" % t)
+    q("s9_tables_rows", "SELECT t.name, SUM(p.rows) FROM sys.tables t JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) GROUP BY t.name HAVING SUM(p.rows)>0 ORDER BY t.name")
+    rows = (out.get("s9_objects") or {}).get("rows", []) or []
+    progs = [r[0] for r in rows if r[1] in ("SQL_STORED_PROCEDURE", "SQL_SCALAR_FUNCTION", "SQL_TABLE_VALUED_FUNCTION", "SQL_INLINE_TABLE_VALUED_FUNCTION", "VIEW", "SQL_TRIGGER")]
+    for n in progs[:45]:
+        q("s9_def_" + n, "SELECT LEFT(OBJECT_DEFINITION(OBJECT_ID(N'dbo.%s')), 16000)" % n.replace("'", ""))
+    tabs = [r[0] for r in rows if r[1] == "USER_TABLE"]
+    for t in tabs[:50]:
+        tt = t.replace("'", "").replace("]", "")
+        q("s9_tcols_" + t, "SELECT c.name, ty.name, c.max_length FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.%s') ORDER BY c.column_id" % tt)
+        q("s9_top_" + t, "SELECT TOP (12) * FROM dbo.[%s]" % tt)
+    # invoice / line tax fields actually in use
+    q("s9_sail_sample", "SELECT TOP (8) * FROM dbo.sailfact WHERE active='t' ORDER BY shfacfo DESC")
+    q("s9_sub_sample", "SELECT TOP (12) * FROM dbo.subsailfact WHERE active='t' ORDER BY shfacfo DESC")
+    q("s9_sub_tax_dist", "SELECT TOP (40) ISNULL(CAST(ptax AS nvarchar(20)),N'NULL'), ISNULL(CAST(PAvarez AS nvarchar(20)),N'NULL'), COUNT(*), SUM(CAST(ISNULL(tax,0) AS decimal(19,0))), SUM(CAST(ISNULL(avarez,0) AS decimal(19,0))) FROM dbo.subsailfact WHERE active='t' GROUP BY ptax, PAvarez ORDER BY 3 DESC")
+    q("s9_sail_by_status", "SELECT ISNULL([Status],-1), ISNULL(DocumentSourceID,-1), COUNT(*), MIN([date]), MAX([date]) FROM dbo.sailfact WHERE active='t' GROUP BY [Status], DocumentSourceID ORDER BY 3 DESC")
+    q("s9_rdf_kinds", "SELECT ISNULL(rdf__,-1), COUNT(*) FROM dbo.sailfact WHERE active='t' GROUP BY rdf__ ORDER BY 1")
+    q("s9_cust_ids", "SELECT COUNT(*), SUM(CASE WHEN LEN(LTRIM(RTRIM(CAST(ISNULL(ecocode,'') AS nvarchar(40)))))>0 THEN 1 ELSE 0 END) FROM dbo.CUSTOMERS")
+    q("s9_cust_sample", "SELECT TOP (10) * FROM dbo.CUSTOMERS WHERE active='t' ORDER BY NEWID()")
+    q("s9_inv_sample", "SELECT TOP (10) * FROM dbo.inventory ORDER BY NEWID()")
+    q("s9_settings_tables", "SELECT t.name FROM sys.tables t WHERE t.name LIKE '%setting%' OR t.name LIKE '%config%' OR t.name LIKE '%company%' OR t.name LIKE '%sherkat%' OR t.name LIKE '%moshakhasat%' OR t.name LIKE '%info%' OR t.name LIKE '%param%' ORDER BY 1")
+    for t in [r[0] for r in (out.get("s9_settings_tables") or {}).get("rows", []) or []][:15]:
+        q("s9_set_" + t, "SELECT TOP (60) * FROM dbo.[%s]" % t.replace("]", ""))
+    q("s9_return_tables", "SELECT t.name FROM sys.tables t WHERE t.name LIKE '%ret%' OR t.name LIKE '%bargasht%' OR t.name LIKE '%marjoo%' OR t.name LIKE '%back%' ORDER BY 1")
+    q("s9_vahed_tables", "SELECT t.name FROM sys.tables t WHERE t.name LIKE '%vahed%' OR t.name LIKE '%unit%' OR t.name LIKE '%measure%' ORDER BY 1")
+    for t in [r[0] for r in (out.get("s9_vahed_tables") or {}).get("rows", []) or []][:6]:
+        q("s9_vah_" + t, "SELECT TOP (60) * FROM dbo.[%s]" % t.replace("]", ""))
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -409,6 +448,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "9":
+        stage9(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 9 done; errors:", len(out["errors"]))
+        return
     if os.environ.get("PROBE_STAGE") == "8":
         stage8(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
