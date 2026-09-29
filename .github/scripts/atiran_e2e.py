@@ -428,7 +428,7 @@ def verify_store(cur, out, checks):
         out["store_multifactor"] = mf
         checks["store_receipt2_multifactor_two_rows"] = len(mf.get("rows", [])) == 2
         if mf.get("rows"):
-            ts = safe_rows(cur, out, "SELECT shfacfo, tasvieh, MabDaryaftFactor, [all] FROM dbo.sailfact WHERE shfacfo IN (%s)" % ",".join(str(int(r[0])) for r in mf["rows"]))
+            ts = safe_rows(cur, out, "SELECT shfacfo, tasvieh, MabDaryaftFactor, [all] FROM dbo.sailfact WHERE active='t' AND shfacfo IN (%s)" % ",".join(str(int(r[0])) for r in mf["rows"]))
             out["store_multifactor_invoices"] = ts
             checks["store_receipt2_invoices_settled"] = len(ts.get("rows", [])) == 2 and all(str(r[1]) == "t" for r in ts["rows"])
     try:

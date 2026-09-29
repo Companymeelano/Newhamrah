@@ -2641,7 +2641,7 @@ public class MainActivity extends Activity {
         if (visitorCartItems != null) resetCartState();
         setConnectionStatus("idle");
         refreshHeaderTools();
-        subtitle.setText(VISITOR_EDITION ? "ورود مستقیم ویزیتور" : "ورود با حساب Meelano");
+        subtitle.setText(STORE_EDITION ? "ورود کارکنان فروشگاه" : VISITOR_EDITION ? "ورود مستقیم ویزیتور" : "ورود با حساب Meelano");
         stage.removeAllViews();
 
         FrameLayout backdrop = new FrameLayout(this);
@@ -21642,14 +21642,14 @@ public class MainActivity extends Activity {
         JSONArray rows = rs.optJSONArray("rows");
         for (int i = 0; rows != null && i < rows.length(); i++) {
             JSONObject p = rows.optJSONObject(i); final int ix = i;
-            String sub = p.optString("bn") + (p.optString("t").isEmpty() ? "" : " • پیگیری " + p.optString("t")) + (p.optString("d").isEmpty() ? "" : " • " + p.optString("d"));
+            String sub = p.optString("bn") + (p.optString("t").isEmpty() ? "" : " • پیگیری " + MeelanoCharts.fa(p.optString("t"))) + (p.optString("d").isEmpty() ? "" : " • " + MeelanoCharts.fa(p.optString("d")));
             addStoreRow(rc, storeKindName(p.optString("k")), sub, money(p.optDouble("m")), "pos".equals(p.optString("k")) ? INFO : GOLD, () -> confirmStoreReceiptRemove("row", ix, rs, rerender));
         }
         JSONArray ch = rs.optJSONArray("cheques");
         for (int i = 0; ch != null && i < ch.length(); i++) {
             JSONObject c = ch.optJSONObject(i); final int ix = i;
-            String sub = "بانک " + c.optString("bn") + " • شماره " + c.optString("s") + " • سررسید " + MeelanoCharts.fa(c.optString("sd"))
-                    + "\n" + (c.optInt("ct", 1) == 2 ? "الکترونیک" : "کاغذی") + (c.optString("sy").isEmpty() ? "" : " • صیاد " + c.optString("sy"))
+            String sub = "بانک " + c.optString("bn") + " • شماره " + MeelanoCharts.fa(c.optString("s")) + " • سررسید " + MeelanoCharts.fa(c.optString("sd"))
+                    + "\n" + (c.optInt("ct", 1) == 2 ? "الکترونیک" : "کاغذی") + (c.optString("sy").isEmpty() ? "" : " • صیاد " + MeelanoCharts.fa(c.optString("sy")))
                     + " • " + (c.optBoolean("ri") ? "تأیید سامانه ✓" : "عدم تأیید سامانه");
             addStoreRow(rc, "چک", sub, money(c.optDouble("m")), c.optBoolean("ri") ? WARNING : DANGER, () -> confirmStoreReceiptRemove("chk", ix, rs, rerender));
         }
