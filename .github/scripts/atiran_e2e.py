@@ -116,7 +116,7 @@ def restore(out_path):
     c.close()
     c = connect("Atiran2")
     cur = c.cursor()
-    cur.execute("UPDATE dbo.visitors SET Password=%s WHERE Username IN ('latifi','mahmodi','nazari')", (os.environ["E2E_PASS"],))
+    cur.execute("UPDATE dbo.visitors SET Password=%s WHERE Username IN ('latifi','mahmodi','nazari','asma','elham')", (os.environ["E2E_PASS"],))
     out["before_store"] = {
         "stock": rows(cur, "SELECT shka, mojkavah, mojkajoz, mohvah FROM dbo.inventory WHERE shka IN (667, 621) ORDER BY shka"),
         "man412": rows(cur, "SELECT man FROM dbo.CUSTOMERS WHERE SHMO=412")["rows"][0][0],
@@ -300,6 +300,10 @@ def verify(out_path):
         verify_store(cur, out, checks)
     except Exception as ex:
         out["errors"].append("store checks: %s" % str(ex)[:300])
+    try:
+        verify_staff(cur, out, checks)
+    except Exception as ex:
+        out["errors"].append("staff checks: %s" % str(ex)[:300])
     json.dump(out, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, default=str)
     for k, v in checks.items():
         print(("PASS " if v else "FAIL ") + k)
@@ -605,6 +609,47 @@ def verify_store(cur, out, checks):
     ib = [str(r[0]) for r in (safe_rows(cur, out, "SELECT kind FROM dbo.meelano_hr_inbox WHERE username='mahmodi' AND kind LIKE 'advance%' ORDER BY id").get("rows") or [])]
     checks["store_advance_sent_to_manager"] = ib == ["advance", "advance_cancel", "advance"]
     checks["store_me_no_atiran_writes"] = bool(me) and acct is not None and real is not None and abs(float(acct[2] or 0) - float(real[0])) < 1
+
+
+def verify_staff(cur, out, checks):
+    """Staff edition (v5.8.0): personnel login (visitors rejected), payslip, own account, and «تحویل بار»:
+    store invoices become delivery jobs, one taker, handover, item ticks, signed receipt — Atiran untouched."""
+    st = []
+    try:
+        for line in open("e2e/staff-selftest.txt", encoding="utf-8", errors="replace"):
+            if "MEELANO_SELFTEST" in line:
+                st.append(line.split("MEELANO_SELFTEST", 1)[1].lstrip(": ").strip())
+    except Exception as ex:
+        out["errors"].append("staff selftest log: %s" % ex)
+    out["staff_selftest"] = st
+    joined = "\n".join(st)
+    ok = lambda k: ("STEP %s OK" % k) in joined
+    checks["staff_login_asma"] = ok("login")
+    checks["staff_rejects_visitor_latifi"] = ok("staff_reject_visitor")
+    checks["staff_finished"] = any(s == "DONE" for s in st)
+    out["staff_failed_steps"] = [s for s in st if s.startswith("STEP") and " FAIL" in s]
+    checks["staff_person_payroll_statement"] = ok("staff_person") and ok("staff_payroll") and ok("staff_statement") and ok("staff_advance")
+    checks["staff_delivery_sync_and_alert"] = ok("staff_delivery_sync") and ok("staff_alert_new") and ok("staff_delivery_no_walkin") and ok("staff_delivery_items")
+    checks["staff_claim_is_exclusive"] = ok("staff_claim_exclusive") and ok("staff_tick_others")
+    checks["staff_handover_flow"] = ok("staff_handover") and ok("staff_locked_during_handover")
+    checks["staff_receipt_flow"] = all(ok(k) for k in ("staff_finish_pending", "staff_finish_nosign", "staff_receipt", "staff_readonly_after_receipt"))
+    checks["staff_release_skip_cancel"] = all(ok(k) for k in ("staff_release_reason", "staff_release", "staff_store_skip", "staff_cancelled_invoice"))
+    checks["staff_store_panel_and_manager_inbox"] = ok("staff_store_panel")
+    checks["staff_atiran_readonly"] = ok("staff_atiran_readonly")
+    d = safe_rows(cur, out, "SELECT d.id, d.status, d.assignee, d.receiver_name, DATALENGTH(d.signature), d.shfacfo, d.rdf__, "
+                  "(SELECT COUNT(*) FROM dbo.meelano_delivery_item i WHERE i.delivery_id=d.id), "
+                  "(SELECT COUNT(*) FROM dbo.subsailfact x WHERE x.shfacfo=d.shfacfo AND x.rdf__=d.rdf__ AND x.active='t'), "
+                  "(SELECT COUNT(*) FROM dbo.meelano_delivery_item i WHERE i.delivery_id=d.id AND i.state=N'missing') "
+                  "FROM dbo.meelano_delivery d WHERE d.status IN (N'delivered',N'partial') ORDER BY d.id")
+    out["staff_deliveries_closed"] = d
+    rows_ = d.get("rows") or []
+    checks["staff_db_receipt_saved"] = any(str(r[1]) == "partial" and str(r[2]) == "asma" and int(r[4] or 0) > 200 and int(r[7]) == int(r[8]) and int(r[9]) == 1 for r in rows_)
+    lg = safe_rows(cur, out, "SELECT action, COUNT(*) FROM dbo.meelano_delivery_log GROUP BY action ORDER BY action")
+    out["staff_delivery_log"] = lg
+    acts = {str(r[0]): int(r[1]) for r in (lg.get("rows") or [])}
+    checks["staff_db_log_complete"] = all(acts.get(k, 0) >= 1 for k in ("claimed", "handover_request", "handover_reject", "handover_accept", "partial", "released", "skipped", "unskipped"))
+    walk = safe_rows(cur, out, "SELECT COUNT(*) FROM dbo.meelano_delivery WHERE shmo IN (2276, 214)")
+    checks["staff_db_no_walkin_jobs"] = int(((walk.get("rows") or [[1]])[0][0]) or 0) == 0
 
 
 if __name__ == "__main__":

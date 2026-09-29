@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">پخش درخشان پرسنل</string>
+    <string name="web_url_hint">ورود پرسنل</string>
+    <string name="android_subtitle">نسخه ویژه پرسنل</string>
+</resources>

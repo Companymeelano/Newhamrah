@@ -101,8 +101,11 @@ jobs:
           cp MEELANO-Android/app/build/outputs/apk/visitor/debug/*.apk "out/MEELANO-v$APP_VERSION-debug.apk"
           cp MEELANO-Android/app/build/outputs/apk/store/release/*.apk "out/MEELANO-Store-v$APP_VERSION-release.apk"
           cp MEELANO-Android/app/build/outputs/apk/store/debug/*.apk "out/MEELANO-Store-v$APP_VERSION-debug.apk"
+          cp MEELANO-Android/app/build/outputs/apk/staff/release/*.apk "out/MEELANO-Staff-v$APP_VERSION-release.apk"
+          cp MEELANO-Android/app/build/outputs/apk/staff/debug/*.apk "out/MEELANO-Staff-v$APP_VERSION-debug.apk"
           cp MEELANO-Android/app/build/outputs/apk/visitor/debug/*.apk app-debug.apk
           cp MEELANO-Android/app/build/outputs/apk/store/debug/*.apk app-store-debug.apk
+          cp MEELANO-Android/app/build/outputs/apk/staff/debug/*.apk app-staff-debug.apk
           for f in out/*.apk; do
             R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23] |certificate SHA-256" | tr '\n' ';')
             echo "::notice title=apksigner $(basename "$f")::$R"
@@ -122,6 +125,7 @@ jobs:
           path: |
             app-debug.apk
             app-store-debug.apk
+            app-staff-debug.apk
           retention-days: 3
 
       - name: Commit APK to branch
@@ -135,10 +139,12 @@ jobs:
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest.json
           printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Store-v%s-debug.apk"}\n' \
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-store.json
-          cat apk/latest.json apk/latest-store.json
+          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Staff-v%s-debug.apk"}\n' \
+            "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-staff.json
+          cat apk/latest.json apk/latest-store.json apk/latest-staff.json
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
-          git add apk/*.apk apk/latest.json apk/latest-store.json
+          git add apk/*.apk apk/latest.json apk/latest-store.json apk/latest-staff.json
           git commit -m "Build APK v$APP_VERSION [skip ci]" || echo "No changes"
           for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
 

@@ -2,4 +2,6 @@
 <resources>
     <!-- true only in the «store» flavour (src/store/res/values/edition.xml). -->
     <bool name="meelano_store_edition">false</bool>
+    <!-- true only in the «staff» flavour (src/staff/res/values/edition.xml). -->
+    <bool name="meelano_staff_edition">false</bool>
 </resources>

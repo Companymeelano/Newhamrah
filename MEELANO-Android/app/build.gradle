@@ -8,13 +8,14 @@ android {
         applicationId 'ir.meelano.visitor'
         minSdk 24
         targetSdk 36
-        versionCode 103
-        versionName '5.7.0'
+        versionCode 104
+        versionName '5.8.0'
     }
 
     // Two installable apps from one code base:
     //  visitor → «Meelano Visit» for the field visitors (unchanged package, updates the old app)
     //  store   → «میلانو فروشگاه» for the store staff (final sales invoice, reports, GPS attendance)
+    //  staff   → «پخش درخشان پرسنل» for ordinary personnel (attendance, payroll, leave, advance, own account, deliveries)
     flavorDimensions 'edition'
     productFlavors {
         visitor {
@@ -24,6 +25,10 @@ android {
         store {
             dimension 'edition'
             applicationId 'ir.meelano.store'
+        }
+        staff {
+            dimension 'edition'
+            applicationId 'ir.meelano.staff'
         }
     }
 

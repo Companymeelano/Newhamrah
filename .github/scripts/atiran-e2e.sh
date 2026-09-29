@@ -8,6 +8,7 @@ mkdir -p "$OUT"
 adb shell settings put global hide_error_dialogs 1 || true
 adb install -r -g app-debug.apk
 adb install -r -g app-store-debug.apk || echo "store apk install failed"
+adb install -r -g app-staff-debug.apk || echo "staff apk install failed"
 echo "waiting for emulator network…"
 for i in $(seq 1 60); do
   if adb shell "toybox nc -z -w 2 10.0.2.2 1433" >/dev/null 2>&1 || adb shell "ping -c 1 -W 2 10.0.2.2" >/dev/null 2>&1; then echo "network up after $((i*3))s"; break; fi
@@ -43,3 +44,19 @@ sleep 2
 adb exec-out screencap -p > "$OUT/e2e-store-screen.png" || true
 adb logcat -d | grep -E "MEELANO|AndroidRuntime|FATAL|jtds" > "$OUT/store-logcat.txt" || true
 grep -c " FAIL" "$OUT/store-selftest.txt" | sed 's/^/store failed steps: /'
+
+# Staff edition (ir.meelano.staff.debug): personnel login (visitor rejected), payslip, own account, and the
+# «تحویل بار» flow over the store's invoices (claim, exclusive, handover with peer elham, ticks, signed receipt).
+TPKG=ir.meelano.staff.debug
+adb logcat -c
+adb shell am force-stop "$SPKG" || true
+adb shell am start -S -W -n "$TPKG/$ACT" --es meelano_test_db 10.0.2.2 --es meelano_selftest "asma:${E2E_PASS}" --es meelano_selftest_reject "latifi:${E2E_PASS}" --es meelano_selftest_peer elham
+for i in $(seq 1 200); do
+  sleep 4
+  adb logcat -d -s MEELANO_SELFTEST:I > "$OUT/staff-selftest.txt" 2>/dev/null
+  if grep -q "MEELANO_SELFTEST.*DONE" "$OUT/staff-selftest.txt"; then echo "staff self-test finished after $((i*4))s"; break; fi
+done
+sleep 2
+adb exec-out screencap -p > "$OUT/e2e-staff-screen.png" || true
+adb logcat -d | grep -E "MEELANO|AndroidRuntime|FATAL|jtds" > "$OUT/staff-logcat.txt" || true
+grep -c " FAIL" "$OUT/staff-selftest.txt" | sed 's/^/staff failed steps: /'

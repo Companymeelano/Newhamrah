@@ -90,6 +90,7 @@ if [ -f app-store-debug.apk ]; then
   shot 45-store-advance-dialog advance_dialog emerald_royal
   shot 46-store-me-dark store_me:account noir_aurora
   shot 48-store-me-row store_me_row emerald_royal
+  shot 49-store-delivery store_reports:delivery emerald_royal
   # responsive check: a narrow phone and a tablet-sized screen
   adb shell wm size 720x1520; adb shell wm density 320
   shot 38-store-narrow-home store_home emerald_royal
@@ -99,6 +100,33 @@ if [ -f app-store-debug.apk ]; then
   adb shell wm size 1600x2560; adb shell wm density 320
   shot 41-store-tablet-home store_home emerald_royal
   shot 42-store-tablet-debtors store_reports:debtors emerald_royal
+  adb shell wm size reset; adb shell wm density reset
+fi
+# ---- staff edition («پخش درخشان پرسنل», amethyst_pearl) ----
+if [ -f app-staff-debug.apk ]; then
+  adb install -r -g app-staff-debug.apk
+  PKG=ir.meelano.staff.debug
+  shot 60-staff-login login amethyst_pearl
+  shot 61-staff-home staff_home amethyst_pearl
+  shot 62-staff-delivery-open staff_delivery:open amethyst_pearl
+  shot 63-staff-delivery-mine staff_delivery:mine amethyst_pearl
+  shot 64-staff-delivery-detail staff_delivery_detail amethyst_pearl
+  shot 65-staff-receipt-dialog staff_receipt_dialog amethyst_pearl
+  shot 66-staff-handover-dialog staff_handover_dialog amethyst_pearl
+  shot 67-staff-delivery-done staff_delivery_done amethyst_pearl
+  shot 68-staff-delivery-history staff_delivery:done amethyst_pearl
+  shot 69-staff-pay staff_pay amethyst_pearl
+  shot 70-staff-pay-prev staff_pay_prev amethyst_pearl
+  shot 71-staff-attendance attendance amethyst_pearl
+  shot 72-staff-me store_me:account amethyst_pearl
+  shot 73-staff-more visitor_more amethyst_pearl
+  shot 74-staff-home-dark staff_home noir_aurora
+  shot 75-staff-open-item staff_delivery_open amethyst_pearl
+  adb shell wm size 720x1520; adb shell wm density 320
+  shot 76-staff-narrow-detail staff_delivery_detail amethyst_pearl
+  shot 77-staff-narrow-pay staff_pay amethyst_pearl
+  adb shell wm size 1600x2560; adb shell wm density 320
+  shot 78-staff-tablet-home staff_home amethyst_pearl
   adb shell wm size reset; adb shell wm density reset
 fi
 adb logcat -d -t 400 | grep -E "AndroidRuntime|FATAL|MainActivity" | tail -40 > "$OUT/logcat.txt" || true

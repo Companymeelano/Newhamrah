@@ -70,6 +70,7 @@ jobs:
           gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleDebug
           cp app/build/outputs/apk/visitor/debug/*.apk ../app-debug.apk
           cp app/build/outputs/apk/store/debug/*.apk ../app-store-debug.apk
+          cp app/build/outputs/apk/staff/debug/*.apk ../app-staff-debug.apk
 
       - name: Enable KVM
         run: |

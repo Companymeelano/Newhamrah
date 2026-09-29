@@ -1,0 +1,8 @@
+<resources>
+    <!-- Staff app («پخش درخشان پرسنل»): start-up colours match its amethyst launcher icon. -->
+    <color name="meelano_navy">#F8F5FC</color>
+    <color name="meelano_surface">#FFFEFF</color>
+    <color name="meelano_gold">#582C96</color>
+    <color name="meelano_gold_light">#BF9240</color>
+    <color name="white">#FFFFFF</color>
+</resources>
