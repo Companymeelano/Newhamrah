@@ -63,13 +63,13 @@ jobs:
             echo "SIGN_KEY_PASS=${KEY_PASS:-$KS_PASS}" >> "$GITHUB_ENV"
             echo "::notice title=Signing::Release APK signed with the MEELANO release key from repository secrets."
           else
-            echo "::warning title=Signing::Signing secrets are not configured; release APK will not be published."
-            keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias throwaway \
-              -keyalg RSA -keysize 2048 -validity 1 -storepass throwaway -keypass throwaway \
-              -dname "CN=throwaway"
-            echo "SIGN_STORE_PASS=throwaway" >> "$GITHUB_ENV"
-            echo "SIGN_KEY_ALIAS=throwaway" >> "$GITHUB_ENV"
-            echo "SIGN_KEY_PASS=throwaway" >> "$GITHUB_ENV"
+            # No private key in the secrets: sign with the fixed install key kept in the repository, so every
+            # release APK has the same signature and installs over the previous version.
+            echo "::notice title=Signing::Release APK signed with the fixed install key (MEELANO-Android/app/signing)."
+            cp MEELANO-Android/app/signing/meelano-install.p12 "$KS"
+            echo "SIGN_STORE_PASS=derakhshan-install" >> "$GITHUB_ENV"
+            echo "SIGN_KEY_ALIAS=meelano" >> "$GITHUB_ENV"
+            echo "SIGN_KEY_PASS=derakhshan-install" >> "$GITHUB_ENV"
           fi
           echo "SIGN_STORE_FILE=$KS" >> "$GITHUB_ENV"
 
@@ -110,7 +110,6 @@ jobs:
             R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23] |certificate SHA-256" | tr '\n' ';')
             echo "::notice title=apksigner $(basename "$f")::$R"
           done
-          if [ "$HAS_SIGNING_KEY" != "true" ]; then rm out/*-release.apk; fi
           rm -f "$SIGN_STORE_FILE"
           ls -la out
 
@@ -135,11 +134,11 @@ jobs:
           cp out/*.apk apk/
           # Small manifest read by the app's "new version" check (Settings → بروزرسانی برنامه).
           CODE=$(grep -oP "versionCode\s+\K[0-9]+" MEELANO-Android/app/build.gradle)
-          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-v%s-debug.apk"}\n' \
+          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-v%s-release.apk"}\n' \
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest.json
-          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Store-v%s-debug.apk"}\n' \
+          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Store-v%s-release.apk"}\n' \
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-store.json
-          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Staff-v%s-debug.apk"}\n' \
+          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Staff-v%s-release.apk"}\n' \
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-staff.json
           cat apk/latest.json apk/latest-store.json apk/latest-staff.json
           git config user.name "github-actions[bot]"

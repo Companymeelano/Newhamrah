@@ -8,8 +8,8 @@ android {
         applicationId 'ir.meelano.visitor'
         minSdk 24
         targetSdk 36
-        versionCode 105
-        versionName '5.9.0'
+        versionCode 106
+        versionName '5.9.1'
     }
 
     // Two installable apps from one code base:
@@ -45,14 +45,27 @@ android {
         xmlReport true
     }
 
+    // One fixed key for every build, so a new version always installs over the previous one (no uninstall, no data
+    // loss). CI overrides it with the private MEELANO release key when the repository secrets are configured.
+    signingConfigs {
+        install {
+            storeFile file('signing/meelano-install.p12')
+            storeType 'pkcs12'
+            storePassword 'derakhshan-install'
+            keyAlias 'meelano'
+            keyPassword 'derakhshan-install'
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix '.debug'
             versionNameSuffix '-debug'
+            signingConfig signingConfigs.install
         }
         release {
-            // Installable APK for direct delivery. Replace with a private release keystore for Play Store publishing.
-            signingConfig signingConfigs.debug
+            // Installable APK for direct delivery (fixed key above, or the private release key injected by CI).
+            signingConfig signingConfigs.install
             minifyEnabled false
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
