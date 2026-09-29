@@ -1,0 +1,8 @@
+<resources>
+    <!-- Moadian app («پخش درخشان مودیان»): start-up colours match its turquoise launcher icon. -->
+    <color name="meelano_navy">#F2F9F8</color>
+    <color name="meelano_surface">#FFFFFF</color>
+    <color name="meelano_gold">#0B6A70</color>
+    <color name="meelano_gold_light">#B98A3C</color>
+    <color name="white">#FFFFFF</color>
+</resources>

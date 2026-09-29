@@ -1070,6 +1070,11 @@ public class MainActivity extends Activity {
         catch (Exception ignored) { return ""; }
     }
 
+    /** Default Atiran server {host, port, database, user, password} for the Moadian app (MeelanoTaxActivity). */
+    static String[] defaultDbConfig() {
+        return new String[]{hidden(S_HOST), String.valueOf(SQL_PORT), hidden(S_DB), hidden(S_USER), hidden(S_PASS)};
+    }
+
     private static String hidden(int[] data) {
         char[] out = new char[data.length];
         for (int i = 0; i < data.length; i++) out[i] = (char) (data[i] ^ S_KEY);

@@ -75,7 +75,7 @@ jobs:
 
       - name: Build debug APK
         working-directory: MEELANO-Android
-        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g testStoreDebugUnitTest assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-debug.log"; exit ${PIPESTATUS[0]}
+        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g testStoreDebugUnitTest testTaxDebugUnitTest assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-debug.log"; exit ${PIPESTATUS[0]}
 
       - name: Report compile errors
         if: failure()
@@ -83,6 +83,49 @@ jobs:
           grep -E "error:|\.java:[0-9]+" "$RUNNER_TEMP/gradle-debug.log" | head -20 | while IFS= read -r line; do
             echo "::error title=Compile::${line}"
           done
+          grep -E "Test > .* FAILED|AssertionError|ComparisonFailure|expected:<" "$RUNNER_TEMP/gradle-debug.log" | head -20 | while IFS= read -r line; do
+            echo "::error title=Unit test::${line}"
+          done
+          for x in MEELANO-Android/app/build/test-results/*/TEST-*.xml; do
+            [ -f "$x" ] || continue
+            python3 - "$x" <<'PY' || true
+          import sys, xml.etree.ElementTree as ET
+          for tc in ET.parse(sys.argv[1]).getroot().iter("testcase"):
+              for f in list(tc.findall("failure")) + list(tc.findall("error")):
+                  msg = (f.get("message") or f.text or "").replace("\n", " ")[:300]
+                  print("::error title=Test %s::%s" % (tc.get("name"), msg))
+          PY
+          done
+
+      - name: Moadian cross-check (openssl + python cryptography)
+        run: |
+          D=MEELANO-Android/app/build/moadian-crosscheck
+          R=MEELANO-Android/app/src/test/resources/moadian
+          ls -la "$D"
+          # 1) The CSR built by MeelanoTaxCrypto must verify and parse with OpenSSL.
+          openssl req -in "$D/test.csr" -noout -verify
+          SUBJ=$(openssl req -in "$D/test.csr" -noout -subject -nameopt RFC2253,utf8 | tr '\n' ' ')
+          echo "::notice title=CSR (openssl)::$SUBJ"
+          # 2) The JWE produced by Java must decrypt with python cryptography (RSA-OAEP-256 + A256GCM).
+          pip install --quiet cryptography
+          python3 - "$D" "$R" <<'PY'
+          import sys, base64, json
+          from cryptography.hazmat.primitives import serialization, hashes
+          from cryptography.hazmat.primitives.asymmetric import padding
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+          d, r = sys.argv[1], sys.argv[2]
+          def b64u(s): return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+          key = serialization.load_pem_private_key(open(r + "/jwe_test_private_key.pem", "rb").read(), None)
+          h, ek, iv, ct, tag = open(d + "/java_jwe.txt").read().strip().split(".")
+          hdr = json.loads(b64u(h))
+          assert hdr == {"alg": "RSA-OAEP-256", "enc": "A256GCM", "kid": "kid-42"}, hdr
+          cek = key.decrypt(b64u(ek), padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+          assert len(cek) == 32
+          plain = AESGCM(cek).decrypt(b64u(iv), b64u(ct) + b64u(tag), h.encode("ascii"))
+          expected = open(d + "/java_jwe_plaintext.txt", "rb").read()
+          assert plain == expected, (plain, expected)
+          print("::notice title=JWE (python)::Java JWE decrypted by python cryptography: " + plain.decode("utf-8"))
+          PY
 
       - name: Build signed release APK
         working-directory: MEELANO-Android
@@ -103,9 +146,12 @@ jobs:
           cp MEELANO-Android/app/build/outputs/apk/store/debug/*.apk "out/MEELANO-Store-v$APP_VERSION-debug.apk"
           cp MEELANO-Android/app/build/outputs/apk/staff/release/*.apk "out/MEELANO-Staff-v$APP_VERSION-release.apk"
           cp MEELANO-Android/app/build/outputs/apk/staff/debug/*.apk "out/MEELANO-Staff-v$APP_VERSION-debug.apk"
+          cp MEELANO-Android/app/build/outputs/apk/tax/release/*.apk "out/MEELANO-Tax-v$APP_VERSION-release.apk"
+          cp MEELANO-Android/app/build/outputs/apk/tax/debug/*.apk "out/MEELANO-Tax-v$APP_VERSION-debug.apk"
           cp MEELANO-Android/app/build/outputs/apk/visitor/debug/*.apk app-debug.apk
           cp MEELANO-Android/app/build/outputs/apk/store/debug/*.apk app-store-debug.apk
           cp MEELANO-Android/app/build/outputs/apk/staff/debug/*.apk app-staff-debug.apk
+          cp MEELANO-Android/app/build/outputs/apk/tax/debug/*.apk app-tax-debug.apk
           for f in out/*.apk; do
             R=$("$APKSIGNER" verify --verbose --print-certs "$f" | grep -E "Verified using v[23] |certificate SHA-256" | tr '\n' ';')
             echo "::notice title=apksigner $(basename "$f")::$R"
@@ -125,6 +171,7 @@ jobs:
             app-debug.apk
             app-store-debug.apk
             app-staff-debug.apk
+            app-tax-debug.apk
           retention-days: 3
 
       - name: Commit APK to branch
@@ -140,10 +187,12 @@ jobs:
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-store.json
           printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Staff-v%s-release.apk"}\n' \
             "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-staff.json
-          cat apk/latest.json apk/latest-store.json apk/latest-staff.json
+          printf '{"versionCode": %s, "versionName": "%s", "url": "https://github.com/%s/raw/%s/apk/MEELANO-Tax-v%s-release.apk"}\n' \
+            "$CODE" "$APP_VERSION" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$APP_VERSION" > apk/latest-tax.json
+          cat apk/latest.json apk/latest-store.json apk/latest-staff.json apk/latest-tax.json
           git config user.name "github-actions[bot]"
           git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
-          git add apk/*.apk apk/latest.json apk/latest-store.json apk/latest-staff.json
+          git add apk/*.apk apk/latest.json apk/latest-store.json apk/latest-staff.json apk/latest-tax.json
           git commit -m "Build APK v$APP_VERSION [skip ci]" || echo "No changes"
           for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
 

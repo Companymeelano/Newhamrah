@@ -8,14 +8,15 @@ android {
         applicationId 'ir.meelano.visitor'
         minSdk 24
         targetSdk 36
-        versionCode 106
-        versionName '5.9.1'
+        versionCode 107
+        versionName '6.0.0'
     }
 
     // Two installable apps from one code base:
     //  visitor → «Meelano Visit» for the field visitors (unchanged package, updates the old app)
     //  store   → «میلانو فروشگاه» for the store staff (final sales invoice, reports, GPS attendance)
     //  staff   → «پخش درخشان پرسنل» for ordinary personnel (attendance, payroll, leave, advance, own account, deliveries)
+    //  tax     → «پخش درخشان مودیان»: sends Atiran's invoices to the Moadian tax system (MeelanoTaxActivity only)
     flavorDimensions 'edition'
     productFlavors {
         visitor {
@@ -29,6 +30,10 @@ android {
         staff {
             dimension 'edition'
             applicationId 'ir.meelano.staff'
+        }
+        tax {
+            dimension 'edition'
+            applicationId 'ir.meelano.tax'
         }
     }
 
