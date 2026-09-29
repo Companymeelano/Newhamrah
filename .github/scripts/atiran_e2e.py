@@ -309,25 +309,33 @@ def verify(out_path):
 _DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
 
-def store_scope(cur):
-    """v5.5.0: the store app only reports latifi / khodayar. Same rule as the visitor app:
-    a name holding 08 belongs to latifi, 07 to khodayar, otherwise the customer's own visitor."""
+def store_scope(cur, own_user="mahmodi"):
+    """v5.5.1: the store staff see their own visitor row plus latifi and khodayar. Same rule as the visitor app:
+    a name holding 08 belongs to latifi, 07 to khodayar, otherwise the customer's own visitor (CUSTOMERS.vis_rdf)."""
     vis = rows(cur, "SELECT vis_rdf, LOWER(LTRIM(RTRIM(ISNULL(CAST(Username AS nvarchar(120)),N'')))), ISNULL(CAST(vis_name AS nvarchar(250)),N'') FROM dbo.visitors")["rows"]
     lat = next((int(r[0]) for r in vis if r[1] == "latifi"), 0)
     kho = next((int(r[0]) for r in vis if r[1] == "khodayar"), 0)
-    names = [str(r[2]) for r in vis if r[1] in ("latifi", "khodayar")]
-    return lat, kho, names
+    own = next((int(r[0]) for r in vis if r[1] == own_user), 0)
+    names = [str(r[2]) for r in vis if r[1] in ("latifi", "khodayar", own_user)]
+    return lat, kho, names, own
+
+
+def store_customer_vis(name, v, lat, kho, own):
+    d = str(name or "").translate(_DIGITS)
+    v = int(v or 0)
+    if lat and "08" in d:
+        return lat
+    if kho and "07" in d:
+        return kho
+    return v if v > 0 and v in (lat, kho, own) else 0
 
 
 def store_scope_customers(cur):
-    lat, kho, _ = store_scope(cur)
+    lat, kho, _, own = store_scope(cur)
     cs = rows(cur, "SELECT ISNULL(CAST(MONAME AS nvarchar(500)),N''), ISNULL(man,0), ISNULL(vis_rdf,0) FROM dbo.CUSTOMERS")["rows"]
     total, debtors, debt = 0, 0, 0.0
     for name, man, v in cs:
-        d = str(name or "").translate(_DIGITS)
-        v = int(v or 0)
-        inside = (lat and "08" in d) or (kho and "07" in d) or (v > 0 and v in (lat, kho))
-        if not inside:
+        if not store_customer_vis(name, v, lat, kho, own):
             continue
         total += 1
         if float(man) > 0:
@@ -382,17 +390,39 @@ def verify_store(cur, out, checks):
     out["store_visitor_names"] = names_txt
     checks["store_reports_only_visitor_names"] = bool(g) and bool(bvm) and not any(x in names_txt for x in ("حمدان", "مدير", "مدیر", "سيستم", "سیستم"))
     checks["store_no_attendance_history_in_app"] = bool(bvm) and bvm.group(2) == "false"
-    # v5.5.0: mahmodi / nazari only see latifi and khodayar (invoices, debts, visitor chart).
-    lat, kho, scope_names = store_scope(cur)
-    allowed = [_fa_norm(n) for n in scope_names]
-    out["store_scope"] = {"latifi": lat, "khodayar": kho, "names": scope_names}
+    # v5.5.1: mahmodi / nazari see their own visitor row + latifi + khodayar, each separately.
+    lat, kho, scope_names, own = store_scope(cur)
+    allowed = [_fa_norm(n).split("/")[0].strip() for n in scope_names]
+    out["store_scope"] = {"latifi": lat, "khodayar": kho, "own": own, "names": scope_names}
 
     def only_scope(txt):
         parts = [p for p in txt.split(";") if p.strip()]
         got = [_fa_norm(p.split("=", 1)[0]) for p in parts]
         return bool(parts) and all(any(a and (a in g or g in a) for a in allowed) for g in got)
-    checks["store_debt_groups_only_latifi_khodayar"] = bool(g) and only_scope(g.group(1))
-    checks["store_sales_by_visitor_only_latifi_khodayar"] = bool(bvm) and (not bvm.group(1).strip() or only_scope(bvm.group(1)))
+    checks["store_debt_groups_only_own_latifi_khodayar"] = bool(g) and only_scope(g.group(1))
+    checks["store_sales_by_visitor_only_own_latifi_khodayar"] = bool(bvm) and (not bvm.group(1).strip() or only_scope(bvm.group(1)))
+    scm = re.search(r"STORE scope latifi=(\d+) khodayar=(\d+) own=(\d+)", joined)
+    checks["store_scope_is_own_latifi_khodayar"] = bool(scm) and (int(scm.group(1)), int(scm.group(2)), int(scm.group(3))) == (lat, kho, own) and own == 3
+    group_names = [_fa_norm(p.split("=", 1)[0]) for p in (g.group(1).split(";") if g else []) if p.strip()]
+    checks["store_debt_groups_separate_own_first"] = len(group_names) == 3 and "(خودم)" in group_names[0]
+    # Unsettled overdue invoices: every listed invoice is a real, active invoice of an in-scope customer,
+    # overdue, its open part is not more than the invoice, and per customer the open parts fit in the balance.
+    oim = re.search(r"STORE overdueInvoices n=(\d+) listed=(\d+) sum=(-?\d+) sample=(.*)", joined)
+    out["store_overdue_invoices"] = oim.group(0)[:600] if oim else None
+    ok_inv = bool(oim) and int(oim.group(1)) > 0
+    per_cust = {}
+    if oim:
+        for part in [p for p in oim.group(4).split(";") if p.strip()]:
+            no, code, days, opn, vis = [int(x) for x in part.split(":")]
+            r = rows(cur, "SELECT TOP (1) ISNULL(all_fel,[all]), shmo FROM dbo.sailfact WHERE active='t' AND ISNULL(Deleted,0)=0 AND shfacfo=%d" % no)["rows"]
+            cu = rows(cur, "SELECT ISNULL(CAST(MONAME AS nvarchar(500)),N''), ISNULL(vis_rdf,0), ISNULL(man,0) FROM dbo.CUSTOMERS WHERE SHMO=%d" % code)["rows"]
+            if not r or not cu or int(r[0][1]) != code or days <= 0 or opn > float(r[0][0]) + 1:
+                ok_inv = False
+                continue
+            if store_customer_vis(cu[0][0], cu[0][1], lat, kho, own) != vis:
+                ok_inv = False
+            per_cust.setdefault(code, [0.0, float(cu[0][2])])[0] += opn
+    checks["store_overdue_invoices_real_and_in_scope"] = ok_inv and all(v[0] <= v[1] + 1 for v in per_cust.values())
     inv = [s for s in st if s.startswith("STORE INVOICE1 ")]
     inv2 = [s for s in st if s.startswith("STORE INVOICE2 ")]
     r1 = json.loads(inv[0].split(" ", 2)[2]) if inv else {}
