@@ -252,6 +252,76 @@ def stage5(c, cur, q, out):
     q("s5_server_date", "SELECT dbo.ReturnDateServer()")
 
 
+def _sel6(cur, table, where="", top=300, order="1 DESC"):
+    """Like _sel, but binary/image columns become their length (never their content) and passwords are skipped."""
+    cur.execute("SELECT c.name, t.name FROM sys.columns c JOIN sys.types t ON c.user_type_id=t.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.[%s]') ORDER BY c.column_id" % table.replace("]", "]]"))
+    cols = []
+    for n, ty in cur.fetchall():
+        qn = "[%s]" % n.replace("]", "]]")
+        if any(k in n.lower() for k in ("pass", "pwd")):
+            cols.append("CASE WHEN %s IS NULL THEN 0 ELSE 1 END AS %s" % (qn, "[has_" + n.replace("]", "]]") + "]"))
+            continue
+        if ty in ("image", "varbinary", "binary", "timestamp"):
+            cols.append("DATALENGTH(%s) AS %s" % (qn, qn))
+        elif ty in ("char", "varchar", "text"):
+            cols.append("CAST(%s AS nvarchar(max)) AS %s" % (qn, qn))
+        elif ty in ("ntext",):
+            cols.append("CAST(%s AS nvarchar(max)) AS %s" % (qn, qn))
+        else:
+            cols.append(qn)
+    if not cols:
+        return None
+    return "SELECT TOP (%d) %s FROM dbo.[%s] %s ORDER BY %s" % (top, ",".join(cols), table.replace("]", "]]"), where, order)
+
+
+def stage6(c, cur, q, out):
+    """Staff app (v5.8.0): who can sign in (sys_users / visitors), staff accounts (drivers, workers, office),
+    the invoices written by the store users (UserID of mahmodi / nazari) with their lines and customer
+    address / phone for delivery. Read-only."""
+    q("s6_cols", "SELECT OBJECT_NAME(c.object_id), c.name, ty.name, c.max_length FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id "
+                 "WHERE OBJECT_NAME(c.object_id) IN (N'sys_users', N'visitors', N'sailfact', N'subsailfact', N'CUSTOMERS', N'drivers', N'Driver', N'mamorp', N'Masir', N'masir', N'FactorConfirmation') "
+                 "ORDER BY OBJECT_NAME(c.object_id), c.column_id")
+    q("s6_tables_like", "SELECT t.name, SUM(p.rows) FROM sys.tables t JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) "
+                        "WHERE t.name LIKE N'%driver%' OR t.name LIKE N'%ranand%' OR t.name LIKE N'%mamor%' OR t.name LIKE N'%masir%' OR t.name LIKE N'%tahvil%' "
+                        "OR t.name LIKE N'%deliver%' OR t.name LIKE N'%haml%' OR t.name LIKE N'%bar%' OR t.name LIKE N'%user%' OR t.name LIKE N'%role%' OR t.name LIKE N'%access%' GROUP BY t.name ORDER BY t.name")
+    for t in ("sys_users", "visitors"):
+        sql = _sel6(cur, t, top=80, order="1")
+        if sql:
+            q("s6_" + t, sql)
+    for t in ("drivers", "Driver", "mamorp", "masir", "Masir"):
+        try:
+            sql = _sel6(cur, t, top=40, order="1")
+            if sql:
+                q("s6_rows_" + t, sql)
+        except Exception as ex:
+            out["errors"].append(["s6_rows_" + t, str(ex)])
+    sql = _sel6(cur, "CUSTOMERS", "WHERE ISNULL(group_rdf,0) IN (3,4,5,6,7,8) OR ISNULL(IsEmp,0)=1", top=120, order="group_rdf, SHMO")
+    if sql:
+        q("s6_staff_customers", sql)
+    sql = _sel6(cur, "sailfact", "WHERE active='t'", top=12, order="shfacfo DESC")
+    if sql:
+        q("s6_sailfact_last", sql)
+    q("s6_sail_by_user", "SELECT UserID, COUNT(*), MIN([date]), MAX([date]), SUM(CASE WHEN ISNULL(Deleted,0)=0 THEN 1 ELSE 0 END) FROM dbo.sailfact WHERE active='t' GROUP BY UserID ORDER BY UserID")
+    q("s6_sail_by_user_90", "SELECT UserID, vis_rdf, COUNT(*), SUM([all]) FROM dbo.sailfact WHERE active='t' AND ISNULL(Deleted,0)=0 AND [date] >= '1405/04/01' GROUP BY UserID, vis_rdf ORDER BY UserID, vis_rdf")
+    q("s6_sail_driver", "SELECT rdf_driver, CAST(driver_name AS nvarchar(200)), rdf_mamorp, CAST(mamorp_name AS nvarchar(200)), COUNT(*) FROM dbo.sailfact WHERE active='t' GROUP BY rdf_driver, CAST(driver_name AS nvarchar(200)), rdf_mamorp, CAST(mamorp_name AS nvarchar(200)) ORDER BY COUNT(*) DESC")
+    q("s6_sail_store_sample", "SELECT TOP (30) s.shfacfo, s.rdf__, s.[date], s.shmo, CAST(c.MONAME AS nvarchar(300)), s.[all], s.UserID, s.vis_rdf, s.[Status], "
+                              "CAST(c.addre AS nvarchar(500)), CAST(c.tell1 AS nvarchar(60)), CAST(c.cell AS nvarchar(60)), c.Lat, c.Lng, CAST(s.[description] AS nvarchar(500)), s.t_time "
+                              "FROM dbo.sailfact s LEFT JOIN dbo.CUSTOMERS c ON c.SHMO=s.shmo WHERE s.active='t' AND ISNULL(s.Deleted,0)=0 AND s.UserID IN (5,6) ORDER BY s.shfacfo DESC")
+    q("s6_sail_store_contact", "SELECT COUNT(*), SUM(CASE WHEN LEN(LTRIM(CAST(c.addre AS nvarchar(500))))>3 THEN 1 ELSE 0 END), SUM(CASE WHEN LEN(LTRIM(CAST(c.cell AS nvarchar(60))))>6 OR LEN(LTRIM(CAST(c.tell1 AS nvarchar(60))))>6 THEN 1 ELSE 0 END), "
+                               "SUM(CASE WHEN ISNULL(c.Lat,0)<>0 THEN 1 ELSE 0 END) FROM dbo.sailfact s LEFT JOIN dbo.CUSTOMERS c ON c.SHMO=s.shmo WHERE s.active='t' AND ISNULL(s.Deleted,0)=0 AND s.UserID IN (5,6)")
+    cur.execute("SELECT TOP (3) shfacfo FROM dbo.sailfact WHERE active='t' AND ISNULL(Deleted,0)=0 AND UserID IN (5,6) ORDER BY shfacfo DESC")
+    ids = [int(r[0]) for r in cur.fetchall()]
+    if ids:
+        sql = _sel6(cur, "subsailfact", "WHERE shfacfo IN (%s)" % ",".join(map(str, ids)), top=60, order="shfacfo, RDF")
+        if sql:
+            q("s6_lines", sql)
+        q("s6_lines_units", "SELECT d.shfacfo, d.SHKA, CAST(d.naka AS nvarchar(300)), d.TEDVAH, d.TEDJOZ, d.LINESUM, i.mohvah, CAST(i.vahed AS nvarchar(60)), CAST(i.vahjoz AS nvarchar(60)) "
+                             "FROM dbo.subsailfact d LEFT JOIN dbo.inventory i ON i.shka=d.SHKA WHERE d.shfacfo IN (%s) AND d.active='t'" % ",".join(map(str, ids)))
+    q("s6_inventory_cols", "SELECT c.name, ty.name FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.inventory') ORDER BY c.column_id")
+    q("s6_confirm", "SELECT TOP (10) * FROM dbo.FactorConfirmation ORDER BY 1 DESC")
+    q("s6_server_date", "SELECT dbo.ReturnDateServer()")
+
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -260,6 +330,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "6":
+        stage6(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 6 done; errors:", len(out["errors"]))
+        return
     if os.environ.get("PROBE_STAGE") == "5":
         stage5(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)

@@ -46,7 +46,7 @@ jobs:
           test -s "$RUNNER_TEMP/restore.json"
       - name: Probe (read-only)
         env:
-          PROBE_STAGE: ${{ contains(github.event.head_commit.message, '[stage-5]') && '5' || contains(github.event.head_commit.message, '[stage-4]') && '4' || contains(github.event.head_commit.message, '[stage-3]') && '3' || (contains(github.event.head_commit.message, '[stage-2]') && '2' || '1') }}
+          PROBE_STAGE: ${{ contains(github.event.head_commit.message, '[stage-6]') && '6' || contains(github.event.head_commit.message, '[stage-5]') && '5' || contains(github.event.head_commit.message, '[stage-4]') && '4' || contains(github.event.head_commit.message, '[stage-3]') && '3' || (contains(github.event.head_commit.message, '[stage-2]') && '2' || '1') }}
         run: python3 .github/scripts/atiran_bak_probe.py "$RUNNER_TEMP/bak-probe.json" 2>&1 | grep -v -i password | tail -5
       - name: Encrypt and commit
         if: always()
