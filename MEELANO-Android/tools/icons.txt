@@ -107,3 +107,8 @@ event
 local_shipping
 warehouse
 notes
+directions_car
+flag
+fingerprint
+assignment_late
+work_history

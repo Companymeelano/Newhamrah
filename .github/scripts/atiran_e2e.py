@@ -121,7 +121,8 @@ def restore(out_path):
         "stock": rows(cur, "SELECT shka, mojkavah, mojkajoz, mohvah FROM dbo.inventory WHERE shka IN (667, 621) ORDER BY shka"),
         "man412": rows(cur, "SELECT man FROM dbo.CUSTOMERS WHERE SHMO=412")["rows"][0][0],
         "max_shfacfo": rows(cur, "SELECT ISNULL(MAX(shfacfo),0) FROM dbo.sailfact")["rows"][0][0],
-        "debtors": rows(cur, "SELECT COUNT(*), SUM(man) FROM dbo.CUSTOMERS WHERE man > 0")["rows"][0],
+        "debtors_all": rows(cur, "SELECT COUNT(*), SUM(man) FROM dbo.CUSTOMERS WHERE man > 0")["rows"][0],
+        "debtors": store_scope_customers(cur)["debtors"],
         "customers": rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS")["rows"][0][0],
         "counter": safe_rows(cur, out, "SELECT * FROM dbo.InvoiceNumberCounter"),
     }
@@ -305,6 +306,40 @@ def verify(out_path):
     print("failed read steps:", len(failed_steps), "| errors:", len(out["errors"]))
 
 
+_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+
+def store_scope(cur):
+    """v5.5.0: the store app only reports latifi / khodayar. Same rule as the visitor app:
+    a name holding 08 belongs to latifi, 07 to khodayar, otherwise the customer's own visitor."""
+    vis = rows(cur, "SELECT vis_rdf, LOWER(LTRIM(RTRIM(ISNULL(CAST(Username AS nvarchar(120)),N'')))), ISNULL(CAST(vis_name AS nvarchar(250)),N'') FROM dbo.visitors")["rows"]
+    lat = next((int(r[0]) for r in vis if r[1] == "latifi"), 0)
+    kho = next((int(r[0]) for r in vis if r[1] == "khodayar"), 0)
+    names = [str(r[2]) for r in vis if r[1] in ("latifi", "khodayar")]
+    return lat, kho, names
+
+
+def store_scope_customers(cur):
+    lat, kho, _ = store_scope(cur)
+    cs = rows(cur, "SELECT ISNULL(CAST(MONAME AS nvarchar(500)),N''), ISNULL(man,0), ISNULL(vis_rdf,0) FROM dbo.CUSTOMERS")["rows"]
+    total, debtors, debt = 0, 0, 0.0
+    for name, man, v in cs:
+        d = str(name or "").translate(_DIGITS)
+        v = int(v or 0)
+        inside = (lat and "08" in d) or (kho and "07" in d) or (v > 0 and v in (lat, kho))
+        if not inside:
+            continue
+        total += 1
+        if float(man) > 0:
+            debtors += 1
+            debt += float(man)
+    return {"total": total, "debtors": [debtors, debt]}
+
+
+def _fa_norm(x):
+    return str(x or "").replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ").strip()
+
+
 def verify_store(cur, out, checks):
     """Store edition (v5.3.0): final sales invoice written through Atiran's AddInvoice / subsailtemp /
     FactorConfirmation path, only store staff may log in, reports match the database, GPS attendance."""
@@ -334,7 +369,7 @@ def verify_store(cur, out, checks):
     if d and before.get("debtors"):
         checks["store_debtors_match_db"] = int(d.group(1)) == int(before["debtors"][0]) and abs(int(d.group(5)) - float(before["debtors"][1])) < 2
         # the visitor test before this one adds its test customers, so compare with the current count
-        checks["store_customers_total_match_db"] = int(d.group(4)) == int(rows(cur, "SELECT COUNT(*) FROM dbo.CUSTOMERS")["rows"][0][0])
+        checks["store_customers_total_match_db"] = int(d.group(4)) == store_scope_customers(cur)["total"]
         checks["store_overdue_found"] = int(d.group(2)) > 0 and 0 < int(d.group(3)) <= float(before["debtors"][1]) + 1
     g = re.search(r"STORE groups (.*)", joined)
     if g and before.get("debtors"):
@@ -347,6 +382,17 @@ def verify_store(cur, out, checks):
     out["store_visitor_names"] = names_txt
     checks["store_reports_only_visitor_names"] = bool(g) and bool(bvm) and not any(x in names_txt for x in ("حمدان", "مدير", "مدیر", "سيستم", "سیستم"))
     checks["store_no_attendance_history_in_app"] = bool(bvm) and bvm.group(2) == "false"
+    # v5.5.0: mahmodi / nazari only see latifi and khodayar (invoices, debts, visitor chart).
+    lat, kho, scope_names = store_scope(cur)
+    allowed = [_fa_norm(n) for n in scope_names]
+    out["store_scope"] = {"latifi": lat, "khodayar": kho, "names": scope_names}
+
+    def only_scope(txt):
+        parts = [p for p in txt.split(";") if p.strip()]
+        got = [_fa_norm(p.split("=", 1)[0]) for p in parts]
+        return bool(parts) and all(any(a and (a in g or g in a) for a in allowed) for g in got)
+    checks["store_debt_groups_only_latifi_khodayar"] = bool(g) and only_scope(g.group(1))
+    checks["store_sales_by_visitor_only_latifi_khodayar"] = bool(bvm) and (not bvm.group(1).strip() or only_scope(bvm.group(1)))
     inv = [s for s in st if s.startswith("STORE INVOICE1 ")]
     inv2 = [s for s in st if s.startswith("STORE INVOICE2 ")]
     r1 = json.loads(inv[0].split(" ", 2)[2]) if inv else {}
@@ -462,12 +508,42 @@ def verify_store(cur, out, checks):
     if ref["rows"] and h:
         r816 = dict(zip(ref["cols"], ref["rows"][0]))
         out["store_vs_816"] = {k: {"atiran": r816.get(k), "meelano": h.get(k)} for k in r816 if str(r816.get(k)).strip() != str(h.get(k)).strip()}
-    att = safe_rows(cur, out, "SELECT username, event_type, lat, lng, distance_m, accuracy_m FROM dbo.meelano_attendance WHERE username='mahmodi' ORDER BY id")
+    # v5.5.0 attendance: zones come from the manager (GPS area or the store's modem), identity is checked
+    # with the phone's fingerprint/screen lock, no working-hour window, lateness / overtime are computed.
+    zm = re.search(r"STORE HR zones gps=(\d+) wifi=(\d+)", joined)
+    gz, wz = (int(zm.group(1)), int(zm.group(2))) if zm else (-1, -1)
+    att = safe_rows(cur, out, "SELECT event_type, distance_m, zone_id, biometric, source, lat, lng, accuracy_m FROM dbo.meelano_attendance WHERE username='mahmodi' ORDER BY id")
     out["store_attendance"] = att
-    ar = att.get("rows", [])
-    checks["store_attendance_in_and_out_saved"] = [r[1] for r in ar] == ["in", "out"]
-    checks["store_attendance_inside_radius"] = bool(ar) and all(r[4] is not None and float(r[4]) <= 120 for r in ar)
-    checks["store_attendance_far_rejected"] = "STEP store_att_far OK" in joined and "STEP store_att_inaccurate OK" in joined and "STEP store_att_dup OK" in joined
+    app_rows = [r for r in att.get("rows", []) if str(r[4]) == "app"]
+    checks["store_hr_tables_ready"] = "STORE HR tables ok" in joined and bool(zm)
+    checks["store_attendance_needs_manager_zone"] = "STEP store_att_nozone OK" in joined
+    checks["store_attendance_rules"] = all("STEP store_att_%s OK" % k in joined for k in ("far", "inaccurate", "wrong_wifi", "dup"))
+    checks["store_attendance_in_and_out_saved"] = [r[0] for r in app_rows] == ["in", "out"]
+    checks["store_attendance_gps_inside_zone"] = len(app_rows) == 2 and app_rows[0][1] is not None and float(app_rows[0][1]) <= 120 and int(app_rows[0][2] or 0) == gz
+    checks["store_attendance_wifi_zone"] = len(app_rows) == 2 and app_rows[1][1] is None and int(app_rows[1][2] or 0) == wz
+    checks["store_attendance_identity_checked"] = len(app_rows) == 2 and all(str(r[3]) in ("1", "True") for r in app_rows)
+    mis = safe_rows(cur, out, "SELECT reason, details, status, start_time, end_time, start_bio, end_bio FROM dbo.meelano_hr_mission WHERE username='mahmodi' ORDER BY id")
+    out["store_missions"] = mis
+    mr = mis.get("rows", [])
+    checks["store_mission_flow"] = all("STEP store_mission_%s OK" % k in joined for k in ("start", "double", "end")) and "STEP store_att_during_mission OK" in joined and "open_mission=true" in joined
+    checks["store_mission_saved_and_ended"] = len(mr) == 1 and mr[0][4] is not None and bool(str(mr[0][0]).strip())
+    inbox = safe_rows(cur, out, "SELECT kind, title, body FROM dbo.meelano_hr_inbox WHERE username='mahmodi' ORDER BY id")
+    out["store_manager_inbox"] = inbox
+    kinds = [str(r[0]) for r in inbox.get("rows", [])]
+    checks["store_mission_sent_to_manager"] = "mission_start" in kinds and "mission_end" in kinds
+    im = re.search(r"STORE HR incomplete date=(\S+) status=(\w+)", joined)
+    fm = re.search(r"STORE HR incomplete_after_fix date=(\S+) status=(\w+)", joined)
+    checks["store_incomplete_reported_to_manager"] = bool(im) and im.group(2) == "open" and "incomplete" in kinds
+    checks["store_incomplete_fixed_by_manager_only"] = bool(fm) and fm.group(2) == "fixed"
+    mm = re.search(r"STORE HR month (\d+)/(\d+) present=(\d+) late=(\d+) overtime=(\d+) mission=(\d+) incomplete=(\d+) gross=(-?\d+) insurance=(-?\d+) tax=(-?\d+) net=(-?\d+)", joined)
+    out["store_hr_month"] = mm.group(0) if mm else None
+    months = safe_rows(cur, out, "SELECT jy, jm, present_days, late_min, overtime_min, gross, deduction, insurance, tax, net FROM dbo.meelano_hr_month WHERE username='mahmodi' ORDER BY jy, jm")
+    out["store_hr_month_rows"] = months
+    checks["store_month_computed_and_saved"] = bool(mm) and int(mm.group(3)) >= 1 and bool(months.get("rows"))
+    mrows = months.get("rows") or []
+    checks["store_pay_math_consistent"] = bool(mrows) and all(int(r[9] or 0) == int(r[5] or 0) - int(r[6] or 0) - int(r[7] or 0) - int(r[8] or 0) for r in mrows)
+    checks["store_app_hides_times_and_pay"] = "app_shows_no_times_or_pay=true" in joined
+    checks["store_hr_step_ok"] = "STEP store_hr OK" in joined
 
 
 if __name__ == "__main__":

@@ -82,6 +82,8 @@ final class MeelanoIcons {
         any("☾", R.drawable.mi_dark_mode); any("🌅", R.drawable.mi_wb_twilight); any("🌙", R.drawable.mi_bedtime);
         any("🏅", R.drawable.mi_military_tech); any("💡", R.drawable.mi_lightbulb); any("⌘", R.drawable.mi_keyboard_command_key);
         any("⋯", R.drawable.mi_more_horiz);
+        any("🚗", R.drawable.mi_directions_car); any("🏁", R.drawable.mi_flag); any("☝", R.drawable.mi_fingerprint);
+        any("⧗", R.drawable.mi_assignment_late); any("⌛", R.drawable.mi_work_history);
 
         lead("×", R.drawable.mi_close); lead("−", R.drawable.mi_remove); lead("+", R.drawable.mi_add); lead("＋", R.drawable.mi_add);
         lead("›", R.drawable.mi_chevron_left); lead("●", R.drawable.mi_fiber_manual_record_fill); lead("▲", R.drawable.mi_trending_up);

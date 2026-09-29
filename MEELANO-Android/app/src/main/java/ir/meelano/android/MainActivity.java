@@ -75,6 +75,7 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.NumberPicker;
 import android.widget.ProgressBar;
 import android.widget.RemoteViews;
 import android.widget.ScrollView;
@@ -380,6 +381,8 @@ public class MainActivity extends Activity {
         if ("new_customer".equals(page)) { showApp("customers"); showNewCustomerRequestDialog(); return; }
         String p = page.trim();
         if (p.startsWith("store_reports:")) { storeReportsTab = p.substring(p.indexOf(':') + 1); p = "store_reports"; }
+        if ("attendance_mission".equals(p)) { storePreviewHrMode = "mission"; p = "attendance"; }
+        if ("mission_dialog".equals(p)) { showApp("attendance"); designPreview = false; showStoreMissionDialog(); designPreview = true; return; }
         if ("store_checkout".equals(p) || "store_checkout_pay".equals(p)) {
             openStoreCheckout(currentCartSnapshot(finalCartStatus()));
             if ("store_checkout_pay".equals(p) && storeCheckout != null) {
@@ -572,28 +575,79 @@ public class MainActivity extends Activity {
             visitorCartItems = new JSONArray(); visitorCartDraftId = "";
             selfTestStoreReceipts(shmoT, ref, r1);
         } catch (Throwable ex) { selfTestLog("STEP store_invoice FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
-        String winStart = "", winEnd = "";
+        selfTestStoreHr();
+    }
+
+    /**
+     * v5.5 attendance: zone set by the manager (a map area and a store modem), no time window, fingerprint flag,
+     * missions (start/end to the manager), «تردد ناقص» detection + manager correction, and the monthly result.
+     */
+    private void selfTestStoreHr() {
+        String user = hrUser();
         try (Connection c = openConnection()) {
-            // The manager's attendance hours (e.g. 07:15–15:30) would reject a test run at night; lift them for the test only.
-            ensureMeelanoCollabTables(c);
-            winStart = chatSetting(c, "attendance_start", ""); winEnd = chatSetting(c, "attendance_end", "");
-            selfTestLog("STORE attendance window=" + winStart + "-" + winEnd);
-            setChatSetting(c, "attendance_start", ""); setChatSetting(c, "attendance_end", "");
-        } catch (Throwable ex) { selfTestLog("STORE attendance window read failed " + ex.getMessage()); }
+            ensureMeelanoHrTables(c);
+            selfTestLog("STORE HR tables ok zones_before=" + hrZones(c).size() + " holidays=" + hrHolidays(c).size());
+            try (Statement st = c.createStatement()) { st.executeUpdate("UPDATE dbo.meelano_hr_zone SET active=0 WHERE active=1"); }
+        } catch (Throwable ex) { selfTestLog("STEP store_hr_tables FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+        try { saveStoreAttendance("in", new JSONObject(), 31.3183, 48.6706, 10, false); selfTestLog("STEP store_att_nozone FAIL accepted"); }
+        catch (DbException nz) { selfTestLog("STEP store_att_nozone OK " + nz.getMessage()); }
+        catch (Throwable ex) { selfTestLog("STEP store_att_nozone FAIL " + ex.getMessage()); }
         try {
-            selfTestLog("STORE location " + saveStoreLocation(31.3183, 48.6706, 120));
-            try { saveStoreAttendance("out", 31.3300, 48.7000, 10); selfTestLog("STEP store_att_far FAIL accepted"); }
+            long gz, wz;
+            try (Connection c = openConnection()) {
+                gz = hrInsertZone(c, "فروشگاه (آزمون)", "gps", 31.3183, 48.6706, 120, "", "", "", "e2e-manager");
+                wz = hrInsertZone(c, "مودم فروشگاه (آزمون)", "wifi", Double.NaN, Double.NaN, 0, "MEELANO-STORE", "aa:bb:cc:dd:ee:ff", "192.168.1.1", "e2e-manager");
+            }
+            selfTestLog("STORE HR zones gps=" + gz + " wifi=" + wz);
+            try { saveStoreAttendance("out", new JSONObject(), 31.3300, 48.7000, 10, true); selfTestLog("STEP store_att_far FAIL accepted"); }
             catch (DbException far) { selfTestLog("STEP store_att_far OK " + far.getMessage()); }
-            try { saveStoreAttendance("in", 31.3183, 48.6706, 400); selfTestLog("STEP store_att_inaccurate FAIL accepted"); }
+            try { saveStoreAttendance("in", new JSONObject(), 31.3183, 48.6706, 400, true); selfTestLog("STEP store_att_inaccurate FAIL accepted"); }
             catch (DbException weak) { selfTestLog("STEP store_att_inaccurate OK " + weak.getMessage()); }
-            selfTestLog("STEP store_att_in OK " + saveStoreAttendance("in", 31.31845, 48.67072, 12));
-            try { saveStoreAttendance("in", 31.31845, 48.67072, 12); selfTestLog("STEP store_att_dup FAIL accepted"); }
+            try { saveStoreAttendance("in", new JSONObject().put("ssid", "OtherNet").put("bssid", "11:22:33:44:55:66"), Double.NaN, Double.NaN, 9999, true); selfTestLog("STEP store_att_wrong_wifi FAIL accepted"); }
+            catch (DbException ww) { selfTestLog("STEP store_att_wrong_wifi OK " + ww.getMessage()); }
+            selfTestLog("STEP store_att_in OK " + saveStoreAttendance("in", new JSONObject(), 31.31845, 48.67072, 12, true));
+            try { saveStoreAttendance("in", new JSONObject(), 31.31845, 48.67072, 12, true); selfTestLog("STEP store_att_dup FAIL accepted"); }
             catch (DbException dup) { selfTestLog("STEP store_att_dup OK " + dup.getMessage()); }
-            selfTestLog("STEP store_att_out OK " + saveStoreAttendance("out", 31.31822, 48.67049, 9));
-            try (Connection c = openConnection()) { selfTestLog("STORE attendance rows=" + queryStoreAttendance(c).length()); }
+            selfTestLog("STEP store_mission_start OK " + hrStartMission("وصول مطالبات یا چک", "آزمون خودکار ماموریت", "سوپر مارکت امید", 60, 31.3250, 48.6800, true));
+            try { hrStartMission("کار بانکی", "", "", 60, Double.NaN, Double.NaN, true); selfTestLog("STEP store_mission_double FAIL accepted"); }
+            catch (DbException dm) { selfTestLog("STEP store_mission_double OK " + dm.getMessage()); }
+            try { saveStoreAttendance("out", new JSONObject(), 31.31845, 48.67072, 12, true); selfTestLog("STEP store_att_during_mission FAIL accepted"); }
+            catch (DbException om) { selfTestLog("STEP store_att_during_mission OK " + om.getMessage()); }
+            try (Connection c = openConnection()) { JSONObject st = hrState(c); selfTestLog("STORE HR open_mission=" + (st.optJSONObject("openMission") != null) + " missions=" + st.optJSONArray("missions").length()); }
+            selfTestLog("STEP store_mission_end OK " + hrEndMission(31.3183, 48.6706, true));
+            JSONObject wifi = new JSONObject().put("ssid", "MEELANO-STORE").put("bssid", "AA:BB:CC:DD:EE:FF").put("gateway", "192.168.1.1");
+            selfTestLog("STEP store_att_out OK " + saveStoreAttendance("out", wifi, Double.NaN, Double.NaN, 9999, true));
         } catch (Throwable ex) { selfTestLog("STEP store_attendance FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
-        try (Connection c = openConnection()) { setChatSetting(c, "attendance_start", stringOr(winStart, "")); setChatSetting(c, "attendance_end", stringOr(winEnd, "")); }
-        catch (Throwable ex) { selfTestLog("STORE attendance window restore failed " + ex.getMessage()); }
+        // A check-in three days ago with no exit → «تردد ناقص» for the manager; the manager's exit fixes it.
+        try (Connection c = openConnection()) {
+            String day3;
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_attendance(username,display_name,event_type,event_time,note,source) OUTPUT CONVERT(nvarchar(19),INSERTED.event_time,120) VALUES(?,?,N'in',DATEADD(minute,440,CAST(CAST(DATEADD(day,-3,SYSDATETIME()) AS date) AS datetime2)),N'آزمون تردد ناقص',N'e2e')")) {
+                ps.setString(1, currentAccountName()); ps.setString(2, hrDisplayName());
+                try (ResultSet r = ps.executeQuery()) { r.next(); day3 = r.getString(1); }
+            }
+            int[] dm = hrDayMinute(day3);
+            String jdate = MeelanoJalali.format(dm[0]);
+            JSONObject st = hrState(c);
+            String status = "missing";
+            JSONArray inc = st.optJSONArray("incomplete");
+            for (int i = 0; inc != null && i < inc.length(); i++) if (jdate.equals(inc.optJSONObject(i).optString("date"))) status = inc.optJSONObject(i).optString("status");
+            selfTestLog("STORE HR incomplete date=" + jdate + " status=" + status + " open=" + st.optInt("incompleteOpen"));
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_attendance(username,display_name,event_type,event_time,note,source,edited_by,edited_at) VALUES(?,?,N'out',DATEADD(minute,930,CAST(CAST(DATEADD(day,-3,SYSDATETIME()) AS date) AS datetime2)),N'اصلاح مدیر (آزمون)',N'manager',N'e2e-manager',SYSDATETIME())")) {
+                ps.setString(1, currentAccountName()); ps.setString(2, hrDisplayName()); ps.executeUpdate();
+            }
+            st = hrState(c);
+            String fixed = "missing"; inc = st.optJSONArray("incomplete");
+            for (int i = 0; inc != null && i < inc.length(); i++) if (jdate.equals(inc.optJSONObject(i).optString("date"))) fixed = inc.optJSONObject(i).optString("status");
+            selfTestLog("STORE HR incomplete_after_fix date=" + jdate + " status=" + fixed);
+            MeelanoHr.Month m = hrRecalculate(c, user);
+            selfTestLog("STORE HR month " + m.jy + "/" + m.jm + " present=" + m.presentDays + " late=" + m.late + " overtime=" + m.overtime + " mission=" + m.mission + " incomplete=" + m.incompleteDays
+                    + " gross=" + m.gross + " insurance=" + m.insurance + " tax=" + m.tax + " net=" + m.net + " leaveBalance=" + (hrLastLeave == null ? "?" : hrLastLeave.optLong("balance")));
+            JSONObject shown = storeData(true).optJSONObject("hr");
+            String text = shown == null ? "" : shown.toString();
+            boolean leaks = text.contains("\"late\"") || text.contains("\"overtime\"") || text.contains("\"gross\"") || text.contains("\"net\"") || text.contains("\"in\":");
+            selfTestLog("STORE HR app_shows_no_times_or_pay=" + !leaks + " keys=" + (shown == null ? "" : shown.names()));
+            selfTestLog("STEP store_hr OK");
+        } catch (Throwable ex) { selfTestLog("STEP store_hr FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
     }
 
     /**
@@ -1650,6 +1704,19 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
             t.setTextDirection(View.TEXT_DIRECTION_RTL);
         }
+        return t;
+    }
+
+    /** One-line figure that shrinks to fit its space (report amounts, KPI values, legend amounts). */
+    private TextView fitText(String value, float maxSize, float minSize, int color) {
+        float max = fs(maxSize);
+        MeelanoFitText t = new MeelanoFitText(this, max, Math.min(max, minSize));
+        t.setText(storeWording(value));
+        t.setTextColor(color);
+        t.setTypeface(faceFor(Typeface.BOLD));
+        t.setIncludeFontPadding(true);
+        t.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        t.setTextDirection(View.TEXT_DIRECTION_RTL);
         return t;
     }
 
@@ -8317,13 +8384,34 @@ public class MainActivity extends Activity {
         box.addView(text("نوع، تاریخ و توضیح کوتاه را کامل وارد کنید تا مدیر سریع‌تر تصمیم بگیرد.",10.2f,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2));
         final String[] type={"مرخصی استحقاقی"};
         Button typeBtn=secondaryButton(withIcon("☘", type[0]));
-        typeBtn.setOnClickListener(v->{ String[] items={"مرخصی استحقاقی","مرخصی استعلاجی","مرخصی ساعتی","ماموریت","سایر"}; AlertDialog d=new MeelanoDialogBuilder().setItems(items,(di,which)->{type[0]=items[which]; typeBtn.setText(withIcon("☘", type[0]));}).create(); styleMeelanoDialog(d, navAccent("attendance")); d.show(); });
-        Button start=secondaryButton(withIcon("◷", todayDateText())); Button end=secondaryButton(withIcon("◷", todayDateText()));
-        start.setOnClickListener(v->showDatePickForButton(start)); end.setOnClickListener(v->showDatePickForButton(end));
-        EditText hours=input("ساعت/مدت", "", false); EditText reason=input("توضیح درخواست", "", false); reason.setMinLines(2);
+        typeBtn.setOnClickListener(v->{ String[] items=STORE_EDITION ? new String[]{"مرخصی استحقاقی","مرخصی ساعتی","مرخصی استعلاجی","مرخصی بدون حقوق"} : new String[]{"مرخصی استحقاقی","مرخصی استعلاجی","مرخصی ساعتی","ماموریت","سایر"}; AlertDialog d=new MeelanoDialogBuilder().setItems(items,(di,which)->{type[0]=items[which]; typeBtn.setText(withIcon("☘", type[0]));}).create(); styleMeelanoDialog(d, navAccent("attendance")); d.show(); });
+        String firstDate = STORE_EDITION ? MeelanoJalali.format(MeelanoJalali.today()) : todayDateText();
+        Button start=secondaryButton(withIcon("◷", firstDate)); Button end=secondaryButton(withIcon("◷", firstDate));
+        if (STORE_EDITION) { start.setOnClickListener(v->showJalaliPickForButton(start)); end.setOnClickListener(v->showJalaliPickForButton(end)); }
+        else { start.setOnClickListener(v->showDatePickForButton(start)); end.setOnClickListener(v->showDatePickForButton(end)); }
+        EditText hours=input(STORE_EDITION ? "مدت مرخصی ساعتی (مثلاً ۲ یا ۱:۳۰)" : "ساعت/مدت", "", false); EditText reason=input("توضیح درخواست", "", false); reason.setMinLines(2);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1,dp(46)); lp.setMargins(0,dp(8),0,0);
         box.addView(typeBtn,lp); box.addView(start,new LinearLayout.LayoutParams(-1,dp(46))); box.addView(end,new LinearLayout.LayoutParams(-1,dp(46))); box.addView(hours,new LinearLayout.LayoutParams(-1,dp(46))); box.addView(reason,new LinearLayout.LayoutParams(-1,dp(76)));
         AlertDialog dialog = new MeelanoDialogBuilder().setTitle("درخواست مرخصی").setView(box).setNegativeButton("بستن",null).setPositiveButton("ارسال",(d,w)->submitLeaveRequest(type[0],start.getText().toString().replace("◷","").trim(),end.getText().toString().replace("◷","").trim(),hours.getText().toString(),reason.getText().toString())).create();
+        styleMeelanoDialog(dialog, navAccent("attendance")); dialog.show();
+    }
+
+    /** Persian calendar date picker (day, month name, year) for the store's leave requests. */
+    private void showJalaliPickForButton(Button b) {
+        int cur = MeelanoJalali.parse(b.getText().toString().replace("◷", "").trim());
+        if (cur < 0) cur = MeelanoJalali.today();
+        int[] j = MeelanoJalali.fromDay(cur);
+        final NumberPicker py = new NumberPicker(this), pm = new NumberPicker(this), pd = new NumberPicker(this);
+        py.setMinValue(j[0] - 1); py.setMaxValue(j[0] + 1); py.setValue(j[0]);
+        pm.setMinValue(1); pm.setMaxValue(12); pm.setDisplayedValues(MeelanoJalali.MONTHS); pm.setValue(j[1]);
+        pd.setMinValue(1); pd.setMaxValue(MeelanoHr.daysInMonth(j[0], j[1])); pd.setValue(Math.min(j[2], pd.getMaxValue()));
+        NumberPicker.OnValueChangeListener fix = (pk, o, n) -> pd.setMaxValue(MeelanoHr.daysInMonth(py.getValue(), pm.getValue()));
+        py.setOnValueChangedListener(fix); pm.setOnValueChangedListener(fix);
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER);
+        row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL); row.setPadding(dp(8), dp(8), dp(8), dp(8));
+        row.addView(pd, new LinearLayout.LayoutParams(0, -2, 1f)); row.addView(pm, new LinearLayout.LayoutParams(0, -2, 1.4f)); row.addView(py, new LinearLayout.LayoutParams(0, -2, 1.2f));
+        AlertDialog dialog = new MeelanoDialogBuilder().setTitle("انتخاب تاریخ").setView(row).setNegativeButton("بستن", null)
+                .setPositiveButton("ثبت", (d, w) -> b.setText(withIcon("◷", String.format(Locale.US, "%04d/%02d/%02d", py.getValue(), pm.getValue(), pd.getValue())))).create();
         styleMeelanoDialog(dialog, navAccent("attendance")); dialog.show();
     }
 
@@ -8337,6 +8425,8 @@ public class MainActivity extends Activity {
         if (type == null || type.trim().isEmpty()) { showNotice("نوع مرخصی را انتخاب کنید.", false); return; }
         if (start == null || start.trim().isEmpty() || end == null || end.trim().isEmpty()) { showNotice("تاریخ شروع و پایان الزامی است.", false); return; }
         if (reason == null || reason.trim().length() < 3) { showNotice("توضیح کوتاه درخواست را وارد کنید.", false); return; }
+        if (STORE_EDITION && "hourly".equals(MeelanoHr.leaveKind(type)) && MeelanoHr.parseDuration(hours) <= 0) { showNotice("برای مرخصی ساعتی، مدت را وارد کنید (مثلاً ۲ یا ۱:۳۰).", true); return; }
+        if (STORE_EDITION && hrParseDate(end) >= 0 && hrParseDate(start) >= 0 && hrParseDate(end) < hrParseDate(start)) { showNotice("تاریخ پایان نباید قبل از تاریخ شروع باشد.", true); return; }
         runDb(() -> { try(Connection c=openConnection()){ ensureMeelanoCollabTables(c); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_leave_requests(username,display_name,leave_type,start_date,end_date,hours,reason) VALUES(?,?,?,?,?,?,?)")){ ps.setString(1,currentAccountName()); ps.setString(2,session==null?currentAccountName():session.userName); ps.setString(3,type); ps.setString(4,start); ps.setString(5,end); ps.setString(6,hours); ps.setString(7,reason); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("درخواست مرخصی ارسال شد.", false); showLocalNotification("درخواست مرخصی", "درخواست شما ثبت شد و برای مدیر قابل مشاهده است.", false); if (STORE_EDITION) { storeDataCache = null; loadStoreAttendance(); } else loadAttendance(); } @Override public void fail(Exception e){ if (STORE_EDITION) showNotice("درخواست مرخصی ثبت نشد: " + shortError(e), true); else showPageError("مرخصی",e,()->loadAttendance()); }});
     }
 
@@ -20607,21 +20697,21 @@ public class MainActivity extends Activity {
         content.addView(about, ap);
     }
 
-    /** Store app: the store location for GPS attendance is set once here (while standing inside the store). */
+    /** Store app: the attendance zone is chosen by the manager (store modem or an area on the map) — shown here read-only. */
     private void addStoreLocationSettingsCard() {
         JSONObject d = storeDataCache;
-        boolean known = d != null, located = known && !d.optString("storeLat").isEmpty();
+        JSONObject hr = d == null ? null : d.optJSONObject("hr");
         LinearLayout c = card();
         c.setBackground(themedSectionBg("attendance", 24));
-        c.addView(text("مکان فروشگاه برای حضور و غیاب", 15, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        String sub = !known ? "برای ثبت یا تغییر، داخل فروشگاه دکمه زیر را بزنید." : located
-                ? "ثبت شده • شعاع مجاز: " + formatNumber(parseNumber(d.optString("storeRadius"), STORE_DEFAULT_RADIUS_M)) + " متر"
-                : "هنوز ثبت نشده است؛ داخل فروشگاه دکمه زیر را بزنید.";
+        c.addView(text(withIcon("☝", "محدوده ثبت حضور"), 15, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        String sub;
+        if (hr == null) sub = "محدوده حضور را مدیر تعیین می‌کند (وای‌فای فروشگاه یا محدوده‌ای روی نقشه). شما چیزی وارد نمی‌کنید.";
+        else if (hr.optInt("zones") == 0) sub = "مدیر هنوز محدوده حضور را تعیین نکرده است؛ تا آن زمان ثبت ورود و خروج ممکن نیست.";
+        else sub = "توسط مدیر تعیین شده است: " + (hr.optInt("wifiZones") > 0 ? formatNumber(hr.optInt("wifiZones")) + " مودم وای‌فای" : "")
+                + (hr.optInt("wifiZones") > 0 && hr.optInt("gpsZones") > 0 ? " و " : "") + (hr.optInt("gpsZones") > 0 ? formatNumber(hr.optInt("gpsZones")) + " محدوده روی نقشه" : "")
+                + ". ورود و خروج فقط آنجا و با اثر انگشت ثبت می‌شود.";
         TextView t = text(sub, 11, MUTED, Typeface.NORMAL); t.setLineSpacing(dp(2), 1f);
         c.addView(t, new LinearLayout.LayoutParams(-1, -2));
-        Button set = themedActionButton(located ? "تغییر مکان فروشگاه" : "ثبت مکان فروشگاه (همین‌جا)", navAccent("attendance"), !located);
-        set.setOnClickListener(v -> showSetStoreLocationDialog(located));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(10), 0, 0); c.addView(set, lp);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(12), 0, 0);
         content.addView(c, cp);
     }
@@ -21181,6 +21271,7 @@ public class MainActivity extends Activity {
     private TextView storeCheckoutAlloc = null;
     private boolean storeCheckoutSending = false;
     private boolean storePreviewScrollToReceipt = false;
+    private String storePreviewHrMode = "";
 
     private interface StoreFormOk { String run(); }
 
@@ -21262,12 +21353,13 @@ public class MainActivity extends Activity {
 
             // Only real visitors (and the store row) — never the whole personnel list.
             JSONArray vis = new JSONArray(); JSONObject mine = null;
+            int[] scope = storeScopeVisitors(c);
             try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT vis_rdf, ISNULL(CAST(vis_name AS nvarchar(250)),N'') FROM dbo.visitors ORDER BY vis_rdf")) {
                 while (r.next()) {
                     int id = r.getInt(1);
                     String raw = stringOr(r.getString(2), "").trim().replace('ي', 'ی').replace('ك', 'ک');
                     String name = raw.contains("/") ? raw.substring(0, raw.indexOf('/')).trim() : raw;
-                    boolean visitor = (raw.contains("ویزیتور") || raw.contains("فروشگاه")) && !raw.contains("سیستم");
+                    boolean visitor = id == scope[0] || id == scope[1] || (raw.contains("فروشگاه") && !raw.contains("سیستم"));
                     if (id != myVis && !visitor) continue;
                     JSONObject v = new JSONObject(); v.put("id", id); v.put("name", name.isEmpty() ? "ویزیتور " + id : name);
                     if (id == myVis) { v.put("mine", true); mine = v; } else vis.put(v);
@@ -22145,7 +22237,10 @@ public class MainActivity extends Activity {
             int creditDays = (int) atiranSetting(c, 15, 30);
             out.put("today", today); out.put("weekday", MeelanoJalali.weekday(today)); out.put("month", MeelanoJalali.monthName(today));
             out.put("creditDays", creditDays); out.put("staff", staff);
-            String live = " s.active='t' AND ISNULL(s.Deleted,0)=0 ";
+            final int[] scope = storeScopeVisitors(c);
+            out.put("scope", new JSONArray().put(scope[0]).put(scope[1]));
+            String own = " s.active='t' AND ISNULL(s.Deleted,0)=0 ";
+            String live = own + "AND" + storeScopeInvoices(scope);
 
             // Daily sales for the last 30 days (days without invoices are zero).
             Map<String, double[]> daily = new HashMap<>();
@@ -22163,7 +22258,7 @@ public class MainActivity extends Activity {
             out.put("daily", days);
             out.put("todaySales", aggregate(c, "SELECT COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s WHERE" + live + "AND s.[date]=?", today));
             out.put("monthSales", aggregate(c, "SELECT COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s WHERE" + live + "AND s.[date]>=?", month));
-            try (PreparedStatement ps = c.prepareStatement("SELECT COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s WHERE" + live + "AND s.[date]=? AND s.userid=?")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s WHERE" + own + "AND s.[date]=? AND s.userid=?")) {
                 ps.setString(1, today); ps.setInt(2, staff.optInt("uid"));
                 try (ResultSet r = ps.executeQuery()) { if (r.next()) { JSONObject o = new JSONObject(); o.put("count", r.getDouble(1)); o.put("sum", r.getDouble(2)); out.put("mineToday", o); } }
             }
@@ -22174,7 +22269,8 @@ public class MainActivity extends Activity {
             Map<String, double[]> merged = new LinkedHashMap<>();
             for (int vi = 0; vi < rawVis.length(); vi++) {
                 JSONObject vrow = rawVis.optJSONObject(vi);
-                String vlabel = storeVisitorLabel(vrow.optString("raw"), (int) parseNumber(vrow.optString("id"), 0), myVisS);
+                int vid = (int) parseNumber(vrow.optString("id"), 0);
+                String vlabel = vid == scope[0] || vid == scope[1] ? storeVisitorName(vrow.optString("raw"), vid) : storeVisitorLabel(vrow.optString("raw"), vid, myVisS);
                 double[] vacc = merged.get(vlabel); if (vacc == null) { vacc = new double[2]; merged.put(vlabel, vacc); }
                 vacc[0] += vrow.optDouble("count"); vacc[1] += vrow.optDouble("sum");
             }
@@ -22190,13 +22286,19 @@ public class MainActivity extends Activity {
             try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT COUNT(*), SUM(CASE WHEN ISNULL(mojkavah,0)*ISNULL(NULLIF(mohvah,0),1)+ISNULL(mojkajoz,0) > 0 THEN 1 ELSE 0 END) FROM dbo.inventory")) {
                 if (r.next()) { JSONObject o = new JSONObject(); o.put("total", r.getLong(1)); o.put("inStock", r.getLong(2)); out.put("stock", o); }
             } catch (Exception ignored) { }
-            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT COUNT(*), SUM(CASE WHEN man>0 THEN 1 ELSE 0 END), SUM(CASE WHEN man<0 THEN 1 ELSE 0 END), ISNULL(SUM(CASE WHEN man>0 THEN man ELSE 0 END),0), ISNULL(SUM(CASE WHEN man<0 THEN -man ELSE 0 END),0) FROM dbo.CUSTOMERS")) {
-                if (r.next()) { JSONObject o = new JSONObject(); o.put("total", r.getLong(1)); o.put("debtors", r.getLong(2)); o.put("creditors", r.getLong(3)); o.put("debt", r.getDouble(4)); o.put("credit", r.getDouble(5)); out.put("customers", o); }
+            // Customers of latifi and khodayar only (same rule as the visitor app).
+            try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT ISNULL(CAST(MONAME AS nvarchar(500)),N''), ISNULL(man,0), ISNULL(vis_rdf,0) FROM dbo.CUSTOMERS")) {
+                long total = 0, debtorsN = 0, creditorsN = 0; double debt = 0, credit = 0;
+                while (r.next()) {
+                    if (!storeCustomerInScope(stringOr(r.getString(1), ""), r.getInt(3), scope)) continue;
+                    double man = r.getDouble(2); total++;
+                    if (man > 0) { debtorsN++; debt += man; } else if (man < 0) { creditorsN++; credit -= man; }
+                }
+                JSONObject o = new JSONObject(); o.put("total", total); o.put("debtors", debtorsN); o.put("creditors", creditorsN); o.put("debt", debt); o.put("credit", credit); out.put("customers", o);
             }
             queryStoreDebts(c, out, todayDay, creditDays);
             try { out.put("myLeaves", queryLeaveRequestsForUser(c, currentAccountName())); } catch (Exception e) { out.put("myLeaves", new JSONArray()); }
-            String lat = chatSetting(c, "work_lat", ""), lng = chatSetting(c, "work_lng", "");
-            out.put("storeLat", lat); out.put("storeLng", lng); out.put("storeRadius", chatSetting(c, "work_radius", String.valueOf(STORE_DEFAULT_RADIUS_M)));
+            try { out.put("hr", hrState(c)); } catch (Exception e) { android.util.Log.w("MEELANO_HR", "state: " + e.getMessage()); out.put("hr", new JSONObject()); }
         }
         return out;
     }
@@ -22247,6 +22349,38 @@ public class MainActivity extends Activity {
 
     private static final String STORE_OTHER_VISITORS = "سایر (غیر ویزیتور)";
 
+    private static String storeVisitorName(String raw, int id) {
+        String n = raw == null ? "" : raw.trim().replace('ي', 'ی').replace('ك', 'ک');
+        if (n.contains("/")) n = n.substring(0, n.indexOf('/')).trim();
+        return n.isEmpty() ? "ویزیتور " + id : n;
+    }
+
+    /**
+     * The store staff see only the visitors latifi and khodayar: their invoices (sailfact.vis_rdf) and their customers
+     * (the visitor app's rule: name with 08 → latifi, 07 → khodayar, otherwise CUSTOMERS.vis_rdf). {latifi, khodayar}.
+     */
+    private int[] storeScopeVisitors(Connection c) {
+        int l = 0, k = 0;
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT vis_rdf, LOWER(LTRIM(RTRIM(ISNULL(CAST(Username AS nvarchar(120)),N'')))) FROM dbo.visitors")) {
+            while (r.next()) { String u = stringOr(r.getString(2), ""); if ("latifi".equals(u)) l = r.getInt(1); if ("khodayar".equals(u)) k = r.getInt(1); }
+        } catch (Exception ignored) { }
+        return new int[]{l, k};
+    }
+
+    /** SQL condition on sailfact alias s: only invoices whose visitor is latifi or khodayar. */
+    private static String storeScopeInvoices(int[] sc) {
+        StringBuilder b = new StringBuilder();
+        for (int v : sc) if (v > 0) { if (b.length() > 0) b.append(','); b.append(v); }
+        return b.length() == 0 ? " 1=0 " : " ISNULL(s.vis_rdf,0) IN (" + b + ") ";
+    }
+
+    private boolean storeCustomerInScope(String name, int vis, int[] sc) {
+        String digits = normalizeDigits(name);
+        if (sc[0] > 0 && digits.contains("08")) return true;
+        if (sc[1] > 0 && digits.contains("07")) return true;
+        return vis > 0 && (vis == sc[0] || vis == sc[1]);
+    }
+
     private int storeMyVis(Connection c) {
         try { return resolveStoreStaff(c).optInt("vis", 0); } catch (Exception e) { return 0; }
     }
@@ -22258,7 +22392,7 @@ public class MainActivity extends Activity {
         try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT vis_rdf, ISNULL(CAST(vis_name AS nvarchar(250)),N''), LOWER(LTRIM(RTRIM(ISNULL(CAST(Username AS nvarchar(120)),N'')))) FROM dbo.visitors")) {
             while (r.next()) {
                 int id = r.getInt(1); String u = stringOr(r.getString(3), "");
-                visName.put(id, storeVisitorLabel(r.getString(2), id, myVis));
+                visName.put(id, "latifi".equals(u) || "khodayar".equals(u) ? storeVisitorName(r.getString(2), id) : storeVisitorLabel(r.getString(2), id, myVis));
                 if ("latifi".equals(u)) latifi = id;
                 if ("khodayar".equals(u)) khodayar = id;
             }
@@ -22272,6 +22406,7 @@ public class MainActivity extends Activity {
                 int vis = r.getInt(4);
                 if (latifi > 0 && digits.contains("08")) vis = latifi;
                 else if (khodayar > 0 && digits.contains("07")) vis = khodayar;
+                if (vis <= 0 || (vis != latifi && vis != khodayar)) continue; // only latifi's and khodayar's customers
                 o.put("code", shmo); o.put("name", name); o.put("man", r.getDouble(3)); o.put("vis", vis);
                 o.put("visName", stringOr(visName.get(vis), vis <= 0 ? "بدون ویزیتور" : "ویزیتور " + vis));
                 String cell = stringOr(r.getString(5), "").trim(); o.put("phone", cell.isEmpty() ? stringOr(r.getString(6), "").trim() : cell);
@@ -22342,29 +22477,6 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
-    /** Attendance of the signed-in staff member for the last 40 days, newest first. */
-    private JSONArray queryStoreAttendance(Connection c) {
-        JSONArray a = new JSONArray();
-        String me = storeStaffKey(currentAccountName(), session == null ? "" : session.userName);
-        try {
-            ensureMeelanoCollabTables(c); ensureAttendanceGeoColumns(c);
-            try (PreparedStatement ps = c.prepareStatement("SELECT TOP (400) username, ISNULL(display_name,username), event_type, CONVERT(nvarchar(19),event_time,120), ISNULL(distance_m,-1) FROM dbo.meelano_attendance "
-                    + "WHERE event_time >= DATEADD(day,-40,SYSDATETIME()) AND (LOWER(username) IN (N'mahmodi',N'nazari',N'mahmoodi',N'nazary') OR display_name LIKE N'%محمود%' OR display_name LIKE N'%نظر%') ORDER BY event_time DESC")) {
-                try (ResultSet r = ps.executeQuery()) {
-                    while (r.next()) {
-                        JSONObject o = new JSONObject();
-                        String key = storeStaffKey(r.getString(1), r.getString(2));
-                        if (!me.isEmpty() && !me.equals(key)) continue;
-                        o.put("staff", key); o.put("name", storeStaffDisplay(key)); o.put("type", stringOr(r.getString(3), ""));
-                        o.put("time", stringOr(r.getString(4), "")); o.put("distance", r.getDouble(5));
-                        a.put(o);
-                    }
-                }
-            }
-        } catch (Exception ignored) { }
-        return a;
-    }
-
     /** "2026-09-28 08:12:03" → Jalali date and "08:12". */
     private String[] attendanceJalali(String gregorian) {
         try {
@@ -22373,40 +22485,6 @@ public class MainActivity extends Activity {
             int day = MeelanoJalali.gregorianDay(Integer.parseInt(d[0]), Integer.parseInt(d[1]), Integer.parseInt(d[2]));
             return new String[]{MeelanoJalali.format(day), p.length > 1 && p[1].length() >= 5 ? p[1].substring(0, 5) : ""};
         } catch (Exception e) { return new String[]{gregorian, ""}; }
-    }
-
-    /** Per staff member and day: first entry, last exit and minutes worked. Newest day first. */
-    private List<JSONObject> attendanceDays(JSONArray events) {
-        Map<String, JSONObject> map = new LinkedHashMap<>();
-        for (int i = events == null ? -1 : events.length() - 1; i >= 0; i--) { // oldest → newest
-            JSONObject e = events.optJSONObject(i); if (e == null) continue;
-            String[] jt = attendanceJalali(e.optString("time"));
-            String k = e.optString("staff") + "|" + jt[0];
-            JSONObject d = map.get(k);
-            try {
-                if (d == null) { d = new JSONObject(); d.put("staff", e.optString("staff")); d.put("name", e.optString("name")); d.put("date", jt[0]); d.put("in", ""); d.put("out", ""); map.put(k, d); }
-                if ("in".equals(e.optString("type"))) { if (d.optString("in").isEmpty()) d.put("in", jt[1]); }
-                else d.put("out", jt[1]);
-            } catch (Exception ignored) { }
-        }
-        List<JSONObject> list = new ArrayList<>(map.values());
-        for (JSONObject d : list) {
-            try {
-                int in = hm(d.optString("in")), out = hm(d.optString("out"));
-                d.put("minutes", in >= 0 && out > in ? out - in : 0);
-            } catch (Exception ignored) { }
-        }
-        Collections.reverse(list);
-        return list;
-    }
-
-    private static int hm(String t) {
-        try { String[] p = t.split(":"); return Integer.parseInt(p[0]) * 60 + Integer.parseInt(p[1]); } catch (Exception e) { return -1; }
-    }
-
-    private String hoursText(int minutes) {
-        if (minutes <= 0) return "—";
-        return formatNumber(minutes / 60) + " ساعت" + (minutes % 60 > 0 ? " و " + formatNumber(minutes % 60) + " دقیقه" : "");
     }
 
     private boolean ensureStoreLocationPermission(Runnable retry) {
@@ -22423,19 +22501,650 @@ public class MainActivity extends Activity {
         return true;
     }
 
+    // =============================================================================================
+    // Attendance & HR (store edition, v5.5). Everything the rules need — staff (exact names, wage,
+    // shift), shifts, holidays and attendance zones (store modem / an area on the map) — lives in
+    // dbo.meelano_hr_* tables that the management panel fills. The person using the app only presses
+    // entry / exit / mission (after a fingerprint check) and never sees their own times, lateness,
+    // overtime or pay. Missions, incomplete days («تردد ناقص») and the monthly result (lateness,
+    // overtime, leave, payroll per the 1405 Labour Law — see MeelanoHr) go to the manager:
+    // dbo.meelano_hr_inbox, dbo.meelano_hr_incomplete and dbo.meelano_hr_month.
+    // A manager correction is an attendance row with source='manager' (or voided=1 on a wrong row);
+    // the next recalculation marks the incomplete day as fixed.
+    // =============================================================================================
+    private volatile boolean hrTablesReady = false;
+    private volatile JSONObject hrLastLeave = null;
+    private static final String[] HR_MISSION_REASONS = {"تحویل کالا به مشتری", "وصول مطالبات یا چک", "کار بانکی", "خرید برای فروشگاه",
+            "بازدید یا جلسه با مشتری", "امور اداری (بیمه، دارایی، …)", "انبار یا تحویل بار", "سایر"};
+    private static final String[] HR_MISSION_DURATIONS = {"حدود ۱ ساعت", "حدود ۲ ساعت", "حدود ۳ ساعت", "حدود ۴ ساعت", "تا پایان وقت اداری", "بیش از یک روز"};
+    private static final int[] HR_MISSION_MINUTES = {60, 120, 180, 240, -1, 1440};
+
+    private String hrUser() { return currentAccountName().trim().toLowerCase(Locale.US); }
+
+    private String hrDisplayName() { return session == null ? currentAccountName() : stringOr(session.userName, currentAccountName()); }
+
+    private void ensureMeelanoHrTables(Connection c) throws Exception {
+        if (hrTablesReady) return;
+        ensureMeelanoCollabTables(c); ensureAttendanceGeoColumns(c);
+        try (Statement st = c.createStatement()) {
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_staff',N'U') IS NULL CREATE TABLE dbo.meelano_hr_staff (username nvarchar(120) NOT NULL PRIMARY KEY, full_name nvarchar(200) NULL, personnel_code nvarchar(40) NULL, national_code nvarchar(20) NULL, job_title nvarchar(120) NULL, shift_id int NULL, daily_wage bigint NULL, housing bigint NULL, grocery bigint NULL, seniority_daily bigint NULL, married bit NOT NULL DEFAULT 0, children int NOT NULL DEFAULT 0, insured bit NOT NULL DEFAULT 1, hire_date nvarchar(10) NULL, leave_carry_min int NOT NULL DEFAULT 0, active bit NOT NULL DEFAULT 1, note nvarchar(500) NULL, updated_at datetime2 NOT NULL DEFAULT SYSDATETIME(), updated_by nvarchar(120) NULL)");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_shift',N'U') IS NULL CREATE TABLE dbo.meelano_hr_shift (id int NOT NULL PRIMARY KEY, title nvarchar(120) NOT NULL, grace_late int NOT NULL DEFAULT 0, grace_early int NOT NULL DEFAULT 0, overtime_min int NOT NULL DEFAULT 0, overtime_before_start bit NOT NULL DEFAULT 0, max_overtime_day int NOT NULL DEFAULT 240, night_start int NOT NULL DEFAULT 1320, night_end int NOT NULL DEFAULT 360, is_default bit NOT NULL DEFAULT 0)");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_shift_day',N'U') IS NULL CREATE TABLE dbo.meelano_hr_shift_day (shift_id int NOT NULL, weekday int NOT NULL, is_workday bit NOT NULL, start_min int NOT NULL, end_min int NOT NULL, rest_min int NOT NULL DEFAULT 0, CONSTRAINT PK_meelano_hr_shift_day PRIMARY KEY (shift_id, weekday))");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_holiday',N'U') IS NULL CREATE TABLE dbo.meelano_hr_holiday (jdate nvarchar(10) NOT NULL PRIMARY KEY, title nvarchar(200) NULL)");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_zone',N'U') IS NULL CREATE TABLE dbo.meelano_hr_zone (id int IDENTITY(1,1) NOT NULL PRIMARY KEY, title nvarchar(200) NOT NULL, kind nvarchar(10) NOT NULL, lat float NULL, lng float NULL, radius_m int NULL, ssid nvarchar(200) NULL, bssid nvarchar(100) NULL, gateway nvarchar(80) NULL, active bit NOT NULL DEFAULT 1, created_by nvarchar(120) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME())");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_mission',N'U') IS NULL CREATE TABLE dbo.meelano_hr_mission (id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, username nvarchar(120) NOT NULL, display_name nvarchar(220) NULL, reason nvarchar(200) NOT NULL, details nvarchar(1000) NULL, destination nvarchar(300) NULL, expected_min int NULL, start_time datetime2 NOT NULL DEFAULT SYSDATETIME(), end_time datetime2 NULL, start_lat float NULL, start_lng float NULL, end_lat float NULL, end_lng float NULL, start_bio bit NULL, end_bio bit NULL, status nvarchar(20) NOT NULL DEFAULT N'open', manager_status nvarchar(20) NOT NULL DEFAULT N'pending', manager_note nvarchar(500) NULL, decided_by nvarchar(120) NULL, decided_at datetime2 NULL)");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_incomplete',N'U') IS NULL CREATE TABLE dbo.meelano_hr_incomplete (id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, username nvarchar(120) NOT NULL, display_name nvarchar(220) NULL, work_date nvarchar(10) NOT NULL, first_in nvarchar(5) NULL, reason nvarchar(200) NULL, status nvarchar(20) NOT NULL DEFAULT N'open', fixed_out nvarchar(5) NULL, fixed_by nvarchar(120) NULL, fixed_at datetime2 NULL, manager_note nvarchar(500) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME(), CONSTRAINT UQ_meelano_hr_incomplete UNIQUE (username, work_date))");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_inbox',N'U') IS NULL CREATE TABLE dbo.meelano_hr_inbox (id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, kind nvarchar(30) NOT NULL, username nvarchar(120) NOT NULL, display_name nvarchar(220) NULL, ref_id bigint NULL, title nvarchar(300) NOT NULL, body nvarchar(1000) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME(), seen_at datetime2 NULL, seen_by nvarchar(120) NULL)");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_month',N'U') IS NULL CREATE TABLE dbo.meelano_hr_month (username nvarchar(120) NOT NULL, jy int NOT NULL, jm int NOT NULL, computed_at datetime2 NOT NULL DEFAULT SYSDATETIME(), present_days int NULL, absent_days int NULL, leave_days int NULL, incomplete_days int NULL, late_min int NULL, early_min int NULL, gap_min int NULL, overtime_min int NULL, night_min int NULL, holiday_min int NULL, mission_min int NULL, leave_min int NULL, gross bigint NULL, deduction bigint NULL, insurance bigint NULL, tax bigint NULL, net bigint NULL, detail nvarchar(max) NULL, CONSTRAINT PK_meelano_hr_month PRIMARY KEY (username, jy, jm))");
+            st.execute("IF COL_LENGTH('dbo.meelano_attendance','source') IS NULL ALTER TABLE dbo.meelano_attendance ADD source nvarchar(20) NULL, zone_id int NULL, biometric bit NULL, voided bit NOT NULL CONSTRAINT DF_meelano_att_voided DEFAULT 0, edited_by nvarchar(120) NULL, edited_at datetime2 NULL, manager_note nvarchar(500) NULL");
+            st.execute("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name=N'IX_meelano_att_user_time' AND object_id=OBJECT_ID(N'dbo.meelano_attendance')) CREATE INDEX IX_meelano_att_user_time ON dbo.meelano_attendance(username, event_time)");
+            st.execute("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name=N'IX_meelano_hr_mission_user' AND object_id=OBJECT_ID(N'dbo.meelano_hr_mission')) CREATE INDEX IX_meelano_hr_mission_user ON dbo.meelano_hr_mission(username, start_time)");
+        }
+        try { hrSeed(c); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "seed: " + ex.getMessage()); }
+        hrTablesReady = true;
+    }
+
+    /** First run only: the store shift from the manager's old attendance hours, the 1405 holidays and the old store zone. */
+    private void hrSeed(Connection c) throws Exception {
+        if (hrCount(c, "SELECT COUNT(1) FROM dbo.meelano_hr_shift") == 0) {
+            MeelanoHr.Shift sh = MeelanoHr.Shift.storeDefault(parseHourMinute(chatSetting(c, "attendance_start", "")), parseHourMinute(chatSetting(c, "attendance_end", "")));
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_shift(id,title,grace_late,grace_early,overtime_min,overtime_before_start,max_overtime_day,night_start,night_end,is_default) VALUES(1,?,0,0,0,0,240,1320,360,1)")) { ps.setString(1, sh.title); ps.executeUpdate(); }
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_shift_day(shift_id,weekday,is_workday,start_min,end_min,rest_min) VALUES(1,?,?,?,?,?)")) {
+                for (int wd = 0; wd < 7; wd++) { ps.setInt(1, wd); ps.setBoolean(2, sh.work[wd]); ps.setInt(3, sh.work[wd] ? sh.start[wd] : 0); ps.setInt(4, sh.work[wd] ? sh.end[wd] : 0); ps.setInt(5, sh.rest[wd]); ps.executeUpdate(); }
+            }
+        }
+        if (hrCount(c, "SELECT COUNT(1) FROM dbo.meelano_hr_holiday WHERE jdate LIKE N'1405/%'") == 0) {
+            try (PreparedStatement ps = c.prepareStatement("IF NOT EXISTS (SELECT 1 FROM dbo.meelano_hr_holiday WHERE jdate=?) INSERT INTO dbo.meelano_hr_holiday(jdate,title) VALUES(?,?)")) {
+                for (String[] h : MeelanoHr.HOLIDAYS_1405) { ps.setString(1, h[0]); ps.setString(2, h[0]); ps.setString(3, h[1]); ps.executeUpdate(); }
+            }
+        }
+        if (hrCount(c, "SELECT COUNT(1) FROM dbo.meelano_hr_zone") == 0) {
+            double lat = parseNumber(chatSetting(c, "work_lat", ""), Double.NaN), lng = parseNumber(chatSetting(c, "work_lng", ""), Double.NaN);
+            if (!Double.isNaN(lat) && !Double.isNaN(lng) && !(lat == 0 && lng == 0))
+                hrInsertZone(c, "فروشگاه (مکان ثبت‌شده قبلی)", "gps", lat, lng, (int) parseNumber(chatSetting(c, "work_radius", "120"), 120), "", "", "", "migration");
+            String ssid = chatSetting(c, "work_wifi_ssid", ""), bssid = chatSetting(c, "work_wifi_bssid", ""), gw = chatSetting(c, "work_wifi_gateway", "");
+            if (!stringOr(ssid, "").trim().isEmpty() || !stringOr(bssid, "").trim().isEmpty())
+                hrInsertZone(c, "مودم محل کار (ثبت‌شده قبلی)", "wifi", Double.NaN, Double.NaN, 0, ssid, bssid, gw, "migration");
+        }
+    }
+
+    private int hrCount(Connection c, String sql) throws Exception {
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery(sql)) { return r.next() ? r.getInt(1) : 0; }
+    }
+
+    private static void hrSetDouble(PreparedStatement ps, int i, double v) throws Exception {
+        if (Double.isNaN(v) || Double.isInfinite(v)) ps.setNull(i, java.sql.Types.FLOAT); else ps.setDouble(i, v);
+    }
+
+    /** Used by the management panel (and the automated test) to define where attendance may be recorded. */
+    private long hrInsertZone(Connection c, String title, String kind, double lat, double lng, int radius, String ssid, String bssid, String gateway, String by) throws Exception {
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_zone(title,kind,lat,lng,radius_m,ssid,bssid,gateway,created_by) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?)")) {
+            ps.setString(1, title); ps.setString(2, kind); hrSetDouble(ps, 3, lat); hrSetDouble(ps, 4, lng); ps.setInt(5, radius);
+            ps.setString(6, stringOr(ssid, "")); ps.setString(7, stringOr(bssid, "")); ps.setString(8, stringOr(gateway, "")); ps.setString(9, by);
+            try (ResultSet r = ps.executeQuery()) { return r.next() ? r.getLong(1) : 0; }
+        }
+    }
+
+    private List<JSONObject> hrZones(Connection c) throws Exception {
+        List<JSONObject> list = new ArrayList<>();
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT id, title, kind, lat, lng, ISNULL(radius_m,120), ISNULL(ssid,N''), ISNULL(bssid,N''), ISNULL(gateway,N'') FROM dbo.meelano_hr_zone WHERE active=1 ORDER BY id")) {
+            while (r.next()) {
+                JSONObject z = new JSONObject();
+                z.put("id", r.getInt(1)); z.put("title", stringOr(r.getString(2), "محدوده")); z.put("kind", stringOr(r.getString(3), "gps").trim().toLowerCase(Locale.US));
+                double lat = r.getDouble(4); boolean nLat = r.wasNull(); double lng = r.getDouble(5); boolean nLng = r.wasNull();
+                if (!nLat && !nLng) { z.put("lat", lat); z.put("lng", lng); }
+                z.put("radius", r.getInt(6)); z.put("ssid", stringOr(r.getString(7), "").trim()); z.put("bssid", stringOr(r.getString(8), "").trim()); z.put("gateway", stringOr(r.getString(9), "").trim());
+                list.add(z);
+            }
+        }
+        return list;
+    }
+
+    /** The zone that allows this press: the store modem (BSSID, or network name + gateway) or inside a map area. */
+    private JSONObject hrMatchZone(Connection c, JSONObject wifi, double lat, double lng, double acc) throws Exception {
+        List<JSONObject> zones = hrZones(c);
+        if (zones.isEmpty()) throw new DbException("محدوده ثبت حضور هنوز توسط مدیر تعیین نشده است. لطفاً به مدیر اطلاع دهید.");
+        String ssid = wifi == null ? "" : wifi.optString("ssid", "").trim(), bssid = wifi == null ? "" : wifi.optString("bssid", "").trim(), gw = wifi == null ? "" : wifi.optString("gateway", "").trim();
+        boolean anyWifi = false, anyGps = false;
+        for (JSONObject z : zones) {
+            if (!"wifi".equals(z.optString("kind"))) { anyGps = true; continue; }
+            anyWifi = true;
+            String zb = z.optString("bssid"), zs = z.optString("ssid"), zg = z.optString("gateway");
+            boolean ok = (!zb.isEmpty() && zb.equalsIgnoreCase(bssid)) || (!zs.isEmpty() && zs.equals(ssid) && (zg.isEmpty() || gw.isEmpty() || zg.equals(gw)));
+            if (ok) { z.put("via", "wifi"); return z; }
+        }
+        double best = -1; int bestRadius = 0;
+        boolean haveFix = !Double.isNaN(lat) && !Double.isNaN(lng);
+        if (haveFix) {
+            for (JSONObject z : zones) {
+                if ("wifi".equals(z.optString("kind")) || !z.has("lat")) continue;
+                float dist = MeelanoGeo.distanceMeters(z.optDouble("lat"), z.optDouble("lng"), lat, lng);
+                int radius = Math.max(20, z.optInt("radius", 120));
+                if (acc <= 150 && dist - Math.min(acc, 40) <= radius) { z.put("via", "gps"); z.put("distance", dist); return z; }
+                if (best < 0 || dist < best) { best = dist; bestRadius = radius; }
+            }
+        }
+        String wifiHint = anyWifi ? " اگر داخل فروشگاه هستید، به وای‌فای فروشگاه وصل شوید." : "";
+        if (anyGps && haveFix && acc > 150)
+            throw new DbException("دقت موقعیت کافی نیست (حدود " + formatNumber(Math.round(acc)) + " متر). چند ثانیه صبر کنید و دوباره امتحان کنید." + wifiHint);
+        if (best >= 0)
+            throw new DbException("شما داخل محدوده حضور نیستید. فاصله تا فروشگاه: " + formatNumber(Math.round(best)) + " متر (مجاز: " + formatNumber(bestRadius) + " متر)." + wifiHint);
+        if (anyGps)
+            throw new DbException("موقعیت گوشی خوانده نشد." + (anyWifi ? " به وای‌فای فروشگاه وصل شوید یا" : "") + " «موقعیت مکانی (GPS)» را روشن کنید و کنار در یا پنجره دوباره امتحان کنید.");
+        throw new DbException("گوشی به وای‌فای فروشگاه (مودمی که مدیر تعیین کرده) وصل نیست. به آن وصل شوید و دوباره بزنید.");
+    }
+
+    private void hrEnsureStaff(Connection c, String user) {
+        try (PreparedStatement ps = c.prepareStatement("IF NOT EXISTS (SELECT 1 FROM dbo.meelano_hr_staff WHERE username=?) INSERT INTO dbo.meelano_hr_staff(username,full_name,shift_id) VALUES(?,?,1)")) {
+            ps.setString(1, user); ps.setString(2, user); ps.setString(3, hrDisplayName()); ps.executeUpdate();
+        } catch (Exception ignored) { }
+    }
+
+    private void hrInbox(Connection c, String kind, String user, long refId, String title, String body) {
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_inbox(kind,username,display_name,ref_id,title,body) VALUES(?,?,?,?,?,?)")) {
+            ps.setString(1, kind); ps.setString(2, user); ps.setString(3, hrDisplayName()); ps.setLong(4, refId); ps.setString(5, title); ps.setString(6, body == null ? "" : body);
+            ps.executeUpdate();
+        } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "inbox: " + ex.getMessage()); }
+    }
+
+    private boolean hrLastEventIsInToday(Connection c, String user) throws Exception {
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) event_type FROM dbo.meelano_attendance WHERE LOWER(username)=? AND ISNULL(voided,0)=0 AND event_time >= CAST(SYSDATETIME() AS date) ORDER BY event_time DESC")) {
+            ps.setString(1, user);
+            try (ResultSet r = ps.executeQuery()) { return r.next() && "in".equals(stringOr(r.getString(1), "").trim()); }
+        }
+    }
+
+    /** Entry/exit: fingerprint (checked on the phone) + a zone set by the manager. No time window: late/early/overtime are calculated, not refused. */
+    private String saveStoreAttendance(String type, JSONObject wifi, double lat, double lng, double accuracy, boolean biometric) throws Exception {
+        String user = hrUser();
+        try (Connection c = openConnection()) {
+            ensureMeelanoHrTables(c);
+            if (hrOpenMission(c, user) != null) throw new DbException("شما در ماموریت هستید. پس از بازگشت، ابتدا «اتمام ماموریت» را بزنید.");
+            JSONObject zone = hrMatchZone(c, wifi, lat, lng, accuracy);
+            preventDuplicateAttendance(c, type);
+            if ("in".equals(type) && hrLastEventIsInToday(c, user)) throw new DbException("ورود امروز شما قبلاً ثبت شده است؛ هنگام رفتن «ثبت خروج» را بزنید.");
+            boolean viaWifi = "wifi".equals(zone.optString("via"));
+            double dist = zone.optDouble("distance", Double.NaN);
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_attendance(username,display_name,event_type,wifi_ssid,wifi_bssid,gateway,note,lat,lng,distance_m,accuracy_m,source,zone_id,biometric) VALUES(?,?,?,?,?,?,?,?,?,?,?,N'app',?,?)")) {
+                ps.setString(1, currentAccountName()); ps.setString(2, hrDisplayName()); ps.setString(3, type);
+                ps.setString(4, wifi == null ? "" : wifi.optString("ssid", "")); ps.setString(5, wifi == null ? "" : wifi.optString("bssid", "")); ps.setString(6, wifi == null ? "" : wifi.optString("gateway", ""));
+                ps.setString(7, "فروشگاه • " + (viaWifi ? "وای‌فای" : "GPS") + " • " + zone.optString("title"));
+                hrSetDouble(ps, 8, lat); hrSetDouble(ps, 9, lng); hrSetDouble(ps, 10, dist); hrSetDouble(ps, 11, Double.isNaN(lat) ? Double.NaN : accuracy);
+                ps.setInt(12, zone.optInt("id")); ps.setBoolean(13, biometric);
+                ps.executeUpdate();
+            }
+            hrEnsureStaff(c, user);
+            try { hrRecalculate(c, user); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "recalc: " + ex.getMessage()); }
+            return ("in".equals(type) ? "ورود" : "خروج") + " شما ثبت شد (" + zone.optString("title") + (viaWifi ? " • وای‌فای" : "") + ").";
+        }
+    }
+
+    // ---------------------------------------------------------------- missions
+    private JSONObject hrOpenMission(Connection c, String user) throws Exception {
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) id, reason, ISNULL(details,N''), ISNULL(destination,N''), CONVERT(nvarchar(19),start_time,120), ISNULL(expected_min,0) FROM dbo.meelano_hr_mission WHERE LOWER(username)=? AND end_time IS NULL ORDER BY start_time DESC")) {
+            ps.setString(1, user);
+            try (ResultSet r = ps.executeQuery()) {
+                if (!r.next()) return null;
+                JSONObject o = new JSONObject();
+                String[] jt = attendanceJalali(stringOr(r.getString(5), ""));
+                o.put("id", r.getLong(1)); o.put("reason", stringOr(r.getString(2), "")); o.put("details", stringOr(r.getString(3), "")); o.put("destination", stringOr(r.getString(4), ""));
+                o.put("date", jt[0]); o.put("start", jt[1]); o.put("expected", r.getInt(6));
+                return o;
+            }
+        }
+    }
+
+    private String hrStartMission(String reason, String details, String destination, int expectedMin, double lat, double lng, boolean biometric) throws Exception {
+        String user = hrUser();
+        try (Connection c = openConnection()) {
+            ensureMeelanoHrTables(c);
+            if (hrOpenMission(c, user) != null) throw new DbException("یک ماموریت باز دارید؛ ابتدا «اتمام ماموریت» را بزنید.");
+            long id;
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_mission(username,display_name,reason,details,destination,expected_min,start_lat,start_lng,start_bio) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?,?,?,?)")) {
+                ps.setString(1, user); ps.setString(2, hrDisplayName()); ps.setString(3, reason); ps.setString(4, details); ps.setString(5, destination);
+                if (expectedMin == 0) ps.setNull(6, java.sql.Types.INTEGER); else ps.setInt(6, expectedMin);
+                hrSetDouble(ps, 7, lat); hrSetDouble(ps, 8, lng); ps.setBoolean(9, biometric);
+                try (ResultSet r = ps.executeQuery()) { id = r.next() ? r.getLong(1) : 0; }
+            }
+            hrEnsureStaff(c, user);
+            String exp = expectedMin > 0 ? "مدت تقریبی: " + MeelanoHr.hoursText(expectedMin) : expectedMin < 0 ? "تا پایان وقت اداری" : "";
+            hrInbox(c, "mission_start", user, id, "شروع ماموریت • " + hrDisplayName(), reason + (destination.isEmpty() ? "" : " • مقصد: " + destination) + (details.isEmpty() ? "" : " • " + details) + (exp.isEmpty() ? "" : " • " + exp));
+            try { hrRecalculate(c, user); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "recalc: " + ex.getMessage()); }
+            return "ماموریت شما ثبت شد و برای مدیر ارسال شد. پس از بازگشت «اتمام ماموریت» را بزنید.";
+        }
+    }
+
+    private String hrEndMission(double lat, double lng, boolean biometric) throws Exception {
+        String user = hrUser();
+        try (Connection c = openConnection()) {
+            ensureMeelanoHrTables(c);
+            JSONObject open = hrOpenMission(c, user);
+            if (open == null) throw new DbException("ماموریت بازی ندارید.");
+            int minutes = 0;
+            try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.meelano_hr_mission SET end_time=SYSDATETIME(), end_lat=?, end_lng=?, end_bio=?, status=N'done' OUTPUT DATEDIFF(minute, INSERTED.start_time, INSERTED.end_time) WHERE id=? AND end_time IS NULL")) {
+                hrSetDouble(ps, 1, lat); hrSetDouble(ps, 2, lng); ps.setBoolean(3, biometric); ps.setLong(4, open.optLong("id"));
+                try (ResultSet r = ps.executeQuery()) { if (r.next()) minutes = r.getInt(1); }
+            }
+            hrInbox(c, "mission_end", user, open.optLong("id"), "پایان ماموریت • " + hrDisplayName(), open.optString("reason") + " • مدت: " + MeelanoHr.hoursText(minutes));
+            try { hrRecalculate(c, user); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "recalc: " + ex.getMessage()); }
+            return "پایان ماموریت ثبت شد و برای مدیر ارسال شد (مدت: " + MeelanoHr.hoursText(minutes) + ").";
+        }
+    }
+
+    // ---------------------------------------------------------------- calculation input (from the panel's tables)
+    private static int[] hrDayMinute(String gregorian) {
+        try {
+            String[] p = gregorian.trim().split(" ");
+            String[] d = p[0].split("-");
+            int day = MeelanoJalali.gregorianDay(Integer.parseInt(d[0]), Integer.parseInt(d[1]), Integer.parseInt(d[2]));
+            String[] t = p.length > 1 ? p[1].split(":") : new String[]{"0", "0"};
+            return new int[]{day, Integer.parseInt(t[0]) * 60 + Integer.parseInt(t[1])};
+        } catch (Exception e) { return null; }
+    }
+
+    /** "1405/07/08" or (older requests) Gregorian "2026/09/30" → day number, -1 if unreadable. */
+    private static int hrParseDate(String text) {
+        if (text == null) return -1;
+        String s = MeelanoHr.fa(text).trim();
+        StringBuilder b = new StringBuilder();
+        for (char ch : s.toCharArray()) b.append(ch >= '۰' && ch <= '۹' ? (char) ('0' + (ch - '۰')) : ch);
+        String[] p = b.toString().replace('-', '/').split("/");
+        try {
+            if (p.length >= 3 && Integer.parseInt(p[0].trim()) > 1900) {
+                String dd = p[2].trim(); if (dd.length() > 2) dd = dd.substring(0, 2);
+                return MeelanoJalali.gregorianDay(Integer.parseInt(p[0].trim()), Integer.parseInt(p[1].trim()), Integer.parseInt(dd));
+            }
+        } catch (Exception ignored) { return -1; }
+        return MeelanoJalali.parse(b.toString());
+    }
+
+    private MeelanoHr.Staff hrLoadStaff(Connection c, String user, int[] shiftOut) {
+        MeelanoHr.Staff s = new MeelanoHr.Staff();
+        s.username = user; s.name = hrDisplayName();
+        try (PreparedStatement ps = c.prepareStatement("SELECT full_name, daily_wage, housing, grocery, seniority_daily, married, children, insured, leave_carry_min, ISNULL(shift_id,0) FROM dbo.meelano_hr_staff WHERE username=?")) {
+            ps.setString(1, user);
+            try (ResultSet r = ps.executeQuery()) {
+                if (r.next()) {
+                    s.name = stringOr(r.getString(1), s.name);
+                    long v = r.getLong(2); if (!r.wasNull() && v > 0) s.dailyWage = v;
+                    v = r.getLong(3); if (!r.wasNull()) s.housing = v;
+                    v = r.getLong(4); if (!r.wasNull()) s.grocery = v;
+                    v = r.getLong(5); if (!r.wasNull()) s.seniorityDaily = v;
+                    s.married = r.getBoolean(6); s.children = r.getInt(7); s.insured = r.getBoolean(8); s.leaveCarryMinutes = r.getInt(9);
+                    if (shiftOut != null) shiftOut[0] = r.getInt(10);
+                }
+            }
+        } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "staff: " + ex.getMessage()); }
+        return s;
+    }
+
+    private MeelanoHr.Shift hrLoadShift(Connection c, int shiftId) {
+        MeelanoHr.Shift s = new MeelanoHr.Shift();
+        int id = 0;
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) id, title, grace_late, grace_early, overtime_min, overtime_before_start, max_overtime_day, night_start, night_end FROM dbo.meelano_hr_shift ORDER BY CASE WHEN id=? THEN 0 WHEN is_default=1 THEN 1 ELSE 2 END, id")) {
+            ps.setInt(1, shiftId);
+            try (ResultSet r = ps.executeQuery()) {
+                if (r.next()) {
+                    id = r.getInt(1); s.title = stringOr(r.getString(2), s.title); s.graceLate = r.getInt(3); s.graceEarly = r.getInt(4); s.overtimeMin = r.getInt(5);
+                    s.overtimeBeforeStart = r.getBoolean(6); s.maxOvertimeDay = r.getInt(7); s.nightStart = r.getInt(8); s.nightEnd = r.getInt(9);
+                }
+            }
+            int days = 0;
+            try (PreparedStatement pd = c.prepareStatement("SELECT weekday, is_workday, start_min, end_min, rest_min FROM dbo.meelano_hr_shift_day WHERE shift_id=?")) {
+                pd.setInt(1, id);
+                try (ResultSet r = pd.executeQuery()) {
+                    while (r.next()) {
+                        int wd = r.getInt(1); if (wd < 0 || wd > 6) continue;
+                        s.work[wd] = r.getBoolean(2); s.start[wd] = r.getInt(3); s.end[wd] = r.getInt(4); s.rest[wd] = r.getInt(5); days++;
+                        if (s.end[wd] <= s.start[wd]) s.work[wd] = false;
+                    }
+                }
+            }
+            if (days == 0) return MeelanoHr.Shift.storeDefault(-1, -1);
+        } catch (Exception ex) { return MeelanoHr.Shift.storeDefault(-1, -1); }
+        return s;
+    }
+
+    private Map<Integer, String> hrHolidays(Connection c) {
+        Map<Integer, String> m = new HashMap<>();
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT jdate, ISNULL(title,N'تعطیل') FROM dbo.meelano_hr_holiday")) {
+            while (r.next()) { int d = MeelanoJalali.parse(stringOr(r.getString(1), "")); if (d > 0) m.put(d, stringOr(r.getString(2), "تعطیل")); }
+        } catch (Exception ignored) { }
+        return m.isEmpty() ? MeelanoHr.defaultHolidays() : m;
+    }
+
+    private List<MeelanoHr.Event> hrEvents(Connection c, String user, int daysBack) throws Exception {
+        List<MeelanoHr.Event> list = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT event_type, CONVERT(nvarchar(19),event_time,120), ISNULL(source,N'app') FROM dbo.meelano_attendance WHERE LOWER(username)=? AND ISNULL(voided,0)=0 AND event_time >= DATEADD(day,?,CAST(SYSDATETIME() AS date)) ORDER BY event_time")) {
+            ps.setString(1, user); ps.setInt(2, -daysBack);
+            try (ResultSet r = ps.executeQuery()) {
+                while (r.next()) {
+                    int[] dm = hrDayMinute(stringOr(r.getString(2), ""));
+                    if (dm != null) list.add(new MeelanoHr.Event(dm[0], dm[1], "in".equals(stringOr(r.getString(1), "").trim()), r.getString(3)));
+                }
+            }
+        }
+        return list;
+    }
+
+    private List<MeelanoHr.Mission> hrMissions(Connection c, String user, int daysBack) throws Exception {
+        List<MeelanoHr.Mission> list = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT id, CONVERT(nvarchar(19),start_time,120), CONVERT(nvarchar(19),end_time,120) FROM dbo.meelano_hr_mission WHERE LOWER(username)=? AND manager_status<>N'rejected' AND (end_time IS NULL OR end_time >= DATEADD(day,?,CAST(SYSDATETIME() AS date)))")) {
+            ps.setString(1, user); ps.setInt(2, -daysBack);
+            try (ResultSet r = ps.executeQuery()) {
+                while (r.next()) {
+                    int[] a = hrDayMinute(stringOr(r.getString(2), "")); if (a == null) continue;
+                    String e = r.getString(3); int[] b = e == null ? null : hrDayMinute(e);
+                    list.add(new MeelanoHr.Mission(r.getLong(1), a[0], a[1], b == null ? -1 : b[0], b == null ? -1 : b[1]));
+                }
+            }
+        }
+        return list;
+    }
+
+    private List<MeelanoHr.Leave> hrLeaves(Connection c, String user) {
+        List<MeelanoHr.Leave> list = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT leave_type, start_date, end_date, ISNULL(hours,N'') FROM dbo.meelano_leave_requests WHERE LOWER(username)=? AND status=N'approved'")) {
+            ps.setString(1, user);
+            try (ResultSet r = ps.executeQuery()) {
+                while (r.next()) {
+                    String kind = MeelanoHr.leaveKind(r.getString(1));
+                    int from = hrParseDate(r.getString(2)), to = hrParseDate(r.getString(3));
+                    if (from < 0) continue;
+                    list.add(new MeelanoHr.Leave(from, to < 0 ? from : to, kind, "hourly".equals(kind) ? MeelanoHr.parseDuration(r.getString(4)) : 0));
+                }
+            }
+        } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "leaves: " + ex.getMessage()); }
+        return list;
+    }
+
+    /**
+     * Recalculates this and last month for one person, stores the result for the manager (dbo.meelano_hr_month),
+     * opens «تردد ناقص» rows (and tells the manager), and marks rows the manager has fixed. Returns the current month.
+     */
+    private MeelanoHr.Month hrRecalculate(Connection c, String user) throws Exception {
+        String now;
+        try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT CONVERT(nvarchar(19),SYSDATETIME(),120)")) { r.next(); now = r.getString(1); }
+        int[] dm = hrDayMinute(now);
+        if (dm == null) throw new DbException("زمان سرور خوانده نشد.");
+        int today = dm[0], nowMin = dm[1];
+        int[] j = MeelanoJalali.fromDay(today);
+        int[] shiftId = {0};
+        MeelanoHr.Staff staff = hrLoadStaff(c, user, shiftId);
+        MeelanoHr.Shift shift = hrLoadShift(c, shiftId[0]);
+        Map<Integer, String> hol = hrHolidays(c);
+        int py = j[1] == 1 ? j[0] - 1 : j[0], pm = j[1] == 1 ? 12 : j[1] - 1;
+        int prevStart = MeelanoJalali.toDay(py, pm, 1);
+        int back = today - prevStart + 1;
+        List<MeelanoHr.Event> ev = hrEvents(c, user, back);
+        List<MeelanoHr.Mission> ms = hrMissions(c, user, back);
+        List<MeelanoHr.Leave> lv = hrLeaves(c, user);
+        MeelanoHr.Month prev = MeelanoHr.calc(py, pm, today, nowMin, shift, hol, ev, ms, lv, staff);
+        MeelanoHr.Month cur = MeelanoHr.calc(j[0], j[1], today, nowMin, shift, hol, ev, ms, lv, staff);
+        hrSaveMonth(c, user, prev); hrSaveMonth(c, user, cur);
+        Map<String, MeelanoHr.Day> incomplete = new LinkedHashMap<>();
+        for (MeelanoHr.Month m : new MeelanoHr.Month[]{prev, cur}) for (MeelanoHr.Day d : m.days) if (d.incomplete) incomplete.put(d.date, d);
+        hrSyncIncomplete(c, user, incomplete, MeelanoJalali.format(prevStart));
+        int yearStart = MeelanoJalali.toDay(j[0], 1, 1), yearEnd = MeelanoJalali.toDay(j[0] + 1, 1, 1) - 1;
+        double earned = MeelanoHr.leaveEarnedMinutes(staff, j[1]);
+        int used = MeelanoHr.leaveUsedMinutes(lv, yearStart, yearEnd, shift, hol);
+        JSONObject leave = new JSONObject();
+        leave.put("earned", Math.round(earned)); leave.put("used", used); leave.put("balance", Math.round(earned - used));
+        hrLastLeave = leave;
+        return cur;
+    }
+
+    private void hrSaveMonth(Connection c, String user, MeelanoHr.Month m) throws Exception {
+        JSONObject detail = new JSONObject();
+        JSONArray days = new JSONArray();
+        for (MeelanoHr.Day d : m.days) {
+            if (d.future) continue;
+            JSONObject o = new JSONObject();
+            o.put("date", d.date); o.put("wd", d.weekday); o.put("status", d.status);
+            if (!d.note.isEmpty()) o.put("note", d.note);
+            if (!d.holiday.isEmpty()) o.put("holiday", d.holiday);
+            if (d.firstIn >= 0) o.put("in", String.format(Locale.US, "%02d:%02d", Math.min(1439, d.firstIn) / 60, Math.min(1439, d.firstIn) % 60));
+            o.put("presence", d.presence); o.put("late", d.late); o.put("early", d.early); o.put("gap", d.gap);
+            o.put("overtime", d.overtime); o.put("overtimeExcess", d.overtimeExcess); o.put("night", d.night); o.put("holidayWork", d.holidayWork);
+            o.put("mission", d.mission); o.put("leave", d.leaveMinutes); o.put("incomplete", d.incomplete); o.put("absent", d.absent);
+            days.put(o);
+        }
+        detail.put("days", days);
+        JSONObject pay = new JSONObject();
+        pay.put("hourly", Math.round(m.hourly)); pay.put("paidDays", m.paidDays); pay.put("base", m.base); pay.put("seniority", m.seniority);
+        pay.put("overtime", m.overtimePay); pay.put("night", m.nightPay); pay.put("holiday", m.holidayPay); pay.put("housing", m.housing);
+        pay.put("grocery", m.grocery); pay.put("marriage", m.marriage); pay.put("child", m.child); pay.put("deduction", m.deduction);
+        pay.put("gross", m.gross); pay.put("insurable", m.insurable); pay.put("insurance", m.insurance); pay.put("employerInsurance", m.employerInsurance);
+        pay.put("taxable", m.taxable); pay.put("tax", m.tax); pay.put("net", m.net);
+        detail.put("payroll", pay);
+        detail.put("law", "قانون کار • ارقام ۱۴۰۵ • روز کاری ۴۴۰ دقیقه • اضافه‌کار ۱.۴ • شب‌کاری ۰.۳۵ • تعطیل‌کاری ۱.۴");
+        try (PreparedStatement del = c.prepareStatement("DELETE FROM dbo.meelano_hr_month WHERE username=? AND jy=? AND jm=?")) { del.setString(1, user); del.setInt(2, m.jy); del.setInt(3, m.jm); del.executeUpdate(); }
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_month(username,jy,jm,present_days,absent_days,leave_days,incomplete_days,late_min,early_min,gap_min,overtime_min,night_min,holiday_min,mission_min,leave_min,gross,deduction,insurance,tax,net,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            int i = 1;
+            ps.setString(i++, user); ps.setInt(i++, m.jy); ps.setInt(i++, m.jm);
+            ps.setInt(i++, m.presentDays); ps.setInt(i++, m.absentDays); ps.setInt(i++, m.leaveDays); ps.setInt(i++, m.incompleteDays);
+            ps.setInt(i++, m.late); ps.setInt(i++, m.early); ps.setInt(i++, m.gap); ps.setInt(i++, m.overtime); ps.setInt(i++, m.night);
+            ps.setInt(i++, m.holidayWork); ps.setInt(i++, m.mission); ps.setInt(i++, m.leaveMinutes);
+            ps.setLong(i++, m.gross); ps.setLong(i++, m.deduction); ps.setLong(i++, m.insurance); ps.setLong(i++, m.tax); ps.setLong(i++, m.net);
+            ps.setString(i, detail.toString());
+            ps.executeUpdate();
+        }
+    }
+
+    private void hrSyncIncomplete(Connection c, String user, Map<String, MeelanoHr.Day> incomplete, String fromDate) throws Exception {
+        Map<String, String> existing = new HashMap<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT work_date, status FROM dbo.meelano_hr_incomplete WHERE username=? AND work_date>=?")) {
+            ps.setString(1, user); ps.setString(2, fromDate);
+            try (ResultSet r = ps.executeQuery()) { while (r.next()) existing.put(stringOr(r.getString(1), ""), stringOr(r.getString(2), "")); }
+        }
+        for (MeelanoHr.Day d : incomplete.values()) {
+            if (existing.containsKey(d.date)) continue;
+            long id = 0;
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_incomplete(username,display_name,work_date,first_in,reason) OUTPUT INSERTED.id VALUES(?,?,?,?,?)")) {
+                ps.setString(1, user); ps.setString(2, hrDisplayName()); ps.setString(3, d.date);
+                ps.setString(4, d.firstIn >= 0 ? String.format(Locale.US, "%02d:%02d", d.firstIn / 60, d.firstIn % 60) : null);
+                ps.setString(5, d.note.isEmpty() ? "تردد ناقص" : d.note);
+                try (ResultSet r = ps.executeQuery()) { if (r.next()) id = r.getLong(1); }
+            } catch (Exception dup) { continue; } // another phone inserted it a moment ago
+            hrInbox(c, "incomplete", user, id, "تردد ناقص • " + hrDisplayName(), MeelanoHr.WEEKDAYS[d.weekday] + " " + MeelanoHr.fa(d.date) + " • " + (d.note.isEmpty() ? "تردد ناقص" : d.note));
+        }
+        for (Map.Entry<String, String> e : existing.entrySet()) {
+            if (!"open".equals(e.getValue()) || incomplete.containsKey(e.getKey())) continue;
+            try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.meelano_hr_incomplete SET status=N'fixed', fixed_at=ISNULL(fixed_at,SYSDATETIME()), fixed_by=ISNULL(fixed_by,N'مدیر') WHERE username=? AND work_date=? AND status=N'open'")) {
+                ps.setString(1, user); ps.setString(2, e.getKey()); ps.executeUpdate();
+            }
+        }
+    }
+
+    /** What the attendance page may show: zones count, open mission, own missions, incomplete days (read-only), leave balance. */
+    private JSONObject hrState(Connection c) throws Exception {
+        ensureMeelanoHrTables(c);
+        String user = hrUser();
+        hrEnsureStaff(c, user);
+        try { hrRecalculate(c, user); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "recalc: " + ex.getMessage()); }
+        JSONObject o = new JSONObject();
+        List<JSONObject> zones = hrZones(c);
+        o.put("zones", zones.size());
+        int wifiZones = 0; for (JSONObject z : zones) if ("wifi".equals(z.optString("kind"))) wifiZones++;
+        o.put("wifiZones", wifiZones); o.put("gpsZones", zones.size() - wifiZones);
+        JSONObject open = hrOpenMission(c, user);
+        if (open != null) o.put("openMission", open);
+        JSONArray missions = new JSONArray();
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (30) id, reason, ISNULL(details,N''), ISNULL(destination,N''), CONVERT(nvarchar(19),start_time,120), CONVERT(nvarchar(19),end_time,120), DATEDIFF(minute,start_time,ISNULL(end_time,SYSDATETIME())), status, manager_status, ISNULL(manager_note,N'') FROM dbo.meelano_hr_mission WHERE LOWER(username)=? ORDER BY start_time DESC")) {
+            ps.setString(1, user);
+            try (ResultSet r = ps.executeQuery()) {
+                while (r.next()) {
+                    JSONObject m = new JSONObject();
+                    String[] a = attendanceJalali(stringOr(r.getString(5), "")); String e = r.getString(6); String[] b = e == null ? null : attendanceJalali(e);
+                    m.put("id", r.getLong(1)); m.put("reason", stringOr(r.getString(2), "")); m.put("details", stringOr(r.getString(3), "")); m.put("destination", stringOr(r.getString(4), ""));
+                    m.put("date", a[0]); m.put("start", a[1]); m.put("endDate", b == null ? "" : b[0]); m.put("end", b == null ? "" : b[1]);
+                    m.put("minutes", Math.max(0, r.getInt(7))); m.put("open", e == null); m.put("manager", stringOr(r.getString(9), "pending")); m.put("note", stringOr(r.getString(10), ""));
+                    missions.put(m);
+                }
+            }
+        }
+        o.put("missions", missions);
+        JSONArray inc = new JSONArray(); int openCount = 0;
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (40) work_date, ISNULL(reason,N''), status, ISNULL(manager_note,N'') FROM dbo.meelano_hr_incomplete WHERE username=? ORDER BY work_date DESC")) {
+            ps.setString(1, user);
+            try (ResultSet r = ps.executeQuery()) {
+                while (r.next()) {
+                    JSONObject x = new JSONObject();
+                    String date = stringOr(r.getString(1), ""); int day = MeelanoJalali.parse(date);
+                    x.put("date", date); x.put("weekday", day > 0 ? MeelanoHr.WEEKDAYS[MeelanoHr.weekday(day)] : "");
+                    x.put("reason", stringOr(r.getString(2), "")); x.put("status", stringOr(r.getString(3), "open")); x.put("note", stringOr(r.getString(4), ""));
+                    if ("open".equals(x.optString("status"))) openCount++;
+                    inc.put(x);
+                }
+            }
+        }
+        o.put("incomplete", inc); o.put("incompleteOpen", openCount);
+        if (hrLastLeave != null) o.put("leave", hrLastLeave);
+        return o;
+    }
+
+    // ---------------------------------------------------------------- phone side: identity, entry/exit, missions
+    private interface IdentityCallback { void done(boolean verified); }
+    private IdentityCallback pendingIdentity = null;
+    private static final int REQ_CONFIRM_IDENTITY = 9407;
+
+    /** Fingerprint (or the phone's screen lock when no fingerprint is enrolled) before every attendance press. */
+    @SuppressWarnings("deprecation")
+    private void confirmIdentity(String title, IdentityCallback cb) {
+        if (designPreview) { cb.done(false); return; }
+        if (Build.VERSION.SDK_INT >= 28) {
+            try {
+                BiometricPrompt.Builder b = new BiometricPrompt.Builder(this).setTitle(title).setSubtitle("برای ثبت، اثر انگشت خود را روی حسگر بگذارید");
+                if (Build.VERSION.SDK_INT >= 30) {
+                    int auth = android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_WEAK | android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+                    android.hardware.biometrics.BiometricManager bm = getSystemService(android.hardware.biometrics.BiometricManager.class);
+                    if (bm == null || bm.canAuthenticate(auth) != android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS) { fallbackIdentity(title, cb); return; }
+                    b.setAllowedAuthenticators(auth);
+                } else if (Build.VERSION.SDK_INT == 29) {
+                    b.setDeviceCredentialAllowed(true);
+                } else {
+                    if (!biometricAvailable()) { fallbackIdentity(title, cb); return; }
+                    b.setNegativeButton("انصراف", getMainExecutor(), (d, w) -> showNotice("ثبت لغو شد.", false));
+                }
+                b.build().authenticate(new CancellationSignal(), getMainExecutor(), new BiometricPrompt.AuthenticationCallback() {
+                    @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) { cb.done(true); }
+                    @Override public void onAuthenticationError(int code, CharSequence msg) {
+                        if (code == BiometricPrompt.BIOMETRIC_ERROR_HW_NOT_PRESENT || code == BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE
+                                || code == BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS || (Build.VERSION.SDK_INT >= 29 && code == BiometricPrompt.BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL)) fallbackIdentity(title, cb);
+                        else showNotice("تأیید هویت انجام نشد؛ چیزی ثبت نشد.", true);
+                    }
+                });
+                return;
+            } catch (Throwable ignored) { }
+        }
+        fallbackIdentity(title, cb);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void fallbackIdentity(String title, IdentityCallback cb) {
+        try {
+            android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+            if (km != null && km.isDeviceSecure()) {
+                Intent i = km.createConfirmDeviceCredentialIntent(title, "برای ثبت، قفل گوشی را باز کنید");
+                if (i != null) { pendingIdentity = cb; startActivityForResult(i, REQ_CONFIRM_IDENTITY); return; }
+            }
+        } catch (Throwable ignored) { }
+        showNotice("اثر انگشت یا قفل صفحه روی این گوشی فعال نیست؛ ثبت بدون تأیید هویت انجام شد و مدیر آن را می‌بیند.", true);
+        cb.done(false);
+    }
+
     private void recordStoreAttendance(String type) {
         if (designPreview) { showNotice("در پیش‌نمایش ثبت نمی‌شود.", false); return; }
         if (!ensureStoreLocationPermission(() -> recordStoreAttendance(type))) return;
-        showNotice("در حال پیدا کردن موقعیت شما…", false);
-        MeelanoGeo.fresh(this, 20_000, (loc, err) -> {
-            if (loc == null) { showNotice(err, true); return; }
-            if (isMockLocation(loc)) { showNotice("موقعیت ساختگی (برنامهٔ تغییر GPS) پذیرفته نمی‌شود. آن برنامه را خاموش کنید.", true); return; }
-            final double lat = loc.getLatitude(), lng = loc.getLongitude(), acc = loc.getAccuracy();
-            runDb(() -> saveStoreAttendance(type, lat, lng, acc), new DbCallback() {
-                @Override public void ok(String body) { storeDataCache = null; showNotice(body, true); if ("attendance".equals(activePage) || "store_home".equals(activePage)) renderActivePage(); }
-                @Override public void fail(Exception e) { showNotice(e instanceof DbException ? e.getMessage() : "ثبت نشد: " + shortError(e), true); }
+        confirmIdentity("in".equals(type) ? "ثبت ورود با اثر انگشت" : "ثبت خروج با اثر انگشت", bio -> {
+            final JSONObject wifi = currentWifiFingerprint();
+            showNotice("در حال بررسی محدوده حضور…", false);
+            MeelanoGeo.fresh(this, 15_000, (loc, err) -> {
+                if (loc != null && isMockLocation(loc)) { showNotice("موقعیت ساختگی (برنامهٔ تغییر GPS) پذیرفته نمی‌شود. آن برنامه را خاموش کنید.", true); return; }
+                final double lat = loc == null ? Double.NaN : loc.getLatitude(), lng = loc == null ? Double.NaN : loc.getLongitude(), acc = loc == null ? 9999 : loc.getAccuracy();
+                runDb(() -> saveStoreAttendance(type, wifi, lat, lng, acc, bio), hrRefreshCallback());
             });
         });
+    }
+
+    private DbCallback hrRefreshCallback() {
+        return new DbCallback() {
+            @Override public void ok(String body) { storeDataCache = null; showNotice(body, true); if ("attendance".equals(activePage) || "store_home".equals(activePage)) renderActivePage(); }
+            @Override public void fail(Exception e) { showNotice(e instanceof DbException ? e.getMessage() : "ثبت نشد: " + shortError(e), true); }
+        };
+    }
+
+    /** Location for a mission is recorded when available but is never required. */
+    private void hrWithOptionalLocation(LocationUse use) {
+        boolean granted = Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        if (!granted || !MeelanoGeo.enabled(this)) { use.run(Double.NaN, Double.NaN); return; }
+        MeelanoGeo.fresh(this, 10_000, (loc, err) -> use.run(loc == null ? Double.NaN : loc.getLatitude(), loc == null ? Double.NaN : loc.getLongitude()));
+    }
+
+    private interface LocationUse { void run(double lat, double lng); }
+
+    private void showStoreMissionDialog() {
+        if (designPreview) { showNotice("در پیش‌نمایش ثبت نمی‌شود.", false); return; }
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(16), dp(10), dp(16), dp(4));
+        box.addView(text("علت ماموریت را انتخاب کنید. با زدن «شروع ماموریت» خروج شما به‌عنوان ماموریت ثبت و برای مدیر ارسال می‌شود.", 10.2f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        final String[] reason = {""};
+        final List<TextView> chips = new ArrayList<>();
+        LinearLayout grid = new LinearLayout(this); grid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout rowL = null;
+        for (int i = 0; i < HR_MISSION_REASONS.length; i++) {
+            if (i % 2 == 0) { rowL = new LinearLayout(this); rowL.setOrientation(LinearLayout.HORIZONTAL); grid.addView(rowL, new LinearLayout.LayoutParams(-1, -2)); }
+            final String label = HR_MISSION_REASONS[i];
+            TextView chip = text(label, 10.4f, TEXT, Typeface.BOLD);
+            chip.setGravity(Gravity.CENTER); chip.setMaxLines(2); chip.setPadding(dp(8), dp(9), dp(8), dp(9));
+            chip.setBackground(unifiedCardBg(SURFACE_2, 14, false));
+            chip.setOnClickListener(v -> {
+                reason[0] = label;
+                for (TextView t : chips) { boolean on = t == v; t.setBackground(on ? rounded(tc(GOLD), 14) : unifiedCardBg(SURFACE_2, 14, false)); t.setTextColor(on ? onColorFor(GOLD) : TEXT); }
+            });
+            chips.add(chip);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f); lp.setMargins(dp(3), dp(4), dp(3), dp(4));
+            rowL.addView(chip, lp);
+        }
+        LinearLayout.LayoutParams gl = new LinearLayout.LayoutParams(-1, -2); gl.setMargins(0, dp(8), 0, dp(4)); box.addView(grid, gl);
+        EditText dest = input("مقصد یا نام مشتری (اختیاری)", "", false);
+        EditText details = input("شرح ماموریت (برای «سایر» الزامی)", "", false); details.setMinLines(2); details.setSingleLine(false);
+        final int[] dur = {0};
+        Button durBtn = secondaryButton(withIcon("◷", "مدت تقریبی: " + HR_MISSION_DURATIONS[0]));
+        durBtn.setOnClickListener(v -> {
+            AlertDialog d = new MeelanoDialogBuilder().setItems(HR_MISSION_DURATIONS, (di, w) -> { dur[0] = w; durBtn.setText(withIcon("◷", "مدت تقریبی: " + HR_MISSION_DURATIONS[w])); }).create();
+            styleMeelanoDialog(d, navAccent("attendance")); d.show();
+        });
+        box.addView(dest, new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(-1, dp(80)); dl.setMargins(0, dp(6), 0, 0); box.addView(details, dl);
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(-1, dp(48)); bl.setMargins(0, dp(6), 0, 0); box.addView(durBtn, bl);
+        TextView err = text("", 10.4f, DANGER, Typeface.BOLD); err.setVisibility(View.GONE);
+        box.addView(err, new LinearLayout.LayoutParams(-1, -2));
+        ScrollView sc = new ScrollView(this); sc.addView(box);
+        AlertDialog dlg = new MeelanoDialogBuilder().setTitle("شروع ماموریت").setView(sc).setNegativeButton("انصراف", null).setPositiveButton("شروع ماموریت", null).create();
+        dlg.setOnShowListener(x -> {
+            styleMeelanoDialog(dlg, navAccent("attendance"));
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String r = reason[0], det = details.getText().toString().trim(), de = dest.getText().toString().trim();
+                if (r.isEmpty()) { err.setText("علت ماموریت را انتخاب کنید."); err.setVisibility(View.VISIBLE); return; }
+                if ("سایر".equals(r) && det.length() < 3) { err.setText("برای «سایر»، شرح ماموریت را بنویسید."); err.setVisibility(View.VISIBLE); return; }
+                dlg.dismiss();
+                final int expected = HR_MISSION_MINUTES[dur[0]];
+                confirmIdentity("تأیید شروع ماموریت", bio -> hrWithOptionalLocation((lat, lng) ->
+                        runDb(() -> hrStartMission(r, det, de, expected, lat, lng, bio), hrRefreshCallback())));
+            });
+        });
+        dlg.show();
+    }
+
+    private void endStoreMission() {
+        if (designPreview) { showNotice("در پیش‌نمایش ثبت نمی‌شود.", false); return; }
+        AlertDialog dlg = new MeelanoDialogBuilder().setTitle("اتمام ماموریت")
+                .setMessage("بازگشت شما از ماموریت ثبت و برای مدیر ارسال می‌شود. اگر امروز کارتان تمام است، بعد از آن «ثبت خروج» را هم بزنید.")
+                .setNegativeButton("انصراف", null)
+                .setPositiveButton("اتمام ماموریت", (d, w) -> confirmIdentity("تأیید اتمام ماموریت", bio -> hrWithOptionalLocation((lat, lng) ->
+                        runDb(() -> hrEndMission(lat, lng, bio), hrRefreshCallback())))).create();
+        dlg.setOnShowListener(x -> styleMeelanoDialog(dlg, navAccent("attendance")));
+        dlg.show();
     }
 
     @SuppressWarnings("deprecation")
@@ -22444,69 +23153,6 @@ public class MainActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 31) return l.isMock();
             return Build.VERSION.SDK_INT >= 18 && l.isFromMockProvider();
         } catch (Throwable ignored) { return false; }
-    }
-
-    /** Accepts an entry/exit only inside the store circle (store point from settings, radius in metres). */
-    private String saveStoreAttendance(String type, double lat, double lng, double accuracy) throws Exception {
-        try (Connection c = openConnection()) {
-            ensureMeelanoCollabTables(c); ensureAttendanceGeoColumns(c);
-            double sLat = parseNumber(chatSetting(c, "work_lat", ""), Double.NaN), sLng = parseNumber(chatSetting(c, "work_lng", ""), Double.NaN);
-            double radius = parseNumber(chatSetting(c, "work_radius", String.valueOf(STORE_DEFAULT_RADIUS_M)), STORE_DEFAULT_RADIUS_M);
-            if (Double.isNaN(sLat) || Double.isNaN(sLng) || (sLat == 0 && sLng == 0))
-                throw new DbException("مکان فروشگاه هنوز ثبت نشده است. یک بار داخل فروشگاه، در صفحه حضور «تنظیم مکان فروشگاه» را بزنید.");
-            if (accuracy > 150) throw new DbException("دقت موقعیت کافی نیست (حدود " + formatNumber(Math.round(accuracy)) + " متر). چند ثانیه صبر کنید و دوباره امتحان کنید.");
-            float dist = MeelanoGeo.distanceMeters(sLat, sLng, lat, lng);
-            if (dist - Math.min(accuracy, 40) > radius)
-                throw new DbException("شما داخل محدوده فروشگاه نیستید. فاصله: " + formatNumber(Math.round(dist)) + " متر (مجاز: " + formatNumber(Math.round(radius)) + " متر).");
-            validateAttendanceTimeWindow(c);
-            preventDuplicateAttendance(c, type);
-            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_attendance(username,display_name,event_type,note,lat,lng,distance_m,accuracy_m) VALUES(?,?,?,?,?,?,?,?)")) {
-                ps.setString(1, currentAccountName()); ps.setString(2, session == null ? currentAccountName() : stringOr(session.userName, currentAccountName()));
-                ps.setString(3, type); ps.setString(4, "فروشگاه • GPS");
-                ps.setDouble(5, lat); ps.setDouble(6, lng); ps.setDouble(7, dist); ps.setDouble(8, accuracy);
-                ps.executeUpdate();
-            }
-            return ("in".equals(type) ? "ورود" : "خروج") + " شما ثبت شد (فاصله از فروشگاه: " + formatNumber(Math.round(dist)) + " متر).";
-        }
-    }
-
-    private String saveStoreLocation(double lat, double lng, int radius) throws Exception {
-        try (Connection c = openConnection()) {
-            ensureMeelanoCollabTables(c);
-            setChatSetting(c, "work_lat", String.format(Locale.US, "%.7f", lat));
-            setChatSetting(c, "work_lng", String.format(Locale.US, "%.7f", lng));
-            setChatSetting(c, "work_radius", String.valueOf(radius));
-            setChatSetting(c, "work_location_by", currentAccountName() + " " + nowText());
-        }
-        storeDataCache = null;
-        return "مکان فروشگاه ذخیره شد (شعاع " + formatNumber(radius) + " متر).";
-    }
-
-    private void showSetStoreLocationDialog(boolean alreadySet) {
-        if (designPreview) return;
-        final int[] radii = {60, 120, 200, 300};
-        final int[] chosen = {1};
-        String[] labels = {"۶۰ متر (مغازه کوچک)", "۱۲۰ متر (پیشنهادی)", "۲۰۰ متر", "۳۰۰ متر"};
-        AlertDialog dlg = new MeelanoDialogBuilder()
-                .setTitle(alreadySet ? "تغییر مکان فروشگاه" : "تنظیم مکان فروشگاه")
-                .setSingleChoiceItems(labels, 1, (d, w) -> chosen[0] = w)
-                .setNegativeButton("انصراف", null)
-                .setPositiveButton("ثبت همین‌جا", (d, w) -> {
-                    if (!ensureStoreLocationPermission(() -> showSetStoreLocationDialog(alreadySet))) return;
-                    showNotice("در حال خواندن موقعیت دقیق…", false);
-                    MeelanoGeo.fresh(this, 25_000, (loc, err) -> {
-                        if (loc == null) { showNotice(err, true); return; }
-                        if (loc.getAccuracy() > 60) { showNotice("دقت موقعیت کم است (حدود " + formatNumber(Math.round(loc.getAccuracy())) + " متر). کنار در یا پنجره فروشگاه دوباره امتحان کنید.", true); return; }
-                        final double lat = loc.getLatitude(), lng = loc.getLongitude();
-                        runDb(() -> saveStoreLocation(lat, lng, radii[chosen[0]]), new DbCallback() {
-                            @Override public void ok(String body) { showNotice(body, true); renderActivePage(); }
-                            @Override public void fail(Exception e) { showNotice("ذخیره نشد: " + shortError(e), true); }
-                        });
-                    });
-                }).create();
-        dlg.setOnShowListener(d -> styleMeelanoDialog(dlg, navAccent("attendance")));
-        dlg.show();
-        showNotice(alreadySet ? "مکان قبلی جایگزین می‌شود. گوشی باید داخل فروشگاه باشد." : "گوشی باید داخل فروشگاه باشد؛ موقعیت فعلی مکان فروشگاه می‌شود.", true);
     }
 
     // ---------------------------------------------------------------- shared store UI pieces
@@ -22533,7 +23179,9 @@ public class MainActivity extends Activity {
     }
 
     private void addStoreChart(LinearLayout card, View chart, int heightDp) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(heightDp)); lp.setMargins(0, dp(10), 0, dp(2));
+        int sw = getResources().getConfiguration().screenWidthDp;
+        int h = heightDp <= 0 ? 0 : sw >= 600 ? Math.round(heightDp * 1.25f) : sw < 340 ? Math.round(heightDp * 0.9f) : heightDp;
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(h)); lp.setMargins(0, dp(10), 0, dp(2));
         card.addView(chart, lp);
     }
 
@@ -22556,27 +23204,34 @@ public class MainActivity extends Activity {
             ImageView ic = new ImageView(this); ic.setImageResource(icons[i % icons.length]); ic.setColorFilter(tc(accent));
             LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(26), dp(26)); ip.gravity = Gravity.RIGHT; t.addView(ic, ip);
             t.addView(text(rows[i][0], 10.2f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-            TextView v = text(rows[i][1], 17.5f, TEXT, Typeface.BOLD); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END);
+            TextView v = fitText(rows[i][1], 17.5f, 11f, TEXT);
             t.addView(v, new LinearLayout.LayoutParams(-1, -2));
-            TextView s = text(rows[i][2], 9.4f, tc(accent), Typeface.BOLD); s.setSingleLine(true); s.setEllipsize(TextUtils.TruncateAt.END);
+            TextView s = text(rows[i][2], 9.4f, tc(accent), Typeface.BOLD); s.setMaxLines(2); s.setEllipsize(TextUtils.TruncateAt.END);
             t.addView(s, new LinearLayout.LayoutParams(-1, -2));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(4), 0, dp(4), 0);
             if (row != null) row.addView(t, lp);
         }
     }
 
+    /** Legend rows: colour, full name (up to two lines), amount that shrinks to fit, and the share in its own pill. */
     private void addStoreLegend(LinearLayout parent, List<MeelanoCharts.Point> pts, double total) {
+        int amountMax = (int) (getResources().getDisplayMetrics().widthPixels * 0.30f);
         for (MeelanoCharts.Point p : pts) {
             LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL);
-            r.setPadding(0, dp(3), 0, dp(3));
+            r.setPadding(dp(4), dp(6), dp(4), dp(6));
             View dot = new View(this); dot.setBackground(rounded(p.color, 999));
-            LinearLayout.LayoutParams dp1 = new LinearLayout.LayoutParams(dp(10), dp(10)); dp1.setMargins(dp(6), 0, dp(6), 0);
+            LinearLayout.LayoutParams dp1 = new LinearLayout.LayoutParams(dp(11), dp(11)); dp1.setMarginEnd(dp(8));
             r.addView(dot, dp1);
-            TextView n = text(p.label, 10.8f, TEXT, Typeface.BOLD); n.setSingleLine(true); n.setEllipsize(TextUtils.TruncateAt.END);
+            TextView n = text(p.label, 11f, TEXT, Typeface.BOLD); n.setMaxLines(2); n.setEllipsize(TextUtils.TruncateAt.END);
             r.addView(n, new LinearLayout.LayoutParams(0, -2, 1f));
-            String pct = total > 0 ? formatNumber(Math.round(p.value * 100.0 / total)) + "٪" : "";
-            TextView v = text(compactMoney(p.value) + "  " + pct, 10.2f, MUTED, Typeface.BOLD); v.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            r.addView(v, new LinearLayout.LayoutParams(-2, -2));
+            TextView v = fitText(compactMoney(p.value), 11f, 9f, MUTED); v.setMaxWidth(amountMax); v.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(-2, -2); vp.setMarginStart(dp(6)); r.addView(v, vp);
+            if (total > 0) {
+                TextView pc = text(MeelanoCharts.fa(String.valueOf(Math.round(p.value * 100.0 / total))) + "٪", 10.2f, TEXT, Typeface.BOLD);
+                pc.setTextDirection(View.TEXT_DIRECTION_LTR); pc.setGravity(Gravity.CENTER); pc.setSingleLine(true);
+                pc.setMinWidth(dp(46)); pc.setPadding(dp(6), dp(3), dp(6), dp(3)); pc.setBackground(rounded(alpha(p.color, 46), 999));
+                LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-2, -2); pp.setMarginStart(dp(6)); r.addView(pc, pp);
+            }
             parent.addView(r, new LinearLayout.LayoutParams(-1, -2));
         }
     }
@@ -22587,10 +23242,11 @@ public class MainActivity extends Activity {
         r.setBackground(roundedStroke(alpha(accent, isLightTheme() ? 10 : 18), 16, alpha(accent, 44)));
         LinearLayout copy = new LinearLayout(this); copy.setOrientation(LinearLayout.VERTICAL);
         TextView t = text(title, 11.4f, TEXT, Typeface.BOLD); t.setMaxLines(2); t.setEllipsize(TextUtils.TruncateAt.END); copy.addView(t, new LinearLayout.LayoutParams(-1, -2));
-        if (sub != null && !sub.isEmpty()) { TextView s = text(sub, 9.4f, MUTED, Typeface.BOLD); s.setMaxLines(3); s.setTextDirection(View.TEXT_DIRECTION_RTL); copy.addView(s, new LinearLayout.LayoutParams(-1, -2)); }
+        if (sub != null && !sub.isEmpty()) { TextView s = text(sub, 9.4f, MUTED, Typeface.BOLD); s.setMaxLines(5); s.setEllipsize(TextUtils.TruncateAt.END); s.setTextDirection(View.TEXT_DIRECTION_RTL); copy.addView(s, new LinearLayout.LayoutParams(-1, -2)); }
         r.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
         if (value != null) {
-            TextView v = text(value, 11.2f, tc(accent), Typeface.BOLD); v.setGravity(Gravity.CENTER); v.setSingleLine(true);
+            TextView v = fitText(value, 11.2f, 9f, tc(accent)); v.setGravity(Gravity.CENTER);
+            v.setMaxWidth((int) (getResources().getDisplayMetrics().widthPixels * 0.42f));
             v.setPadding(dp(8), dp(4), dp(8), dp(4)); v.setBackground(rounded(alpha(accent, isLightTheme() ? 20 : 34), 999));
             LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(-2, -2); vp.setMarginStart(dp(10)); vp.setMarginEnd(dp(2)); r.addView(v, vp);
         }
@@ -22657,7 +23313,7 @@ public class MainActivity extends Activity {
         for (int i = Math.max(0, dn - 14); i < dn; i++) { // oldest → newest: the chart draws right → left
             JSONObject o = daily.optJSONObject(i); pts.add(new MeelanoCharts.Point(MeelanoJalali.shortLabel(o.optString("date")), o.optDouble("sum"))); sum14 += o.optDouble("sum");
         }
-        LinearLayout sales = storeCard("فروش ۱۴ روز اخیر", "جمع: " + compactMoney(sum14) + " • برای دیدن هر روز، روی نمودار بزنید", GOLD);
+        LinearLayout sales = storeCard("فروش ۱۴ روز اخیر", "فاکتورهای لطیفی و خدایار • جمع: " + compactMoney(sum14) + " • برای دیدن هر روز، روی نمودار بزنید", GOLD);
         addStoreChart(sales, storeArea().setPoints(pts, STORE_MONEY), 190);
 
         addStoreDebtDonut(d, true);
@@ -22695,12 +23351,17 @@ public class MainActivity extends Activity {
             else other += o.optDouble("sum");
         }
         if (other > 0) pts.add(new MeelanoCharts.Point("سایر", other, alpha(MUTED, 160)));
-        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
+        boolean wide = getResources().getConfiguration().screenWidthDp >= 600;
+        LinearLayout row = new LinearLayout(this); row.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL); row.setGravity(Gravity.CENTER);
         MeelanoCharts.Donut donut = storeDonut(); donut.setCenterTitle("کل بدهی"); donut.setPoints(pts, v -> MeelanoCharts.compact(v));
-        row.addView(donut, new LinearLayout.LayoutParams(dp(150), dp(150)));
-        LinearLayout legend = new LinearLayout(this); legend.setOrientation(LinearLayout.VERTICAL); legend.setPadding(dp(6), 0, 0, 0);
+        int donutSize = wide ? dp(180) : Math.min(dp(200), (int) (getResources().getDisplayMetrics().widthPixels * 0.5f));
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(donutSize, donutSize); dlp.gravity = Gravity.CENTER_HORIZONTAL;
+        row.addView(donut, dlp);
+        LinearLayout legend = new LinearLayout(this); legend.setOrientation(LinearLayout.VERTICAL);
         addStoreLegend(legend, pts, total);
-        row.addView(legend, new LinearLayout.LayoutParams(0, -2, 1f));
+        LinearLayout.LayoutParams llp = wide ? new LinearLayout.LayoutParams(0, -2, 1f) : new LinearLayout.LayoutParams(-1, -2);
+        if (wide) llp.setMarginStart(dp(12)); else llp.setMargins(0, dp(10), 0, 0);
+        row.addView(legend, llp);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, dp(8), 0, 0); card.addView(row, lp);
         if (compact) { card.setClickable(true); applyTouchFeedback(card); card.setOnClickListener(v -> openStoreReports("debtors")); }
     }
@@ -22718,23 +23379,51 @@ public class MainActivity extends Activity {
         if (compact) { card.setClickable(true); applyTouchFeedback(card); card.setOnClickListener(v -> openStoreReports("overdue")); }
     }
 
-    /** Entry/exit buttons only: the app records presence but does not show attendance history or times. */
+    /** Entry/exit/mission buttons only: the app records presence but never shows the person's own times or calculations. */
     private void addStoreAttendanceCard(JSONObject d, boolean compact) {
-        boolean located = !d.optString("storeLat").isEmpty();
-        LinearLayout c = storeCard("ثبت حضور", located ? "ورود و خروج فقط داخل محدوده فروشگاه ثبت می‌شود." : "مکان فروشگاه هنوز ثبت نشده است؛ یک بار داخل فروشگاه از «تنظیمات» آن را ثبت کنید.", SUCCESS);
-        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
-        if (!located) {
-            Button set = primaryButton(withIcon("⚙", "تنظیم در تنظیمات")); set.setOnClickListener(v -> showApp("settings"));
-            row.addView(set, weightedButtonLp());
-        } else {
-            Button bIn = primaryButton(withIcon("↘", "ثبت ورود"));
-            bIn.setOnClickListener(v -> recordStoreAttendance("in"));
-            Button bOut = themedActionButton(withIcon("↗", "ثبت خروج"), GOLD, false);
-            bOut.setOnClickListener(v -> recordStoreAttendance("out"));
-            row.addView(bIn, weightedButtonLp()); row.addView(bOut, weightedButtonLp());
-            if (compact) { Button leave = secondaryButton(withIcon("☘", "مرخصی")); leave.setOnClickListener(v -> showApp("attendance")); row.addView(leave, weightedButtonLp()); }
+        JSONObject hr = d.optJSONObject("hr"); if (hr == null) hr = new JSONObject();
+        int zones = hr.optInt("zones");
+        JSONObject open = hr.optJSONObject("openMission");
+        String sub = zones > 0 ? "ورود و خروج با اثر انگشت و فقط داخل محدوده‌ای که مدیر تعیین کرده (وای‌فای یا موقعیت فروشگاه) ثبت می‌شود."
+                : "مدیر هنوز محدوده حضور را تعیین نکرده است؛ لطفاً به مدیر اطلاع دهید.";
+        LinearLayout c = storeCard(withIcon("☝", "ثبت حضور"), sub, SUCCESS);
+        if (open != null) {
+            LinearLayout banner = new LinearLayout(this); banner.setOrientation(LinearLayout.VERTICAL);
+            banner.setPadding(dp(12), dp(10), dp(12), dp(10));
+            banner.setBackground(roundedStroke(alpha(WARNING, isLightTheme() ? 22 : 34), 16, alpha(WARNING, 90)));
+            banner.addView(text(withIcon("🚗", "در ماموریت: " + open.optString("reason")), 12.2f, tc(WARNING), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+            String info = "شروع: " + MeelanoCharts.fa(open.optString("start")) + (open.optString("destination").isEmpty() ? "" : " • مقصد: " + open.optString("destination"));
+            TextView it = text(info, 10, MUTED, Typeface.BOLD); it.setTextDirection(View.TEXT_DIRECTION_RTL);
+            banner.addView(it, new LinearLayout.LayoutParams(-1, -2));
+            Button end = themedActionButton(withIcon("🏁", "اتمام ماموریت (بازگشت)"), WARNING, true);
+            end.setOnClickListener(v -> endStoreMission());
+            LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(50)); ep.setMargins(0, dp(8), 0, 0); banner.addView(end, ep);
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2); bp.setMargins(0, dp(10), 0, 0); c.addView(banner, bp);
         }
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+        Button bIn = primaryButton(withIcon("↘", "ثبت ورود"));
+        bIn.setOnClickListener(v -> recordStoreAttendance("in"));
+        Button bOut = themedActionButton(withIcon("⎋", "ثبت خروج"), GOLD, false);
+        bOut.setOnClickListener(v -> recordStoreAttendance("out"));
+        row.addView(bIn, weightedButtonLp()); row.addView(bOut, weightedButtonLp());
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(10), 0, 0); c.addView(row, rp);
+        LinearLayout row2 = new LinearLayout(this); row2.setOrientation(LinearLayout.HORIZONTAL);
+        if (open == null) {
+            Button mission = themedActionButton(withIcon("🚗", "ماموریت"), INFO, false);
+            mission.setOnClickListener(v -> showStoreMissionDialog());
+            row2.addView(mission, weightedButtonLp());
+        }
+        Button leave = secondaryButton(withIcon("☘", compact ? "مرخصی و ماموریت‌ها" : "درخواست مرخصی"));
+        leave.setOnClickListener(v -> { if (compact) showApp("attendance"); else showLeaveRequestDialog(); });
+        row2.addView(leave, weightedButtonLp());
+        LinearLayout.LayoutParams rp2 = new LinearLayout.LayoutParams(-1, -2); rp2.setMargins(0, dp(6), 0, 0); c.addView(row2, rp2);
+        int incOpen = hr.optInt("incompleteOpen");
+        if (incOpen > 0) {
+            TextView warn = text(withIcon("⧗", formatNumber(incOpen) + " تردد ناقص برای بررسی مدیر ارسال شده است"), 10.6f, tc(DANGER), Typeface.BOLD);
+            warn.setPadding(dp(10), dp(8), dp(10), dp(8)); warn.setBackground(rounded(alpha(DANGER, isLightTheme() ? 16 : 30), 14));
+            if (compact) { warn.setClickable(true); applyTouchFeedback(warn); warn.setOnClickListener(v -> showApp("attendance")); }
+            LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, -2); wp.setMargins(0, dp(8), 0, 0); c.addView(warn, wp);
+        }
     }
 
     // ---------------------------------------------------------------- «گزارش‌ها»
@@ -22745,19 +23434,24 @@ public class MainActivity extends Activity {
     private void renderStoreReports() {
         JSONObject d = storeDataCache; if (d == null) { loadStoreReports(); return; }
         content.removeAllViews();
-        addHero("گزارش‌های فروشگاه", d.optString("weekday") + " " + MeelanoCharts.fa(MeelanoJalali.shortLabel(d.optString("today"))) + " • به‌روز از آتیران");
+        addHero("گزارش‌های فروشگاه", d.optString("weekday") + " " + MeelanoCharts.fa(MeelanoJalali.shortLabel(d.optString("today"))) + " • فقط ویزیتورهای لطیفی و خدایار • به‌روز از آتیران");
         String[][] tabs = {{"debtors", "بدهکاران"}, {"overdue", "سررسید گذشته"}, {"sales", "فروش"}, {"products", "کالاها"}, {"customers", "مشتریان"}};
-        HorizontalScrollView hs = new HorizontalScrollView(this); hs.setHorizontalScrollBarEnabled(false);
-        LinearLayout chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) chips.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        for (String[] t : tabs) {
+        int perRow = getResources().getConfiguration().screenWidthDp >= 520 ? tabs.length : 3;
+        LinearLayout tabGrid = new LinearLayout(this); tabGrid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout chips = null;
+        for (int ti = 0; ti < tabs.length; ti++) {
+            if (ti % perRow == 0) {
+                chips = new LinearLayout(this); chips.setOrientation(LinearLayout.HORIZONTAL); chips.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+                tabGrid.addView(chips, new LinearLayout.LayoutParams(-1, -2));
+            }
+            final String[] t = tabs[ti];
             TextView chip = pill(t[1], GOLD, t[0].equals(storeReportsTab));
-            chip.setTextSize(fs(11)); chip.setPadding(dp(14), dp(8), dp(14), dp(8));
+            chip.setTextSize(fs(11)); chip.setPadding(dp(6), dp(9), dp(6), dp(9)); chip.setEllipsize(TextUtils.TruncateAt.END);
             chip.setOnClickListener(v -> { storeReportsTab = t[0]; renderStoreReports(); });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2); lp.setMargins(dp(4), 0, dp(4), 0); chips.addView(chip, lp);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(3), dp(3), dp(3), dp(3)); chips.addView(chip, lp);
         }
-        hs.addView(chips);
-        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, -2); hp.setMargins(0, 0, 0, dp(10)); content.addView(hs, hp);
+        while (chips != null && chips.getChildCount() < perRow) chips.addView(new Space(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, -2); hp.setMargins(0, 0, 0, dp(10)); content.addView(tabGrid, hp);
         Button share = secondaryButton(withIcon("⇪", "اشتراک این گزارش"));
         share.setOnClickListener(v -> shareStoreReport(d));
         switch (storeReportsTab) {
@@ -22910,23 +23604,54 @@ public class MainActivity extends Activity {
     private void renderStoreAttendancePage() {
         JSONObject d = storeDataCache; if (d == null) { loadStoreAttendance(); return; }
         content.removeAllViews();
-        addHero("حضور و مرخصی", "ثبت ورود و خروج داخل محدوده فروشگاه و درخواست مرخصی");
+        addHero("حضور، ماموریت و مرخصی", "ثبت ورود و خروج با اثر انگشت، ماموریت‌های کاری و درخواست مرخصی");
         addStoreAttendanceCard(d, false);
+        JSONObject hr = d.optJSONObject("hr"); if (hr == null) hr = new JSONObject();
 
-        Button leave = primaryButton(withIcon("☘", "درخواست مرخصی"));
-        leave.setOnClickListener(v -> showLeaveRequestDialog());
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(52)); lp.setMargins(dp(4), 0, dp(4), dp(12)); content.addView(leave, lp);
+        // «تردد ناقص»: read-only; only the manager can correct it.
+        JSONArray inc = hr.optJSONArray("incomplete");
+        if (inc != null && inc.length() > 0) {
+            LinearLayout ic = storeCard(withIcon("⧗", "تردد ناقص"), "روزهایی که خروج (یا ورود) ثبت نشده است. فقط برای مشاهده است؛ اصلاح آن با مدیر است.", DANGER);
+            for (int i = 0; i < inc.length() && i < 20; i++) {
+                JSONObject x = inc.optJSONObject(i);
+                boolean fixed = !"open".equals(x.optString("status"));
+                addStoreRow(ic, x.optString("weekday") + " " + MeelanoCharts.fa(x.optString("date")), x.optString("reason") + (x.optString("note").isEmpty() ? "" : " • " + x.optString("note")),
+                        fixed ? "اصلاح شد" : "نزد مدیر", fixed ? SUCCESS : DANGER, null);
+            }
+        }
+
+        JSONArray ms = hr.optJSONArray("missions");
+        LinearLayout mc = storeCard(withIcon("🚗", "ماموریت‌های من"), ms == null || ms.length() == 0 ? "هنوز ماموریتی ثبت نکرده‌اید. برای خروج کاری از فروشگاه «ماموریت» را بزنید." : formatNumber(ms.length()) + " ماموریت اخیر • شروع و پایان هر ماموریت برای مدیر ارسال می‌شود", INFO);
+        for (int i = 0; ms != null && i < ms.length() && i < 30; i++) {
+            JSONObject m = ms.optJSONObject(i);
+            boolean running = m.optBoolean("open");
+            String when = MeelanoCharts.fa(m.optString("date")) + " • " + MeelanoCharts.fa(m.optString("start")) + (running ? " تا اکنون" : " تا " + MeelanoCharts.fa(m.optString("end")))
+                    + " • " + MeelanoHr.hoursText(m.optInt("minutes"));
+            String more = (m.optString("destination").isEmpty() ? "" : "\nمقصد: " + m.optString("destination")) + (m.optString("details").isEmpty() ? "" : "\n" + m.optString("details"))
+                    + (m.optString("note").isEmpty() ? "" : "\nمدیر: " + m.optString("note"));
+            String mg = m.optString("manager");
+            String value = running ? "در جریان" : "approved".equals(mg) ? "تأیید مدیر" : "rejected".equals(mg) ? "رد مدیر" : "ارسال شد";
+            int accent = running ? WARNING : "approved".equals(mg) ? SUCCESS : "rejected".equals(mg) ? DANGER : INFO;
+            addStoreRow(mc, m.optString("reason"), when + more, value, accent, null);
+        }
 
         JSONArray leaves = d.optJSONArray("myLeaves");
-        LinearLayout lc = storeCard("درخواست‌های مرخصی من", leaves == null || leaves.length() == 0 ? "هنوز درخواستی ثبت نکرده‌اید" : formatNumber(leaves.length()) + " درخواست اخیر", navAccent("attendance"));
+        JSONObject lb = hr.optJSONObject("leave");
+        String lsub = (lb == null ? "" : "مانده مرخصی استحقاقی امسال: " + MeelanoHr.leaveText(lb.optDouble("balance")) + "\n")
+                + (leaves == null || leaves.length() == 0 ? "هنوز درخواستی ثبت نکرده‌اید" : formatNumber(leaves.length()) + " درخواست اخیر");
+        LinearLayout lc = storeCard(withIcon("☘", "مرخصی"), lsub, navAccent("attendance"));
+        Button leave = primaryButton(withIcon("☘", "درخواست مرخصی"));
+        leave.setOnClickListener(v -> showLeaveRequestDialog());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(50)); lp.setMargins(0, dp(10), 0, dp(4)); lc.addView(leave, lp);
         for (int i = 0; leaves != null && i < leaves.length() && i < 20; i++) {
             JSONObject r = leaves.optJSONObject(i);
             String st = r.optString("status");
             int accent = "approved".equals(st) ? SUCCESS : "rejected".equals(st) ? DANGER : WARNING;
-            addStoreRow(lc, r.optString("type"), MeelanoCharts.fa(r.optString("start")) + (r.optString("end").equals(r.optString("start")) ? "" : " تا " + MeelanoCharts.fa(r.optString("end"))) + (r.optString("reason").isEmpty() ? "" : " • " + r.optString("reason")),
+            String hours = r.optString("hours").trim();
+            addStoreRow(lc, r.optString("type"), MeelanoCharts.fa(r.optString("start")) + (r.optString("end").equals(r.optString("start")) ? "" : " تا " + MeelanoCharts.fa(r.optString("end")))
+                            + (hours.isEmpty() ? "" : " • " + MeelanoCharts.fa(hours) + (hours.matches(".*[0-9۰-۹]$") ? " ساعت" : "")) + (r.optString("reason").isEmpty() ? "" : " • " + r.optString("reason")),
                     leaveStatusFa(st), accent, null);
         }
-
         addDeveloperCredit(content);
     }
 
@@ -22998,8 +23723,8 @@ public class MainActivity extends Activity {
         o.put("todaySales", new JSONObject().put("count", 12).put("sum", 1_340_000_000d));
         o.put("mineToday", new JSONObject().put("count", 5).put("sum", 512_000_000d));
         o.put("monthSales", new JSONObject().put("count", 86).put("sum", 6_480_000_000d));
-        o.put("customers", new JSONObject().put("total", 2716).put("debtors", 394).put("creditors", 210).put("debt", 104_030_000_000d).put("credit", 3_200_000_000d));
-        String[][] groups = {{"سایر (غیر ویزیتور)", "257", "68886000000"}, {"مصطفی خدایار", "91", "22369583619"}, {"جواد لطیفی", "39", "6480211869"}, {"فروشگاه", "12", "2950000000"}, {"قریشی", "9", "1840000000"}, {"فاطمه محمودی (خودم)", "4", "1708647940"}};
+        o.put("customers", new JSONObject().put("total", 612).put("debtors", 136).put("creditors", 41).put("debt", 30_164_763_680d).put("credit", 820_000_000d));
+        String[][] groups = {{"مصطفی خدایار", "94", "22718203619"}, {"جواد لطیفی", "42", "7446560061"}};
         JSONArray gs = new JSONArray();
         String[] names = {"۰۸ فروشگاه آجیل ستاره", "سوپر مارکت امید", "آجیل و خشکبار نگین", "فروشگاه پسته طلایی", "خشکبار برادران", "۰۷ آجیل فروشی کیان"};
         JSONArray overdue = new JSONArray();
@@ -23009,7 +23734,7 @@ public class MainActivity extends Activity {
             for (int k = 0; k < 3; k++) { JSONObject r = new JSONObject(); r.put("code", 300 + i * 10 + k); r.put("name", names[(i + k) % names.length]); r.put("man", 180_000_000d * (4 - k)); r.put("overdue", k == 0 ? 120_000_000d : 0); r.put("phone", "0916" + (1000000 + i * 37 + k)); r.put("visName", groups[i][0]); r.put("days", 12 + i * 17 + k); r.put("open", 2); r.put("oldest", MeelanoJalali.format(td - 40 - i * 17)); rows.put(r); if (k == 0) overdue.put(r); }
             g.put("rows", rows); gs.put(g);
         }
-        o.put("debtGroups", gs); o.put("debtorsCount", 394); o.put("overdue", overdue); o.put("overdueSum", 38_400_000_000d);
+        o.put("debtGroups", gs); o.put("debtorsCount", 136); o.put("overdue", overdue); o.put("overdueSum", 12_900_000_000d);
         JSONArray aging = new JSONArray();
         String[] al = {"تا ۳۰ روز", "۳۱ تا ۶۰ روز", "۶۱ تا ۹۰ روز", "بیش از ۹۰ روز"}; double[] av = {9.8e9, 12.1e9, 6.4e9, 10.1e9}; int[] ac = {58, 71, 33, 49};
         for (int i = 0; i < 4; i++) aging.put(new JSONObject().put("name", al[i]).put("sum", av[i]).put("count", ac[i]));
@@ -23020,21 +23745,23 @@ public class MainActivity extends Activity {
         JSONArray monthly = new JSONArray(); String[] ms = {"1405/02", "1405/03", "1405/04", "1405/05", "1405/06", "1405/07"}; double[] mv = {18.2e9, 21.4e9, 19.9e9, 24.6e9, 27.1e9, 6.48e9};
         for (int i = 0; i < ms.length; i++) monthly.put(new JSONObject().put("month", ms[i]).put("count", 240 + i * 11).put("sum", mv[i]));
         o.put("monthly", monthly);
-        o.put("byUser", new JSONArray().put(new JSONObject().put("name", "مصطفی خدایار").put("count", 29).put("sum", 2.4e9)).put(new JSONObject().put("name", "جواد لطیفی").put("count", 24).put("sum", 1.9e9)).put(new JSONObject().put("name", "فروشگاه").put("count", 21).put("sum", 1.4e9)).put(new JSONObject().put("name", "فاطمه محمودی (خودم)").put("count", 12).put("sum", 0.78e9)));
+        o.put("byUser", new JSONArray().put(new JSONObject().put("name", "مصطفی خدایار").put("count", 29).put("sum", 2.4e9)).put(new JSONObject().put("name", "جواد لطیفی").put("count", 24).put("sum", 1.9e9)));
         o.put("topCustomers", new JSONArray().put(new JSONObject().put("name", "سوپر مارکت امید").put("count", 6).put("sum", 1.2e9)).put(new JSONObject().put("name", "آجیل و خشکبار نگین").put("count", 4).put("sum", 0.94e9)).put(new JSONObject().put("name", "فروشگاه پسته طلایی").put("count", 3).put("sum", 0.61e9)));
         o.put("lowStock", new JSONArray().put(new JSONObject().put("name", "پسته کله قوچی براق").put("stock", 2).put("code", 628)).put(new JSONObject().put("name", "مغز گردو A امسالی").put("stock", 0).put("code", 786)));
         o.put("stock", new JSONObject().put("total", 1801).put("inStock", 1240));
-        JSONArray att = new JSONArray();
-        String now = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
-        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "in").put("time", now + " 08:12:00").put("distance", 14));
-        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "out").put("time", "2026-09-27 17:05:00").put("distance", 9));
-        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "in").put("time", "2026-09-27 08:31:00").put("distance", 21));
-        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "out").put("time", "2026-09-26 16:48:00").put("distance", 11));
-        att.put(new JSONObject().put("staff", "mahmodi").put("name", "خانم محمودی").put("type", "in").put("time", "2026-09-26 08:05:00").put("distance", 17));
-        o.put("attendance", att);
         o.put("myLeaves", new JSONArray().put(new JSONObject().put("id", 7).put("type", "مرخصی ساعتی").put("start", "1405/07/09").put("end", "1405/07/09").put("hours", "2").put("reason", "کار بانکی").put("status", "pending"))
                 .put(new JSONObject().put("id", 4).put("type", "مرخصی استحقاقی").put("start", "1405/06/20").put("end", "1405/06/21").put("hours", "").put("reason", "سفر خانوادگی").put("status", "approved")));
-        o.put("storeLat", "31.3183"); o.put("storeLng", "48.6706"); o.put("storeRadius", "120");
+        JSONObject hr = new JSONObject();
+        hr.put("zones", 2).put("wifiZones", 1).put("gpsZones", 1).put("incompleteOpen", 1);
+        if ("mission".equals(storePreviewHrMode)) hr.put("openMission", new JSONObject().put("id", 12).put("reason", "وصول مطالبات یا چک").put("destination", "سوپر مارکت امید").put("details", "دریافت دو فقره چک").put("date", "1405/07/07").put("start", "10:20").put("expected", 120));
+        hr.put("missions", new JSONArray()
+                .put(new JSONObject().put("reason", "تحویل کالا به مشتری").put("destination", "آجیل و خشکبار نگین").put("details", "۱۲ کارتن پسته").put("date", "1405/07/05").put("start", "11:05").put("endDate", "1405/07/05").put("end", "13:40").put("minutes", 155).put("open", false).put("manager", "approved"))
+                .put(new JSONObject().put("reason", "کار بانکی").put("destination", "بانک ملت مرکزی").put("details", "").put("date", "1405/07/02").put("start", "09:30").put("endDate", "1405/07/02").put("end", "10:15").put("minutes", 45).put("open", false).put("manager", "pending")));
+        hr.put("incomplete", new JSONArray()
+                .put(new JSONObject().put("date", "1405/07/04").put("weekday", "شنبه").put("reason", "خروج ثبت نشده").put("status", "open"))
+                .put(new JSONObject().put("date", "1405/06/28").put("weekday", "پنجشنبه").put("reason", "بعد از بازگشت از ماموریت خروج ثبت نشده").put("status", "fixed")));
+        hr.put("leave", new JSONObject().put("earned", 6673).put("used", 560).put("balance", 6113));
+        o.put("hr", hr);
         return o;
     }
 
@@ -23250,6 +23977,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_CONFIRM_IDENTITY) {
+            IdentityCallback cb = pendingIdentity; pendingIdentity = null;
+            if (cb != null) { if (resultCode == RESULT_OK) cb.done(true); else showNotice("تأیید هویت لغو شد؛ چیزی ثبت نشد.", true); }
+            return;
+        }
         if (requestCode == REQ_ASSISTANT_VOICE && resultCode == RESULT_OK && data != null) {
             ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
             if (matches != null && !matches.isEmpty()) {

@@ -75,7 +75,7 @@ jobs:
 
       - name: Build debug APK
         working-directory: MEELANO-Android
-        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-debug.log"; exit ${PIPESTATUS[0]}
+        run: gradle --no-daemon -Dorg.gradle.jvmargs=-Xmx4g testStoreDebugUnitTest assembleDebug 2>&1 | tee "$RUNNER_TEMP/gradle-debug.log"; exit ${PIPESTATUS[0]}
 
       - name: Report compile errors
         if: failure()

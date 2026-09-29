@@ -82,5 +82,17 @@ if [ -f app-store-debug.apk ]; then
   shot 32-store-receipt store_receipt emerald_royal
   shot 33-store-settings settings emerald_royal
   shot 34-store-checkout-dark store_checkout_pay noir_aurora
+  shot 35-store-attendance-mission attendance_mission emerald_royal
+  shot 36-store-mission-dialog mission_dialog emerald_royal
+  shot 37-store-reports-customers store_reports:customers emerald_royal
+  # responsive check: a narrow phone and a tablet-sized screen
+  adb shell wm size 720x1520; adb shell wm density 320
+  shot 38-store-narrow-home store_home emerald_royal
+  shot 39-store-narrow-debtors store_reports:debtors emerald_royal
+  shot 40-store-narrow-sales store_reports:sales emerald_royal
+  adb shell wm size 1600x2560; adb shell wm density 320
+  shot 41-store-tablet-home store_home emerald_royal
+  shot 42-store-tablet-debtors store_reports:debtors emerald_royal
+  adb shell wm size reset; adb shell wm density reset
 fi
 adb logcat -d -t 400 | grep -E "AndroidRuntime|FATAL|MainActivity" | tail -40 > "$OUT/logcat.txt" || true
