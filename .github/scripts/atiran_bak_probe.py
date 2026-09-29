@@ -440,6 +440,46 @@ def stage9(c, cur, q, out):
     for t in [r[0] for r in (out.get("s9_vahed_tables") or {}).get("rows", []) or []][:6]:
         q("s9_vah_" + t, "SELECT TOP (60) * FROM dbo.[%s]" % t.replace("]", ""))
 
+
+def stage10(c, cur, q, out):
+    """Moadian, part 2: Atiran's own tax views/procs, returns, fill rates. Read-only."""
+    q("s10_schemas", "SELECT s.name, t.name, (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id=t.object_id AND p.index_id IN (0,1)) FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id "
+                     "WHERE t.name IN ('Tax','TaxExemptionType','Nationality','AtiranSettings','AtiranKindDocument','ActSubmittedTax','IrTaxID','TaxSystemLog','back_sanad','b_az_mosh_sanad','DeviceSettings','PublicSettings') OR t.name LIKE '%back%' OR t.name LIKE '%b_az%' OR s.name<>'dbo' ORDER BY 1,2")
+    q("s10_modules", "SELECT OBJECT_SCHEMA_NAME(m.object_id), OBJECT_NAME(m.object_id), o.type_desc, LEN(m.definition) FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id "
+                     "WHERE m.definition LIKE '%TaxUniqueID%' OR m.definition LIKE '%SubmittedTax%' OR m.definition LIKE '%IrTaxID%' OR m.definition LIKE '%TaxSystemLog%' OR m.definition LIKE '%UidTax%' OR m.definition LIKE '%StuffCode%' OR m.definition LIKE '%UnitCode%' ORDER BY 2")
+    names = [(r[0], r[1]) for r in (out.get("s10_modules") or {}).get("rows", []) or []]
+    for must in (("dbo", "Vw_HeaderSaleTax"), ("dbo", "Vw_Tax_tis"), ("dbo", "VW_AllBargashtiForTax"), ("dbo", "set_ptax_group")):
+        if must not in names: names.insert(0, must)
+    for sch, n in names[:40]:
+        q("s10_def_" + n, "SELECT OBJECT_DEFINITION(OBJECT_ID(N'[%s].[%s]'))" % (sch.replace("'", ""), n.replace("'", "")))
+    for sch, t, cnt in [(r[0], r[1], r[2]) for r in (out.get("s10_schemas") or {}).get("rows", []) or []][:60]:
+        if t in ("Tax", "TaxExemptionType", "Nationality", "AtiranSettings", "AtiranKindDocument", "back_sanad", "back_sanad_kind", "b_az_mosh_sanad", "DeviceSettings", "PublicSettings", "subback_sanad", "b_az_mosh", "back_sail", "subbacksail") or "back" in t.lower() or "b_az" in t.lower() or "tax" in t.lower():
+            q("s10_cols_%s_%s" % (sch, t), "SELECT c.name, ty.name, c.max_length FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'[%s].[%s]') ORDER BY c.column_id" % (sch, t))
+            q("s10_top_%s_%s" % (sch, t), "SELECT TOP (8) * FROM [%s].[%s]" % (sch, t))
+    q("s10_sail_rdf", "SELECT rdf__, COUNT(*), MIN(shfacfo), MAX(shfacfo), SUM(CAST(ISNULL(all_fel,[all]) AS decimal(19,0))), SUM(CAST(ISNULL(tax,0) AS decimal(19,0))) FROM dbo.sailfact WHERE active='t' GROUP BY rdf__ ORDER BY 1")
+    q("s10_sail_rdf_samples", "SELECT * FROM (SELECT rdf__, shfacfo, [date], time_, shmo, CAST(moname AS nvarchar(200)) mn, [all], all_fel, tax, avarez, tafif, userid, vis_rdf, tasvieh, man_gh, MabDaryaftFactor, ROW_NUMBER() OVER (PARTITION BY rdf__ ORDER BY shfacfo DESC) rn FROM dbo.sailfact WHERE active='t') x WHERE rn<=3")
+    q("s10_sail_tax_state", "SELECT ISNULL(SubmittedTax,-1), ISNULL(TypeInvoiceSentToMoadiyan,-1), COUNT(*), SUM(CASE WHEN TaxUniqueID IS NULL OR TaxUniqueID='' THEN 0 ELSE 1 END), ISNULL(CAST(Deleted AS int),-1) FROM dbo.sailfact GROUP BY SubmittedTax, TypeInvoiceSentToMoadiyan, Deleted")
+    q("s10_cust_fill", "SELECT COUNT(*), SUM(CASE WHEN LEN(ISNULL(c_mel,''))>0 THEN 1 ELSE 0 END), SUM(CASE WHEN LEN(ISNULL(c_egh,''))>0 THEN 1 ELSE 0 END), SUM(CASE WHEN LEN(ISNULL(c_pos,''))>0 THEN 1 ELSE 0 END), "
+                       "SUM(CASE WHEN LEN(ISNULL(Shenaseh_Egh,''))>0 THEN 1 ELSE 0 END), SUM(CASE WHEN ISNULL(WithTax,0)=1 THEN 1 ELSE 0 END), SUM(CASE WHEN ISNULL(TaxInvoiceType,0)<>0 THEN 1 ELSE 0 END) FROM dbo.CUSTOMERS WHERE active='t'")
+    q("s10_cust_person", "SELECT ISNULL(PersonalityType,-1), ISNULL(TaxInvoiceType,-1), COUNT(*) FROM dbo.CUSTOMERS WHERE active='t' GROUP BY PersonalityType, TaxInvoiceType")
+    q("s10_cust_filled", "SELECT TOP (15) SHMO, CAST(MONAME AS nvarchar(200)), c_mel, c_egh, c_pos, Shenaseh_Egh, PersonalityType, TaxInvoiceType, WithTax, CustomerBranch FROM dbo.CUSTOMERS WHERE LEN(ISNULL(c_mel,''))>0 OR LEN(ISNULL(c_egh,''))>0 OR LEN(ISNULL(Shenaseh_Egh,''))>0")
+    q("s10_inv_fill", "SELECT COUNT(*), SUM(CASE WHEN LEN(ISNULL(StuffCode,''))>0 THEN 1 ELSE 0 END), SUM(CASE WHEN ISNULL(isTaxProduct,0)=1 THEN 1 ELSE 0 END), SUM(CASE WHEN ISNULL(ptax,0)>0 THEN 1 ELSE 0 END), SUM(CASE WHEN ISNULL(PAvarez,0)>0 THEN 1 ELSE 0 END), SUM(CASE WHEN LEN(ISNULL(NtswCode,''))>0 THEN 1 ELSE 0 END) FROM dbo.inventory WHERE active='t'")
+    q("s10_inv_units", "SELECT CAST(vahsanj AS nvarchar(60)), COUNT(*) FROM dbo.inventory WHERE active='t' GROUP BY vahsanj ORDER BY 2 DESC")
+    q("s10_inv_bastebandi", "SELECT CAST(bastebandi AS nvarchar(60)), COUNT(*) FROM dbo.inventory WHERE active='t' GROUP BY bastebandi ORDER BY 2 DESC")
+    q("s10_inv_taxed", "SELECT TOP (30) shka, CAST(naka AS nvarchar(200)), ptax, PAvarez, StuffCode, isTaxProduct, CAST(vahsanj AS nvarchar(40)) FROM dbo.inventory WHERE active='t' AND (ISNULL(ptax,0)>0 OR LEN(ISNULL(StuffCode,''))>0 OR ISNULL(isTaxProduct,0)=1)")
+    q("s10_units_all", "SELECT * FROM dbo.UNITS")
+    q("s10_sub_units", "SELECT CAST(BASTEBANDI AS nvarchar(40)), COUNT(*) FROM dbo.subsailfact WHERE active='t' GROUP BY BASTEBANDI")
+    q("s10_sub_money", "SELECT TOP (10) s.shfacfo, s.[all], s.all_fel, s.sumlineall, s.sumlineall_fel, s.tafif, s.SumTafifAghlam, s.tax, s.avarez, s.barbari, s.tdf, (SELECT SUM(LINESUM) FROM dbo.subsailfact x WHERE x.shfacfo=s.shfacfo AND x.rdf__=s.rdf__ AND x.active='t'), "
+                       "(SELECT SUM(ISNULL(linesum_fel,LINESUM)) FROM dbo.subsailfact x WHERE x.shfacfo=s.shfacfo AND x.rdf__=s.rdf__ AND x.active='t'), (SELECT SUM(TafifAghlam) FROM dbo.subsailfact x WHERE x.shfacfo=s.shfacfo AND x.rdf__=s.rdf__ AND x.active='t'), "
+                       "(SELECT SUM(ISNULL(TafifLine,0)) FROM dbo.subsailfact x WHERE x.shfacfo=s.shfacfo AND x.rdf__=s.rdf__ AND x.active='t'), (SELECT SUM(litakhma) FROM dbo.subsailfact x WHERE x.shfacfo=s.shfacfo AND x.rdf__=s.rdf__ AND x.active='t') "
+                       "FROM dbo.sailfact s WHERE s.active='t' AND (s.tafif<>0 OR s.SumTafifAghlam<>0 OR s.tax<>0) ORDER BY s.shfacfo DESC")
+    q("s10_sub_disc_lines", "SELECT TOP (15) x.shfacfo, x.SHKA, x.TEDVAH, x.TEDJOZ, x.VAHPRICE, x.JOZPRICE, x.LINESUM, x.linesum_fel, x.PERTAFIF, x.TafifAghlam, x.TafifLine, x.TafifLineFel, x.litakhma, x.litakhma_fel, x.ptax, x.tax, x.tax_fel, x.Gift, x.TEDBASTEBANDI, x.tedvah_fel, x.tedjoz_fel "
+                            "FROM dbo.subsailfact x WHERE x.active='t' AND (x.TafifAghlam<>0 OR x.tax<>0 OR ISNULL(x.TafifLine,0)<>0 OR x.Gift=1 OR x.TEDJOZ<>0) ORDER BY x.shfacfo DESC")
+    q("s10_company", "SELECT name, C_meli, C_egh, C_pos, TaxMemoryID, Branch, CASE WHEN TaxPrivateKey IS NULL THEN 0 ELSE LEN(TaxPrivateKey) END, t_kind FROM dbo.Company")
+    q("s10_public_settings", "SELECT TOP (200) * FROM dbo.PublicSettings")
+    q("s10_devsettings", "SELECT TOP (20) * FROM dbo.DeviceSettings")
+    q("s10_users", "SELECT TOP (30) * FROM dbo.sys_users")
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -448,6 +488,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "10":
+        stage10(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 10 done; errors:", len(out["errors"]))
+        return
     if os.environ.get("PROBE_STAGE") == "9":
         stage9(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
