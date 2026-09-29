@@ -171,6 +171,8 @@ final class MeelanoDelivery {
             try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SET NOCOUNT ON; DECLARE @r int; EXEC @r = sp_getapplock @Resource=N'meelano_delivery_sync', @LockMode=N'Exclusive', @LockOwner=N'Session', @LockTimeout=8000; SELECT @r")) {
                 locked = r.next() && r.getInt(1) >= 0;
             } catch (Exception ignored) { }
+            // The lock query turned NOCOUNT on for this connection; without row counts the INSERT below would report 0.
+            try (Statement st = c.createStatement()) { st.execute("SET NOCOUNT OFF"); } catch (Exception ignored) { }
             String ins = "INSERT INTO dbo.meelano_delivery(shfacfo,rdf__,inv_date,inv_time,shmo,customer,address,phone,total,items_count,registered_by,registered_uid,vis_rdf,status) "
                     + "SELECT s.shfacfo, ISNULL(s.rdf__,1), LEFT(CAST(s.[date] AS nvarchar(20)),10), LEFT(LTRIM(RTRIM(CAST(ISNULL(s.time_,N'') AS nvarchar(20)))),5), s.shmo, "
                     + "LEFT(" + NAME_N + ",300), "
@@ -552,7 +554,7 @@ final class MeelanoDelivery {
         int n;
         try (PreparedStatement ps = c.prepareStatement("UPDATE t SET state=?, reason=?, changed_by=?, changed_at=SYSDATETIME() FROM dbo.meelano_delivery_item t JOIN dbo.meelano_delivery d ON d.id=t.delivery_id "
                 + "WHERE t.id=? AND d.status=N'claimed' AND LOWER(d.assignee)=? AND d.pending_to IS NULL")) {
-            ps.setString(1, state); if ("missing".equals(state)) ps.setString(2, reason.trim()); else ps.setNull(2, Types.NVARCHAR);
+            ps.setString(1, state); if ("missing".equals(state)) ps.setString(2, reason.trim()); else ps.setNull(2, Types.VARCHAR);
             ps.setString(3, me); ps.setLong(4, itemId); ps.setString(5, me); n = ps.executeUpdate();
         }
         if (n == 0) {
