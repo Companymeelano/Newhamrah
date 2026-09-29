@@ -74,7 +74,7 @@ final class MeelanoIcons {
         any("◌", R.drawable.mi_radio_button_unchecked); any("○", R.drawable.mi_radio_button_unchecked); any("◐", R.drawable.mi_contrast);
         any("⌖", R.drawable.mi_my_location); any("⌾", R.drawable.mi_pin_drop); any("📍", R.drawable.mi_location_on);
         any("□", R.drawable.mi_draft); any("✉", R.drawable.mi_mail); any("💬", R.drawable.mi_chat);
-        any("☷", R.drawable.mi_account_balance_wallet); any("☰", R.drawable.mi_menu); any("☎", R.drawable.mi_call);
+        any("☷", R.drawable.mi_account_balance_wallet); any("💵", R.drawable.mi_payments); any("🔒", R.drawable.mi_lock); any("🧾", R.drawable.mi_request_quote); any("☰", R.drawable.mi_menu); any("☎", R.drawable.mi_call);
         any("🔊", R.drawable.mi_volume_up); any("♪", R.drawable.mi_mic); any("🎙", R.drawable.mi_mic); any("▧", R.drawable.mi_image);
         any("▶", R.drawable.mi_play_circle); any("📷", R.drawable.mi_photo_camera); any("⊘", R.drawable.mi_block);
         any("⚠", R.drawable.mi_warning); any("△", R.drawable.mi_warning); any("▮", R.drawable.mi_bar_chart); any("📊", R.drawable.mi_bar_chart);

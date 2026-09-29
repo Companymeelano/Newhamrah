@@ -29,10 +29,10 @@ public class MeelanoWidgetProvider extends AppWidgetProvider {
     private static void updateAll(Context context, AppWidgetManager manager, int[] ids) {
         if (context == null || manager == null || ids == null) return;
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        String summary = prefs.getString(KEY_WIDGET_SUMMARY, "برای به‌روزرسانی، اپ Meelano را باز کنید.");
+        String summary = prefs.getString(KEY_WIDGET_SUMMARY, "برای به‌روزرسانی، اپ پخش درخشان را باز کنید.");
         for (int id : ids) {
             RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_meelano);
-            views.setTextViewText(R.id.widget_title, "Meelano امروز");
+            views.setTextViewText(R.id.widget_title, "پخش درخشان امروز");
             views.setTextViewText(R.id.widget_summary, summary);
             Intent intent = new Intent(context, MainActivity.class);
             int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0;

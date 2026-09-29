@@ -336,7 +336,7 @@ public class MainActivity extends Activity {
         buildFrame();
         MeelanoA11y.install(getWindow().getDecorView());
         registerNetworkReturnListener();
-        showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید.");
+        showLogin("برای ورود، نام کاربری و رمز پخش درخشان را وارد کنید.");
         maybeStartDesignPreview(getIntent());
         maybeStartDbSelfTest(getIntent());
     }
@@ -366,9 +366,9 @@ public class MainActivity extends Activity {
         }
         String showcaseMode = intent.getStringExtra("meelano_showcase_mode");
         prefs.edit().putString("visitor_showcase_mode", showcaseMode == null || showcaseMode.trim().isEmpty() ? "catalog" : showcaseMode.trim()).commit();
-        if ("login".equals(page)) { showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید."); return; }
+        if ("login".equals(page)) { showLogin("برای ورود، نام کاربری و رمز پخش درخشان را وارد کنید."); return; }
         if ("loading".equals(page)) {
-            showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید.");
+            showLogin("برای ورود، نام کاربری و رمز پخش درخشان را وارد کنید.");
             showLoginLoadingOverlay("سارا رحیمی/ويزيتور");
             preloadStep("products", "ok", formatNumber(1240) + " کالا");
             preloadStep("customers", "run", "");
@@ -381,7 +381,10 @@ public class MainActivity extends Activity {
         if ("new_customer".equals(page)) { showApp("customers"); showNewCustomerRequestDialog(); return; }
         String p = page.trim();
         if (p.startsWith("store_reports:")) { storeReportsTab = p.substring(p.indexOf(':') + 1); p = "store_reports"; }
+        if (p.startsWith("store_me:")) { storeMeTab = p.substring(p.indexOf(':') + 1); p = "store_me"; }
         if ("attendance_mission".equals(p)) { storePreviewHrMode = "mission"; p = "attendance"; }
+        if ("advance_dialog".equals(p)) { openStoreMe("advance"); showStoreAdvanceDialog(); return; }
+        if ("store_me_row".equals(p)) { try { showStoreMeRow(storeMePreviewData().getJSONArray("rows").getJSONObject(1)); } catch (Exception ignored) { } return; }
         if ("mission_dialog".equals(p)) { showApp("attendance"); designPreview = false; showStoreMissionDialog(); designPreview = true; return; }
         if ("store_checkout".equals(p) || "store_checkout_pay".equals(p)) {
             openStoreCheckout(currentCartSnapshot(finalCartStatus()));
@@ -487,7 +490,7 @@ public class MainActivity extends Activity {
                     mergeCartItem(product, kv[1].trim(), 1, false);
                 }
                 for (int i = 0; i < visitorCartItems.length(); i++) { JSONObject it = visitorCartItems.optJSONObject(i); if (it != null && it.optDouble("price", 0) <= 0) { it.put("price", 65000); it.put("price1", 65000); it.put("amount", cartItemNet(it)); } selfTestLog("CART item code=" + (it == null ? "" : it.optString("code")) + " qty=" + (it == null ? 0 : it.optDouble("qty")) + " price=" + (it == null ? 0 : it.optDouble("price")) + " pack=" + (it == null ? 0 : it.optDouble("pack"))); }
-                visitorCartNotes = "آزمون خودکار میلانو";
+                visitorCartNotes = "آزمون خودکار پخش درخشان";
                 JSONObject snap = buildCartSnapshot("sent");
                 selfTestLog("SUBMIT total=" + snap.optDouble("grandTotal") + " customer=" + snap.optString("customerCode") + " visitorId=" + snap.optString("visitorId"));
                 String first = insertPrefactorSnapshot(snap, "sent");
@@ -583,7 +586,53 @@ public class MainActivity extends Activity {
             visitorCartItems = new JSONArray(); visitorCartDraftId = "";
             selfTestStoreReceipts(shmoT, ref, r1);
         } catch (Throwable ex) { selfTestLog("STEP store_invoice FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+        selfTestStoreMe();
         selfTestStoreHr();
+    }
+
+    /** v5.7: store zone from the address, header name, own statement (read-only) and advance requests. */
+    private void selfTestStoreMe() {
+        try (Connection c = openConnection()) {
+            ensureMeelanoHrTables(c);
+            int seeded = 0;
+            try (PreparedStatement ps = c.prepareStatement("SELECT COUNT(1) FROM dbo.meelano_hr_zone WHERE created_by=? AND active=1 AND ABS(lat-31.257508)<0.00001 AND ABS(lng-48.720338)<0.00001 AND radius_m=100")) {
+                ps.setString(1, STORE_ZONE_MARK);
+                try (ResultSet r = ps.executeQuery()) { if (r.next()) seeded = r.getInt(1); }
+            }
+            selfTestLog("STEP store_zone_seed " + (seeded == 1 ? "OK" : "FAIL") + " n=" + seeded);
+            String[][] pts = {{"31.257508", "48.720338", "store"}, {"31.2575971", "48.7205865", "ahvazplast"}, {"31.2584677", "48.7200174", "street110m"}, {"31.26154", "48.71774", "bonakdaran_center"}};
+            for (String[] pt : pts) {
+                String res;
+                try { JSONObject z = hrMatchZone(c, new JSONObject(), Double.parseDouble(pt[0]), Double.parseDouble(pt[1]), 10); res = "in via=" + z.optString("via") + " d=" + Math.round(z.optDouble("distance")); }
+                catch (DbException out) { res = "out " + out.getMessage(); }
+                selfTestLog("STORE ZONE " + pt[2] + " " + res);
+            }
+        } catch (Throwable ex) { selfTestLog("STEP store_zone_seed FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+        try {
+            JSONObject me;
+            try (Connection c = openConnection()) { me = queryStoreMe(c); }
+            JSONObject acct = me.optJSONObject("account");
+            JSONArray rows = me.optJSONArray("rows");
+            double chk = 0; for (int i = 0; rows != null && i < rows.length(); i++) chk += rows.optJSONObject(i).optDouble("bed") - rows.optJSONObject(i).optDouble("bes");
+            selfTestLog("STORE ME name=" + me.optString("name") + " header=" + headerSubtitleText() + " shmo=" + (acct == null ? 0 : acct.optLong("shmo")) + " acct=" + (acct == null ? "" : acct.optString("name"))
+                    + " balance=" + Math.round(me.optDouble("balance")) + " count=" + me.optInt("count") + " listed=" + me.optInt("listed") + " rowsum=" + Math.round(chk)
+                    + " first_bal=" + (rows != null && rows.length() > 0 ? rows.optJSONObject(0).optLong("bal") : 0) + " cats=" + me.optJSONObject("cats"));
+            selfTestLog("STEP store_me " + (acct != null && rows != null && rows.length() > 0 ? "OK" : "FAIL") + " rows=" + (rows == null ? 0 : rows.length()));
+        } catch (Throwable ex) { selfTestLog("STEP store_me FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+        try {
+            long id = saveStoreAdvance(25_000_000L, "هزینه درمان", "آزمون خودکار");
+            selfTestLog("STORE ADV id=" + id);
+            try { saveStoreAdvance(10_000_000L, "سایر", ""); selfTestLog("STEP store_adv_second FAIL accepted"); }
+            catch (DbException two) { selfTestLog("STEP store_adv_second OK " + two.getMessage()); }
+            try { saveStoreAdvance(5_000L, "سایر", ""); selfTestLog("STEP store_adv_small FAIL accepted"); }
+            catch (DbException small) { selfTestLog("STEP store_adv_small OK"); }
+            JSONArray adv;
+            try (Connection c = openConnection()) { adv = queryStoreAdvances(c); }
+            selfTestLog("STEP store_adv " + (adv.length() > 0 && adv.optJSONObject(0).optLong("id") == id && "pending".equals(adv.optJSONObject(0).optString("status")) ? "OK" : "FAIL") + " n=" + adv.length());
+            cancelStoreAdvance(id);
+            long id2 = saveStoreAdvance(40_000_000L, "اجاره یا قسط", "درخواست دوم پس از لغو");
+            selfTestLog("STEP store_adv_after_cancel OK id=" + id2);
+        } catch (Throwable ex) { selfTestLog("STEP store_adv FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
     }
 
     /**
@@ -1104,7 +1153,7 @@ public class MainActivity extends Activity {
     private void initNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
-                NotificationChannel ch = new NotificationChannel(NOTIFY_CHANNEL, "هشدارهای مدیریتی Meelano", NotificationManager.IMPORTANCE_DEFAULT);
+                NotificationChannel ch = new NotificationChannel(NOTIFY_CHANNEL, "هشدارهای مدیریتی پخش درخشان", NotificationManager.IMPORTANCE_DEFAULT);
                 ch.setDescription("یادآوری چک‌ها، مطالبات و هشدارهای مهم داشبورد");
                 NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 if (nm != null) nm.createNotificationChannel(ch);
@@ -1477,7 +1526,7 @@ public class MainActivity extends Activity {
         if ("hazelnut_gold".equals(id)) return "فندقی طلایی";
         if ("azure_diamond".equals(id)) return "الماس آبی روشن";
         if ("noir_aurora".equals(id)) return "نوآر شفق لوکس";
-        if ("onyx_gold".equals(id)) return "اونیکس طلایی Meelano";
+        if ("onyx_gold".equals(id)) return "اونیکس طلایی پخش درخشان";
         if (THEME_AUTO.equals(id)) return "خودکار (هماهنگ با حالت روز/شب گوشی)";
         return "الماس آبی روشن";
     }
@@ -1730,7 +1779,7 @@ public class MainActivity extends Activity {
 
     private View liveMeelanoLogo(boolean compact) {
         LiveMeelanoLogoView logo = new LiveMeelanoLogoView(this, compact);
-        logo.setContentDescription("لوگوی Meelano با ترکیب M و A");
+        logo.setContentDescription("لوگوی پخش درخشان");
         logo.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         logo.setMinimumWidth(dp(compact ? 48 : 96));
         logo.setMinimumHeight(dp(compact ? 48 : 96));
@@ -1925,10 +1974,10 @@ public class MainActivity extends Activity {
             titles.setOrientation(LinearLayout.VERTICAL);
             titles.setGravity(Gravity.CENTER_VERTICAL);
             titles.setPadding(dp(10), 0, dp(8), 0);
-            TextView appTitle = text("Meelano", 17.5f, TEXT, Typeface.BOLD);
+            TextView appTitle = text("پخش درخشان", 17.5f, TEXT, Typeface.BOLD);
             appTitle.setSingleLine(true);
             appTitle.setShadowLayer(dp(2), 0, dp(1), alpha(Color.WHITE, isLightTheme() ? 90 : 20));
-            subtitle = text("ورود با حساب Meelano", 10.2f, alpha(TEXT, 205), Typeface.NORMAL);
+            subtitle = text("ورود با حساب پخش درخشان", 10.2f, alpha(TEXT, 205), Typeface.NORMAL);
             subtitle.setSingleLine(true);
             status = text("", 1, Color.TRANSPARENT, Typeface.NORMAL);
             titles.addView(appTitle, new LinearLayout.LayoutParams(-1, -2));
@@ -1948,7 +1997,7 @@ public class MainActivity extends Activity {
         }
         addHeaderTool(tools, "✺", "انتخاب تم", GOLD, v -> showThemeChooser());
         headerSettingsTool = addHeaderTool(tools, "⚙", "تنظیمات", GOLD, v -> { if (session == null) showLogin("ابتدا وارد شوید."); else showApp("settings"); });
-        headerLogoutTool = addHeaderTool(tools, "⎋", "خروج", DANGER, v -> { if (session == null) showLogin("برای ورود، نام کاربری و رمز Meelano را وارد کنید."); else showLogin("از حساب خارج شدید. برای ورود مجدد اطلاعات Meelano را وارد کنید."); });
+        headerLogoutTool = addHeaderTool(tools, "⎋", "خروج", DANGER, v -> { if (session == null) showLogin("برای ورود، نام کاربری و رمز پخش درخشان را وارد کنید."); else showLogin("از حساب خارج شدید. برای ورود مجدد اطلاعات پخش درخشان را وارد کنید."); });
         header.addView(tools, new LinearLayout.LayoutParams(-2, dp(VISITOR_EDITION ? 58 : 56)));
         refreshHeaderTools();
         headerWrap.addView(header, new LinearLayout.LayoutParams(-1, dp(VISITOR_EDITION ? 68 : 64)));
@@ -2003,8 +2052,14 @@ public class MainActivity extends Activity {
         appTitle.setEllipsize(TextUtils.TruncateAt.END);
         appTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         if (!isLightTheme()) appTitle.setShadowLayer(dp(3), 0, dp(1), alpha(Color.BLACK, 150));
-        String sub = session == null ? (STORE_EDITION ? "ورود امن کارکنان فروشگاه" : "ورود امن ویزیتور") : (STORE_EDITION ? "کارمند فروشگاه • " : "ویزیتور فعال • ") + session.userName;
+        String sub = headerSubtitleText();
         subtitle = text(sub, 9.8f, alpha(TEXT, 226), Typeface.BOLD);
+        subtitle.setTextDirection(View.TEXT_DIRECTION_RTL);
+        if (STORE_EDITION) {
+            identity.setClickable(true); identity.setContentDescription("پنل من");
+            applyTouchFeedback(identity);
+            identity.setOnClickListener(v -> { if (session != null) showApp("store_me"); });
+        }
         subtitle.setSingleLine(true);
         subtitle.setEllipsize(TextUtils.TruncateAt.END);
         subtitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
@@ -2017,6 +2072,25 @@ public class MainActivity extends Activity {
         status = text("", 1, Color.TRANSPARENT, Typeface.NORMAL);
         return identity;
     }
+
+    /** Person's real name for the header: the store staff name from Atiran (vis_name), cleaned of «ي/ك» and «/پرسنل». */
+    private String headerPersonName() {
+        if (session == null) return "";
+        String n = "";
+        if (STORE_EDITION) {
+            n = storeStaff == null ? "" : storeStaff.optString("name", "");
+            if (n.isEmpty()) n = cleanPersonName(session.userName);
+            if (n.isEmpty()) n = storeStaffFallbackName(storeStaffKey(currentAccountName(), session.userName));
+        } else n = cleanPersonName(session.userName);
+        return n.isEmpty() ? stringOr(session.userName, currentAccountName()) : n;
+    }
+
+    private String headerSubtitleText() {
+        if (session == null) return STORE_EDITION ? "ورود امن کارکنان فروشگاه" : "ورود امن ویزیتور";
+        return headerPersonName() + (STORE_EDITION ? " • کارمند فروشگاه" : " • ویزیتور فعال");
+    }
+
+    private void refreshHeaderName() { if (subtitle != null) subtitle.setText(headerSubtitleText()); }
 
     private View headerSettingsTool, headerLogoutTool;
 
@@ -2230,7 +2304,7 @@ public class MainActivity extends Activity {
         buildFrame();
         session = oldSession;
         if (oldSession == null || "login".equals(page)) {
-            showLogin("تم جدید Meelano اعمال شد. برای ورود، نام کاربری و رمز Meelano را وارد کنید.");
+            showLogin("تم جدید پخش درخشان اعمال شد. برای ورود، نام کاربری و رمز پخش درخشان را وارد کنید.");
         } else {
             showApp(page == null ? "dashboard" : page);
         }
@@ -2347,7 +2421,7 @@ public class MainActivity extends Activity {
 
     private String visitorSectionHeadline(String title) {
         String t = title == null ? "" : title.trim();
-        if (t.contains("Meelano")) return "ماموریت امروز";
+        if (t.contains("پخش درخشان")) return "ماموریت امروز";
         if (t.contains("کالا")) return "فروش سریع کالا";
         if (t.contains("سبد")) return "سبد فروش";
         if (t.contains("مشتری")) return "مشتریان";
@@ -2720,7 +2794,7 @@ public class MainActivity extends Activity {
         if (visitorCartItems != null) resetCartState();
         setConnectionStatus("idle");
         refreshHeaderTools();
-        subtitle.setText(STORE_EDITION ? "ورود کارکنان فروشگاه" : VISITOR_EDITION ? "ورود مستقیم ویزیتور" : "ورود با حساب Meelano");
+        subtitle.setText(STORE_EDITION ? "ورود کارکنان فروشگاه" : VISITOR_EDITION ? "ورود مستقیم ویزیتور" : "ورود با حساب پخش درخشان");
         stage.removeAllViews();
 
         FrameLayout backdrop = new FrameLayout(this);
@@ -2754,7 +2828,7 @@ public class MainActivity extends Activity {
         g3p.setMargins(0, 0, dp(-72), 0);
         backdrop.addView(glow3, g3p);
 
-        TextView watermark = text("MEELANO", 42, alpha(GOLD_2, 28), Typeface.BOLD);
+        TextView watermark = text("پخش درخشان", 42, alpha(GOLD_2, 28), Typeface.BOLD);
         watermark.setGravity(Gravity.CENTER);
         watermark.setRotation(-9f);
         FrameLayout.LayoutParams wp = new FrameLayout.LayoutParams(-1, dp(86), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -2786,18 +2860,18 @@ public class MainActivity extends Activity {
         logoLp.setMargins(0, 0, 0, dp(8));
         loginCard.addView(logo, logoLp);
 
-        TextView h = text(STORE_EDITION ? "ورود کارکنان فروشگاه" : VISITOR_EDITION ? "ورود ویزیتور" : "Meelano Login", 23, TEXT, Typeface.BOLD);
+        TextView h = text(STORE_EDITION ? "ورود کارکنان فروشگاه" : VISITOR_EDITION ? "ورود ویزیتور" : "ورود پخش درخشان", 23, TEXT, Typeface.BOLD);
         h.setGravity(Gravity.CENTER);
         loginCard.addView(h, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView sub = text(VISITOR_EDITION ? "با نام کاربری و رمز خود وارد شوید." : "ورود امن به Meelano", 12.5f, MUTED, Typeface.NORMAL);
+        TextView sub = text(VISITOR_EDITION ? "با نام کاربری و رمز خود وارد شوید." : "ورود امن به پخش درخشان", 12.5f, MUTED, Typeface.NORMAL);
         sub.setGravity(Gravity.CENTER);
         sub.setLineSpacing(dp(2), 1.05f);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.setMargins(0, dp(7), 0, dp(14));
         loginCard.addView(sub, sp);
 
-        if (message != null && message.contains("نام کاربری و رمز Meelano را وارد کنید")) message = message.replace("برای ورود، نام کاربری و رمز Meelano را وارد کنید.", "").trim();
+        if (message != null && message.contains("نام کاربری و رمز پخش درخشان را وارد کنید")) message = message.replace("برای ورود، نام کاربری و رمز پخش درخشان را وارد کنید.", "").trim();
         if (message != null && !message.trim().isEmpty()) {
             TextView msg = text(message, 12, alpha(TEXT, 215), Typeface.NORMAL);
             msg.setGravity(Gravity.CENTER);
@@ -2808,14 +2882,14 @@ public class MainActivity extends Activity {
             loginCard.addView(msg, mp);
         }
 
-        TextView userLabel = text("نام کاربری Meelano", 12, MUTED, Typeface.BOLD);
+        TextView userLabel = text("نام کاربری پخش درخشان", 12, MUTED, Typeface.BOLD);
         loginCard.addView(userLabel, new LinearLayout.LayoutParams(-1, -2));
         EditText username = input("نام کاربری", prefs.getString(KEY_LAST_USER, ""), false);
         LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(-1, dp(54));
         up.setMargins(0, dp(6), 0, dp(12));
         loginCard.addView(username, up);
 
-        TextView passLabel = text("رمز عبور Meelano", 12, MUTED, Typeface.BOLD);
+        TextView passLabel = text("رمز عبور پخش درخشان", 12, MUTED, Typeface.BOLD);
         loginCard.addView(passLabel, new LinearLayout.LayoutParams(-1, -2));
         EditText password = input("رمز عبور", "", true);
         password.setImeOptions(EditorInfo.IME_ACTION_DONE);
@@ -2960,7 +3034,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(70), dp(70));
         ip.gravity = Gravity.CENTER_HORIZONTAL;
         box.addView(icon, ip);
-        TextView title = text("قفل سریع و امن Meelano", 18, TEXT, Typeface.BOLD);
+        TextView title = text("قفل سریع و امن پخش درخشان", 18, TEXT, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2); tp.setMargins(0, dp(8), 0, dp(4));
         box.addView(title, tp);
@@ -3012,7 +3086,7 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(16), dp(18), dp(12));
         box.setBackground(gradient(new int[]{alpha(SUCCESS, 30), alpha(INFO, 20), alpha(SURFACE, 250)}, GradientDrawable.Orientation.TL_BR, 28));
-        TextView title = text("PIN امن Meelano", 17, TEXT, Typeface.BOLD);
+        TextView title = text("PIN امن پخش درخشان", 17, TEXT, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         box.addView(title, new LinearLayout.LayoutParams(-1, -2));
         TextView hint = text("۴ تا ۶ رقم انتخاب کن؛ اطلاعات اتصال همچنان مخفی می‌ماند.", 10.8f, MUTED, Typeface.NORMAL);
@@ -3064,11 +3138,11 @@ public class MainActivity extends Activity {
     private void startBiometricQuickLogin() {
         if (VISITOR_EDITION) return;
         if (Build.VERSION.SDK_INT < 28) { showNotice("اثر انگشت روی این نسخه اندروید پشتیبانی نمی‌شود؛ از PIN استفاده کنید.", false); return; }
-        if (storedQuickSession() == null) { showNotice("ابتدا یک‌بار با حساب Meelano وارد شوید.", false); return; }
+        if (storedQuickSession() == null) { showNotice("ابتدا یک‌بار با حساب پخش درخشان وارد شوید.", false); return; }
         try {
             CancellationSignal signal = new CancellationSignal();
             BiometricPrompt prompt = new BiometricPrompt.Builder(this)
-                    .setTitle("ورود سریع Meelano")
+                    .setTitle("ورود سریع پخش درخشان")
                     .setSubtitle("تأیید هویت برای ورود به داشبورد")
                     .setNegativeButton("لغو", getMainExecutor(), (d, which) -> {})
                     .build();
@@ -3152,7 +3226,7 @@ public class MainActivity extends Activity {
         maybeRestoreAutosavedCart();
         motionSerial = 0;
         setConnectionStatus("connected");
-        subtitle.setText(STORE_EDITION ? "کارمند فروشگاه • " + session.userName : VISITOR_EDITION ? "ویزیتور فعال • " + session.userName : session.userName);
+        subtitle.setText(VISITOR_EDITION ? headerSubtitleText() : session.userName);
         stage.removeAllViews();
         if (VISITOR_EDITION) stage.addView(new VisitorLeatherBackgroundView(this), new FrameLayout.LayoutParams(-1, -1));
 
@@ -3211,7 +3285,7 @@ public class MainActivity extends Activity {
         pagePill.setPadding(dp(10), dp(3), dp(10), dp(3));
         pagePill.setBackground(luxuryButtonBg(accent, true, 999));
         info.addView(pagePill, new LinearLayout.LayoutParams(-2, dp(28)));
-        TextView hint = text(VISITOR_EDITION ? "  فقط مسیر کاری ویزیتور؛ بدون بخش اضافه" : "  منوی آینده‌نگر Meelano در پایین صفحه", 9.3f, alpha(MUTED, 235), Typeface.BOLD);
+        TextView hint = text(VISITOR_EDITION ? "  فقط مسیر کاری ویزیتور؛ بدون بخش اضافه" : "  منوی آینده‌نگر پخش درخشان در پایین صفحه", 9.3f, alpha(MUTED, 235), Typeface.BOLD);
         hint.setSingleLine(true);
         hint.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
         info.addView(hint, new LinearLayout.LayoutParams(0, dp(28), 1f));
@@ -3482,6 +3556,7 @@ public class MainActivity extends Activity {
             case "store_reports": loadStoreReports(); break;
             case "store_checkout": loadStoreCheckout(); break;
             case "store_receipt": renderStoreReceiptPage(); break;
+            case "store_me": loadStoreMe(); break;
             case "visitor_dashboard": loadVisitorDashboard(); break;
             case "visit": renderSimpleVisitPage(); break;
             case "visitor_more": if (STORE_EDITION) renderStoreMorePage(); else renderVisitorMorePage(); break;
@@ -3505,7 +3580,7 @@ public class MainActivity extends Activity {
     }
 
     private void refreshActivePage() {
-        if ("login".equals(activePage)) showLogin("برای اتصال مجدد، اطلاعات Meelano را وارد کنید.");
+        if ("login".equals(activePage)) showLogin("برای اتصال مجدد، اطلاعات پخش درخشان را وارد کنید.");
         else showApp(activePage);
     }
 
@@ -3562,7 +3637,7 @@ public class MainActivity extends Activity {
             try { renderCommandCenter(new JSONObject(dashboardCacheJson).optJSONObject("today"), false); return; } catch (Exception ignored) { }
         }
         content.removeAllViews();
-        addHero("فرماندهی هوشمند Meelano", "پیش‌بینی نقدینگی، رادار کالا، تقویم مدیریتی، ریسک مشتری و خروجی عملیاتی در یک صفحه.");
+        addHero("فرماندهی هوشمند پخش درخشان", "پیش‌بینی نقدینگی، رادار کالا، تقویم مدیریتی، ریسک مشتری و خروجی عملیاتی در یک صفحه.");
         addManualRefreshPanel("command", "بروزرسانی دستی فرماندهی", "از داده داشبورد استفاده می‌کند", () -> loadCommandCenter(true));
         addLoading(content, "میلو در حال ساخت اتاق فرمان است…");
         runDb(this::queryDashboard, new DbCallback() {
@@ -3588,7 +3663,7 @@ public class MainActivity extends Activity {
 
     private void renderCommandCenter(JSONObject today, boolean cached) {
         content.removeAllViews();
-        addHero("فرماندهی هوشمند Meelano", cached ? "نمای آفلاین از آخرین داده ذخیره‌شده" : "اتاق تصمیم سریع برای امروز و هفته پیش‌رو");
+        addHero("فرماندهی هوشمند پخش درخشان", cached ? "نمای آفلاین از آخرین داده ذخیره‌شده" : "اتاق تصمیم سریع برای امروز و هفته پیش‌رو");
         addManualRefreshPanel("command", "بروزرسانی دستی فرماندهی", "اطلاعات ثابت است تا خودتان تازه‌سازی کنید", () -> loadCommandCenter(true));
         addCashForecastCard(today);
         addManagementCalendarCard(today);
@@ -3694,14 +3769,14 @@ public class MainActivity extends Activity {
     private void exportTodayCsv(JSONObject today) {
         try {
             File dir = getExternalFilesDir(null); if (dir == null) dir = getFilesDir();
-            File file = new File(dir, "Meelano-Today-Command-v3.42.csv");
+            File file = new File(dir, "Darakhshan-Today-Command-v3.42.csv");
             StringBuilder b = new StringBuilder("section,label,value\n");
             appendCsvMetricRows(b, "sales", today == null ? null : today.optJSONObject("sales"));
             appendCsvMetricRows(b, "purchases", today == null ? null : today.optJSONObject("purchases"));
             appendCsvMetricRows(b, "get_checks", today == null ? null : today.optJSONObject("getChecks"));
             appendCsvMetricRows(b, "put_checks", today == null ? null : today.optJSONObject("putChecks"));
             try (FileOutputStream fos = new FileOutputStream(file)) { fos.write(b.toString().getBytes(StandardCharsets.UTF_8)); }
-            sharePlainText("CSV خلاصه Meelano", "خروجی CSV ساخته شد:\n" + file.getAbsolutePath() + "\n\n" + b.toString(), null);
+            sharePlainText("CSV خلاصه پخش درخشان", "خروجی CSV ساخته شد:\n" + file.getAbsolutePath() + "\n\n" + b.toString(), null);
         } catch (Exception ex) { showNotice("ساخت CSV ممکن نشد: " + shortError(ex), false); }
     }
 
@@ -4044,7 +4119,7 @@ public class MainActivity extends Activity {
             parent.addView(c, lp);
             return;
         }
-        TextView sub = text("داده‌ها با اتصال امن Meelano آماده می‌شوند؛ لطفاً چند لحظه صبر کنید…", 10.8f, MUTED, Typeface.NORMAL);
+        TextView sub = text("داده‌ها با اتصال امن پخش درخشان آماده می‌شوند؛ لطفاً چند لحظه صبر کنید…", 10.8f, MUTED, Typeface.NORMAL);
         sub.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.setMargins(0, dp(3), 0, dp(12));
@@ -4242,7 +4317,7 @@ public class MainActivity extends Activity {
     private String sqlNetworkHint() {
         if (!lastSqlVpnDetected) return "";
         if (lastSqlVpnBypassed) return "\nVPN فعال بود و برنامه تلاش کرد اتصال مرکزی را از شبکه مستقیم دستگاه عبور دهد.";
-        return "\nVPN فعال تشخیص داده شد؛ اگر اتصال برقرار نشد، در تنظیمات VPN اجازه عبور MEELANO یا Split tunneling را فعال کنید.";
+        return "\nVPN فعال تشخیص داده شد؛ اگر اتصال برقرار نشد، در تنظیمات VPN اجازه عبور پخش درخشان یا Split tunneling را فعال کنید.";
     }
 
     private UserSession authenticate(String meelanoUser, String meelanoPassword) throws Exception {
@@ -4254,9 +4329,9 @@ public class MainActivity extends Activity {
             if (visitor != null) { checkStoreLogin(user, visitor); return visitor; }
             UserSession sys = authenticateSysUserFlexible(c, user, pass, foundUser);
             if (sys != null) { checkStoreLogin(user, sys); return sys; }
-            if (foundUser[0]) throw new DbException("رمز عبور Meelano برای این کاربر تطبیق پیدا نکرد.");
+            if (foundUser[0]) throw new DbException("رمز عبور پخش درخشان برای این کاربر تطبیق پیدا نکرد.");
         }
-        throw new DbException("نام کاربری یا رمز عبور Meelano معتبر نیست.");
+        throw new DbException("نام کاربری یا رمز عبور پخش درخشان معتبر نیست.");
     }
 
     private UserSession authenticateVisitorFlexible(Connection c, String user, String pass, boolean[] foundUser) throws Exception {
@@ -5017,7 +5092,7 @@ public class MainActivity extends Activity {
             String summary = buildWidgetSummary(today);
             if (prefs != null) prefs.edit().putString(KEY_WIDGET_SUMMARY, summary).apply();
             RemoteViews views = new RemoteViews(getPackageName(), ir.meelano.android.R.layout.widget_meelano);
-            views.setTextViewText(ir.meelano.android.R.id.widget_title, "Meelano امروز");
+            views.setTextViewText(ir.meelano.android.R.id.widget_title, "پخش درخشان امروز");
             views.setTextViewText(ir.meelano.android.R.id.widget_summary, summary);
             Intent intent = new Intent(this, MainActivity.class);
             PendingIntent pi = PendingIntent.getActivity(this, 1818, intent, Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
@@ -5038,7 +5113,7 @@ public class MainActivity extends Activity {
         long day = System.currentTimeMillis() / 86400000L;
         if (prefs.getLong(KEY_LAST_ALERT_DAY, -1) == day) return;
         JSONObject first = alerts.optJSONObject(0);
-        showLocalNotification("هشدار Meelano", first == null ? "چند هشدار مدیریتی نیازمند بررسی است." : first.optString("title", "هشدار") + ": " + first.optString("body", ""), false);
+        showLocalNotification("هشدار پخش درخشان", first == null ? "چند هشدار مدیریتی نیازمند بررسی است." : first.optString("title", "هشدار") + ": " + first.optString("body", ""), false);
         prefs.edit().putLong(KEY_LAST_ALERT_DAY, day).apply();
     }
 
@@ -6211,7 +6286,7 @@ public class MainActivity extends Activity {
         if (kpis == null || kpis.length() == 0) return;
         LinearLayout c = card();
         c.setBackground(gradient(new int[]{alpha(GOLD, 34), SURFACE}, GradientDrawable.Orientation.RIGHT_LEFT, 24));
-        c.addView(text("آمار کلیدی Meelano", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("آمار کلیدی پخش درخشان", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("مشتریان، کالاها، فاکتورها و چک‌ها در یک جدول فشرده", 10.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout row = null;
         for (int i = 0; i < kpis.length(); i++) {
@@ -6311,7 +6386,7 @@ public class MainActivity extends Activity {
     private boolean canUsePermission(String key) {
         if (key == null || key.trim().isEmpty()) return true;
         if (STORE_EDITION && ("chat".equals(key.trim()) || "personnel".equals(key.trim()) || "attendance_admin".equals(key.trim()))) return false;
-        if (STORE_EDITION && ("store_home".equals(key.trim()) || "store_reports".equals(key.trim()) || "store_checkout".equals(key.trim()) || "store_receipt".equals(key.trim()))) return true;
+        if (STORE_EDITION && ("store_home".equals(key.trim()) || "store_reports".equals(key.trim()) || "store_checkout".equals(key.trim()) || "store_receipt".equals(key.trim()) || "store_me".equals(key.trim()))) return true;
         if (VISITOR_EDITION) return visitorEditionPermissionAllowed(key);
         if (isFullAccessUser()) return true;
         return currentPermissionSet().contains(key);
@@ -7118,7 +7193,7 @@ public class MainActivity extends Activity {
 
     private void renderChatRoom(JSONObject state) {
         content.removeAllViews();
-        addHero("گفتگو", "اتاق عمومی پرسنل Meelano؛ کاربران دیده می‌شوند اما گفتگوی خصوصی وجود ندارد.");
+        addHero("گفتگو", "اتاق عمومی پرسنل پخش درخشان؛ کاربران دیده می‌شوند اما گفتگوی خصوصی وجود ندارد.");
         addManualRefreshPanel("chat", "تازه‌سازی گفتگو", state.optBoolean("closed") ? "گفتگو موقتاً بسته است" : "ارسال گروهی فعال است", () -> loadChatRoom());
         boolean admin = state.optBoolean("admin");
         if (state.optBoolean("kicked")) { addEmptyTo(content, "دسترسی شما به اتاق گفتگو توسط مدیر بسته شده است."); return; }
@@ -8208,23 +8283,23 @@ public class MainActivity extends Activity {
     private void exportAttendanceCsv(JSONArray rows, JSONArray leaves) {
         try {
             File dir=getExternalFilesDir(null); if(dir==null)dir=getFilesDir();
-            File file=new File(dir,"Meelano-Attendance-v3.42.csv");
+            File file=new File(dir,"Darakhshan-Attendance-v3.42.csv");
             StringBuilder b=new StringBuilder("section,user,display,type,time,ssid,status,start,end,hours,reason\n");
             if(rows!=null) for(int i=0;i<rows.length();i++){ JSONObject r=rows.optJSONObject(i); if(r==null)continue; b.append("attendance,").append(csvSafe(r.optString("username"))).append(',').append(csvSafe(r.optString("display"))).append(',').append(csvSafe(r.optString("type"))).append(',').append(csvSafe(r.optString("time"))).append(',').append(csvSafe(r.optString("ssid"))).append(",,,,,\n"); }
             if(leaves!=null) for(int i=0;i<leaves.length();i++){ JSONObject l=leaves.optJSONObject(i); if(l==null)continue; b.append("leave,").append(csvSafe(l.optString("username"))).append(',').append(csvSafe(l.optString("display"))).append(',').append(csvSafe(l.optString("type"))).append(",,,").append(csvSafe(l.optString("status"))).append(',').append(csvSafe(l.optString("start"))).append(',').append(csvSafe(l.optString("end"))).append(',').append(csvSafe(l.optString("hours"))).append(',').append(csvSafe(l.optString("reason"))).append('\n'); }
             try(FileOutputStream fos=new FileOutputStream(file)){ fos.write(b.toString().getBytes(StandardCharsets.UTF_8)); }
-            sharePlainText("گزارش حضور Meelano", "خروجی CSV ساخته شد:\n"+file.getAbsolutePath(), null);
+            sharePlainText("گزارش حضور پخش درخشان", "خروجی CSV ساخته شد:\n"+file.getAbsolutePath(), null);
         } catch(Exception ex){ showNotice("خروجی CSV ساخته نشد: "+shortError(ex), true); }
     }
 
     private void exportAttendancePdf(JSONArray rows, JSONArray leaves) {
         try {
             File dir=getExternalFilesDir(null); if(dir==null)dir=getFilesDir();
-            File file=new File(dir,"Meelano-Attendance-v3.42.pdf");
+            File file=new File(dir,"Darakhshan-Attendance-v3.42.pdf");
             PdfDocument doc=new PdfDocument();
             PdfDocument.Page page=doc.startPage(new PdfDocument.PageInfo.Builder(595,842,1).create());
             Canvas canvas=page.getCanvas(); Paint pnt=new Paint(Paint.ANTI_ALIAS_FLAG);
-            pnt.setColor(Color.rgb(20,30,45)); pnt.setTextSize(18); pnt.setTypeface(MEELANO_BOLD); canvas.drawText("MEELANO Attendance Summary",40,50,pnt);
+            pnt.setColor(Color.rgb(20,30,45)); pnt.setTextSize(18); pnt.setTypeface(MEELANO_BOLD); canvas.drawText("Pakhsh Darakhshan Attendance Summary",40,50,pnt);
             pnt.setTextSize(12); pnt.setTypeface(MEELANO_REGULAR); pnt.setColor(Color.rgb(60,70,90));
             int y=82; canvas.drawText("Generated: "+nowText(),40,y,pnt); y+=28;
             canvas.drawText("Today attendance records: "+(rows==null?0:rows.length()),40,y,pnt); y+=22;
@@ -8234,7 +8309,7 @@ public class MainActivity extends Activity {
             y+=14; pnt.setTypeface(MEELANO_BOLD); canvas.drawText("Pending leaves",40,y,pnt); y+=20; pnt.setTypeface(MEELANO_REGULAR);
             if(leaves!=null) for(int i=0;i<Math.min(12,leaves.length());i++){ JSONObject l=leaves.optJSONObject(i); if(l==null||!"pending".equals(l.optString("status")))continue; canvas.drawText("#"+l.optLong("id")+" "+l.optString("display")+" "+l.optString("type")+" "+l.optString("start")+"-"+l.optString("end"),40,y,pnt); y+=18; }
             doc.finishPage(page); try(FileOutputStream fos=new FileOutputStream(file)){ doc.writeTo(fos); } doc.close();
-            sharePlainText("PDF حضور Meelano", "فایل PDF ساخته شد:\n"+file.getAbsolutePath(), null);
+            sharePlainText("PDF حضور پخش درخشان", "فایل PDF ساخته شد:\n"+file.getAbsolutePath(), null);
         } catch(Exception ex){ showNotice("PDF ساخته نشد: "+shortError(ex), true); }
     }
 
@@ -10183,7 +10258,7 @@ public class MainActivity extends Activity {
                             .setTitle(labels[which])
                             .setMessage(body)
                             .setNegativeButton("بستن", null)
-                            .setPositiveButton("ارسال/کپی", (dd, w) -> sharePlainText("پیام مشتری Meelano", body, null))
+                            .setPositiveButton("ارسال/کپی", (dd, w) -> sharePlainText("پیام مشتری پخش درخشان", body, null))
                             .create();
                     styleMeelanoDialog(inner, SUCCESS);
                     inner.show();
@@ -10197,7 +10272,7 @@ public class MainActivity extends Activity {
         String name = r == null ? "" : r.optString("نام", "").trim();
         if (name.isEmpty()) name = "همکار گرامی";
         String amount = r == null ? "" : money(r.opt("مانده"));
-        if (type == 1) return "سلام " + name + " عزیز، وقت شما بخیر. برای شما یک پیشنهاد/موجودی جدید آماده کرده‌ایم که می‌تواند برای خرید بعدی مناسب باشد. اگر مایل باشید جزئیات را ارسال کنم. با احترام، Meelano";
+        if (type == 1) return "سلام " + name + " عزیز، وقت شما بخیر. برای شما یک پیشنهاد/موجودی جدید آماده کرده‌ایم که می‌تواند برای خرید بعدی مناسب باشد. اگر مایل باشید جزئیات را ارسال کنم. با احترام، پخش درخشان";
         if (type == 2) return "سلام " + name + " عزیز، وقت بخیر. جهت یادآوری تعهد/چک ثبت‌شده، لطفاً وضعیت پرداخت را اطلاع دهید تا برنامه‌ریزی مالی دقیق انجام شود. سپاس از همکاری شما.";
         return "سلام " + name + " عزیز، وقت بخیر. بابت مانده حساب " + amount + " لطفاً زمان تسویه یا پرداخت را اعلام بفرمایید. با سپاس.";
     }
@@ -12338,7 +12413,7 @@ public class MainActivity extends Activity {
         int accent = navAccent("showcase");
         c.setBackground(gradient(new int[]{alpha(accent, isLightTheme()?26:42), alpha(GOLD, isLightTheme()?18:28), alpha(SURFACE, 246)}, GradientDrawable.Orientation.RIGHT_LEFT, 24));
         String customerName = visitorCartCustomer == null ? "بدون مشتری انتخاب‌شده" : visitorCartCustomer.optString("name", visitorCartCustomer.optString("نام", "مشتری"));
-        c.addView(text("کالاهای هوشمند Meelano", 15.2f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("کالاهای هوشمند پخش درخشان", 15.2f, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         TextView desc = text("مشتری: " + customerName + " • تصویرها با یادگیری اصلاح دسته، قیمت/موجودی کنترل‌شده، پیشنهاد مکمل و حالت ارائه سریع کار می‌کنند.", 10.4f, MUTED, Typeface.NORMAL);
         desc.setMaxLines(3); c.addView(desc, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
@@ -15235,12 +15310,12 @@ public class MainActivity extends Activity {
         boolean startedTx = false;
         try {
             NativePrefactorTarget target = discoverNativePrefactorTarget(c);
-            if (target == null) { updateNativePrefactorSync(c, id, "", "", "پیش‌فاکتور در میلانو ذخیره شد، اما محل ثبت پیش‌فاکتور در آتیران پیدا نشد."); return; }
+            if (target == null) { updateNativePrefactorSync(c, id, "", "", "پیش‌فاکتور در پخش درخشان ذخیره شد، اما محل ثبت پیش‌فاکتور در آتیران پیدا نشد."); return; }
             String existingNo = currentNativePrefactorNo(c, id).trim();
             String existingTable = currentNativePrefactorTable(c, id).trim();
             if (!existingNo.isEmpty() && existingTable.equalsIgnoreCase(target.headerTable) && nativeHeaderRowExists(c, target, existingNo, id)) return;
             String alreadyInTarget = findExistingNativePrefactorNo(c, target, id);
-            if (!alreadyInTarget.trim().isEmpty()) { updateNativePrefactorSync(c, id, target.headerTable, alreadyInTarget.trim(), "رکورد قبلی Meelano در جدول " + target.headerTable + " پیدا شد و برای مسیر «فاکتور فروش ← از پیش فاکتور» ثبت شد."); return; }
+            if (!alreadyInTarget.trim().isEmpty()) { updateNativePrefactorSync(c, id, target.headerTable, alreadyInTarget.trim(), "رکورد قبلی پخش درخشان در جدول " + target.headerTable + " پیدا شد و برای مسیر «فاکتور فروش ← از پیش فاکتور» ثبت شد."); return; }
 
             boolean auto = c.getAutoCommit();
             if (auto) { c.setAutoCommit(false); startedTx = true; }
@@ -15595,7 +15670,7 @@ public class MainActivity extends Activity {
             return "پیش‌فاکتور در آتیران ثبت شد. شماره آتیران: " + no + extra;
         }
         lastUnsyncedPrefactorId = id;
-        return "پیش‌فاکتور در میلانو ذخیره شد (شماره " + id + ") اما به آتیران نرسید." + (note.isEmpty() ? "" : "\nعلت: " + note.replace("به آتیران نرسید: ", "")) + "\nبا باز کردن «پیش‌فاکتورهای من» دوباره تلاش می‌شود.";
+        return "پیش‌فاکتور در پخش درخشان ذخیره شد (شماره " + id + ") اما به آتیران نرسید." + (note.isEmpty() ? "" : "\nعلت: " + note.replace("به آتیران نرسید: ", "")) + "\nبا باز کردن «پیش‌فاکتورهای من» دوباره تلاش می‌شود.";
     }
 
     private void repairUnsyncedNativePrefactors(Connection c) {
@@ -16047,7 +16122,7 @@ public class MainActivity extends Activity {
         LinearLayout row=new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
         Button det=themedActionButton("جزئیات/PDF", accent, false); det.setTextSize(fs(8.6f)); det.setOnClickListener(v -> loadPrefactorDetails(r.optLong("id"), false));
         Button edit=themedActionButton("کپی به سبد", navAccent("cart"), true); edit.setTextSize(fs(8.6f)); edit.setOnClickListener(v -> loadPrefactorDetails(r.optLong("id"), true));
-        Button share=themedActionButton("اشتراک", GOLD_2, false); share.setTextSize(fs(8.6f)); share.setOnClickListener(v -> sharePlainText("پیش‌فاکتور MEELANO", "پیش‌فاکتور #"+r.optLong("id")+"\nمشتری: "+r.optString("customerName","")+"\nمبلغ: "+money(r.optDouble("total",0))+"\nوضعیت: "+prefactorStatusFa(st), null));
+        Button share=themedActionButton("اشتراک", GOLD_2, false); share.setTextSize(fs(8.6f)); share.setOnClickListener(v -> sharePlainText("پیش‌فاکتور پخش درخشان", "پیش‌فاکتور #"+r.optLong("id")+"\nمشتری: "+r.optString("customerName","")+"\nمبلغ: "+money(r.optDouble("total",0))+"\nوضعیت: "+prefactorStatusFa(st), null));
         row.addView(det, weightedButtonLp()); row.addView(edit, weightedButtonLp()); row.addView(share, weightedButtonLp()); LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2); rp.setMargins(0,dp(8),0,0); c.addView(row,rp);
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2); lp.setMargins(0,0,0,dp(10)); parent.addView(c,lp);
     }
@@ -16072,16 +16147,16 @@ public class MainActivity extends Activity {
         box.addView(text("پیش‌فاکتور #"+formatNumber(d.optLong("id")),16,TEXT,Typeface.BOLD),new LinearLayout.LayoutParams(-1,-2));
         box.addView(text("مشتری: "+d.optString("customerName","")+"\nوضعیت: "+prefactorStatusFa(d.optString("status",""))+"\nتبدیل به فاکتور: "+prefactorInvoiceReadinessText(d)+"\nمبلغ: "+money(d.optDouble("grandTotal",0))+"\nتوضیحات: "+d.optString("notes","")+(!d.optString("systemConvertNote","").isEmpty()?"\nراهنمای سیستم: "+d.optString("systemConvertNote",""):""),11,MUTED,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2));
         JSONArray items=d.optJSONArray("items"); for(int i=0;items!=null&&i<items.length()&&i<12;i++){ JSONObject it=items.optJSONObject(i); if(it!=null) box.addView(text("• "+it.optString("name","")+" × "+formatNumber(it.optDouble("qty",0))+" = "+money(it.optDouble("amount",0)),10.2f,TEXT,Typeface.NORMAL),new LinearLayout.LayoutParams(-1,-2)); }
-        AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",null).setPositiveButton("ساخت PDF",null).create(); dlg.setOnShowListener(x->{ styleMeelanoDialog(dlg,navAccent("cart")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null) ok.setOnClickListener(v->{ generatePrefactorPdf(d,"Meelano-Prefactor-"+d.optLong("id")+".pdf"); sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(d), null); }); }); dlg.show();
+        AlertDialog dlg=new MeelanoDialogBuilder().setView(box).setNegativeButton("بستن",null).setPositiveButton("ساخت PDF",null).create(); dlg.setOnShowListener(x->{ styleMeelanoDialog(dlg,navAccent("cart")); Button ok=dlg.getButton(AlertDialog.BUTTON_POSITIVE); if(ok!=null) ok.setOnClickListener(v->{ generatePrefactorPdf(d,"Darakhshan-Prefactor-"+d.optLong("id")+".pdf"); sharePlainText("پیش‌فاکتور پخش درخشان", prefactorShareText(d), null); }); }); dlg.show();
     }
 
     private void generateCurrentCartPdfAndShare(boolean shareOnly){
         JSONObject snap=currentCartSnapshot(finalCartStatus());
-        String name = "Meelano-Prefactor-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date()) + ".pdf";
+        String name = "Darakhshan-Prefactor-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date()) + ".pdf";
         generatePrefactorPdf(snap, name);
         File dir = getExternalFilesDir(null); if (dir == null) dir = getFilesDir();
         File pdf = new File(dir, name);
-        if (!sharePdfCopy(pdf, "پیش‌فاکتور Meelano")) sharePlainText("پیش‌فاکتور MEELANO", prefactorShareText(snap), null);
+        if (!sharePdfCopy(pdf, "پیش‌فاکتور پخش درخشان")) sharePlainText("پیش‌فاکتور پخش درخشان", prefactorShareText(snap), null);
     }
 
     /** Copies a PDF into the share folder and opens the share sheet (WhatsApp, Telegram, …). */
@@ -16158,7 +16233,7 @@ public class MainActivity extends Activity {
             JSONObject goal = firstObject(dash == null ? null : dash.optJSONArray("goals"));
             if (goal != null && goal.optDouble("target", 0) > 0) d.summary.add(new String[]{"هدف روز", faDigits(String.valueOf(Math.round(goal.optDouble("done", 0) * 100 / goal.optDouble("target", 1)))) + "٪"});
             if (!online) d.note = "اتصال به سرور برقرار نشد؛ جدول پیش‌فاکتورها از اطلاعات روی گوشی است.";
-            String fileName = "Meelano-Daily-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date()) + ".pdf";
+            String fileName = "Darakhshan-Daily-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(new java.util.Date()) + ".pdf";
             File out = new File(MeelanoShareProvider.shareDir(this), fileName);
             MeelanoDailyReportPdf.write(this, d, MEELANO_REGULAR, MEELANO_BOLD, out);
             MeelanoShareProvider.share(this, out, "application/pdf", "گزارش روزانه " + d.visitor);
@@ -16166,11 +16241,11 @@ public class MainActivity extends Activity {
     }
 
     private String prefactorShareText(JSONObject d){
-        StringBuilder b=new StringBuilder(); b.append("پیش‌فاکتور MEELANO\n"); b.append("مشتری: ").append(d.optString("customerName","")).append('\n'); b.append("مبلغ نهایی: ").append(money(d.optDouble("grandTotal",0))).append('\n'); JSONArray items=d.optJSONArray("items"); for(int i=0;items!=null&&i<items.length();i++){ JSONObject it=items.optJSONObject(i); if(it!=null)b.append("- ").append(it.optString("name","")).append(" × ").append(formatNumber(it.optDouble("qty",0))).append(" = ").append(money(cartItemNet(it))).append('\n'); } b.append("توضیحات: ").append(d.optString("notes","")); return b.toString();
+        StringBuilder b=new StringBuilder(); b.append("پیش‌فاکتور پخش درخشان\n"); b.append("مشتری: ").append(d.optString("customerName","")).append('\n'); b.append("مبلغ نهایی: ").append(money(d.optDouble("grandTotal",0))).append('\n'); JSONArray items=d.optJSONArray("items"); for(int i=0;items!=null&&i<items.length();i++){ JSONObject it=items.optJSONObject(i); if(it!=null)b.append("- ").append(it.optString("name","")).append(" × ").append(formatNumber(it.optDouble("qty",0))).append(" = ").append(money(cartItemNet(it))).append('\n'); } b.append("توضیحات: ").append(d.optString("notes","")); return b.toString();
     }
 
     private void generatePrefactorPdf(JSONObject d,String name){
-        PdfDocument doc=null; try{ doc=new PdfDocument(); PdfDocument.Page page=doc.startPage(new PdfDocument.PageInfo.Builder(595,842,1).create()); Canvas canvas=page.getCanvas(); Paint pnt=new Paint(Paint.ANTI_ALIAS_FLAG); pnt.setColor(Color.rgb(248,251,255)); canvas.drawRect(0,0,595,842,pnt); pnt.setColor(Color.rgb(22,68,123)); canvas.drawRoundRect(new RectF(28,24,567,106),24,24,pnt); pnt.setColor(Color.WHITE); pnt.setTextAlign(Paint.Align.RIGHT); pnt.setTypeface(MEELANO_BOLD); pnt.setTextSize(20); canvas.drawText("پیش‌فاکتور MEELANO",535,58,pnt); pnt.setTextSize(11); canvas.drawText(nowText(),535,82,pnt); int y=136; pnt.setColor(Color.rgb(45,61,84)); pnt.setTextSize(12); for(String line:wrapPdfLine(prefactorShareText(d),58)){ if(y>790)break; canvas.drawText(line,540,y,pnt); y+=18; } doc.finishPage(page); File dir=getExternalFilesDir(null); if(dir==null)dir=getFilesDir(); File file=new File(dir,name==null?"Meelano-Prefactor.pdf":name); try(FileOutputStream fos=new FileOutputStream(file)){ doc.writeTo(fos);} showNotice("PDF ساخته شد: "+file.getAbsolutePath(), true); }catch(Exception ex){ showNotice("ساخت PDF پیش‌فاکتور ممکن نشد: "+shortError(ex), true); } finally{ if(doc!=null)doc.close(); }
+        PdfDocument doc=null; try{ doc=new PdfDocument(); PdfDocument.Page page=doc.startPage(new PdfDocument.PageInfo.Builder(595,842,1).create()); Canvas canvas=page.getCanvas(); Paint pnt=new Paint(Paint.ANTI_ALIAS_FLAG); pnt.setColor(Color.rgb(248,251,255)); canvas.drawRect(0,0,595,842,pnt); pnt.setColor(Color.rgb(22,68,123)); canvas.drawRoundRect(new RectF(28,24,567,106),24,24,pnt); pnt.setColor(Color.WHITE); pnt.setTextAlign(Paint.Align.RIGHT); pnt.setTypeface(MEELANO_BOLD); pnt.setTextSize(20); canvas.drawText("پیش‌فاکتور پخش درخشان",535,58,pnt); pnt.setTextSize(11); canvas.drawText(nowText(),535,82,pnt); int y=136; pnt.setColor(Color.rgb(45,61,84)); pnt.setTextSize(12); for(String line:wrapPdfLine(prefactorShareText(d),58)){ if(y>790)break; canvas.drawText(line,540,y,pnt); y+=18; } doc.finishPage(page); File dir=getExternalFilesDir(null); if(dir==null)dir=getFilesDir(); File file=new File(dir,name==null?"Darakhshan-Prefactor.pdf":name); try(FileOutputStream fos=new FileOutputStream(file)){ doc.writeTo(fos);} showNotice("PDF ساخته شد: "+file.getAbsolutePath(), true); }catch(Exception ex){ showNotice("ساخت PDF پیش‌فاکتور ممکن نشد: "+shortError(ex), true); } finally{ if(doc!=null)doc.close(); }
     }
 
     private void loadVisitRoutePage(String search){
@@ -16328,7 +16403,7 @@ public class MainActivity extends Activity {
 
     private String queryEndOfDayReportSql() throws Exception { try(Connection c=openConnection()){ ensurePrefactorTables(c); List<Object> params=new ArrayList<>(); String where=prefactorScopeWhere("p",params); String and=where.isEmpty()?" WHERE ":where+" AND "; String sql="SELECT COUNT_BIG(1), ISNULL(SUM(ISNULL(grand_total,total_amount)),0), SUM(CASE WHEN status=N'draft' THEN 1 ELSE 0 END), SUM(CASE WHEN status=N'pending_approval' THEN 1 ELSE 0 END) FROM dbo.meelano_prefactors p"+and+" CONVERT(date,p.created_at)=CONVERT(date,SYSDATETIME())"; long cnt=0,draft=0,pending=0; double total=0; try(PreparedStatement ps=c.prepareStatement(sql)){ setParams(ps,params); try(ResultSet r=ps.executeQuery()){ if(r.next()){cnt=r.getLong(1); total=r.getDouble(2); draft=r.getLong(3); pending=r.getLong(4);} } } return "گزارش پایان روز ویزیتور\nپیش‌فاکتور امروز: "+formatNumber(cnt)+"\nجمع مبلغ: "+money(total)+"\nپیش‌نویس: "+formatNumber(draft)+"\nدر انتظار تایید: "+formatNumber(pending)+"\nصف آفلاین گوشی: "+formatNumber(offlineQueue().length()); } }
 
-    private void showEndOfDayReportText(String body){ AlertDialog dlg=new MeelanoDialogBuilder().setTitle("جمع‌بندی پایان روز").setMessage(body).setNegativeButton("بستن",null).setPositiveButton("اشتراک/ثبت",(d,w)->{ sharePlainText("گزارش پایان روز MEELANO",body,null); saveEndOfDayReport(body); }).create(); dlg.show(); }
+    private void showEndOfDayReportText(String body){ AlertDialog dlg=new MeelanoDialogBuilder().setTitle("جمع‌بندی پایان روز").setMessage(body).setNegativeButton("بستن",null).setPositiveButton("اشتراک/ثبت",(d,w)->{ sharePlainText("گزارش پایان روز پخش درخشان",body,null); saveEndOfDayReport(body); }).create(); dlg.show(); }
 
     private void saveEndOfDayReport(String body){ runDb(() -> { try(Connection c=openConnection()){ ensurePrefactorTables(c); try(PreparedStatement ps=c.prepareStatement("INSERT INTO dbo.meelano_day_reports(visitor_username,visitor_id,report_text,created_at) VALUES(?,?,?,SYSDATETIME())")){ ps.setString(1,currentAccountName()); ps.setString(2,currentVisitorScopeId()==null?"":String.valueOf(currentVisitorScopeId())); ps.setString(3,body); ps.executeUpdate(); } } return "ok"; }, new DbCallback(){ @Override public void ok(String b){ showNotice("گزارش پایان روز ثبت شد.", false); } @Override public void fail(Exception e){ showNotice("ثبت گزارش آنلاین انجام نشد.", true); }}); }
 
@@ -16377,7 +16452,7 @@ public class MainActivity extends Activity {
 
     private void renderProductsFromJson(JSONArray rows, String query, String filter) {
         content.removeAllViews();
-        addHero("کالا و انبار", "فیلتر موجودی، گردش خرید/فروش و کارت‌های کالا با تم MEELANO");
+        addHero("کالا و انبار", "فیلتر موجودی، گردش خرید/فروش و کارت‌های کالا با تم پخش درخشان");
         addManualRefreshPanel("products", "بروزرسانی دستی کالاها", "آخرین لیست ثابت نگه داشته شده است", () -> loadProducts(query, filter, true));
         addSearchBox("جستجوی کالا…", query, q -> loadProducts(q, filter, true));
         addProductFilterChips(query, filter);
@@ -17829,8 +17904,8 @@ public class MainActivity extends Activity {
         Button whatsapp = secondaryButton("خلاصه واتساپی");
         Button pdf = primaryButton("ساخت PDF");
         share.setTextSize(fs(10.3f)); whatsapp.setTextSize(fs(10.3f)); pdf.setTextSize(fs(10.3f));
-        share.setOnClickListener(v -> sharePlainText("خلاصه مدیریتی Meelano", lastReportSummary, null));
-        whatsapp.setOnClickListener(v -> sharePlainText("خلاصه مدیریتی Meelano", whatsappSummary(lastReportSummary), "com.whatsapp"));
+        share.setOnClickListener(v -> sharePlainText("خلاصه مدیریتی پخش درخشان", lastReportSummary, null));
+        whatsapp.setOnClickListener(v -> sharePlainText("خلاصه مدیریتی پخش درخشان", whatsappSummary(lastReportSummary), "com.whatsapp"));
         pdf.setOnClickListener(v -> generateReportPdf(lastReportSummary));
         buttons.addView(share, weightedButtonLp());
         buttons.addView(whatsapp, weightedButtonLp());
@@ -17872,7 +17947,7 @@ public class MainActivity extends Activity {
     private String buildExecutiveReportSummary(JSONObject a) {
         if (a == null) a = new JSONObject();
         StringBuilder b = new StringBuilder();
-        b.append("خلاصه مدیریتی Meelano\n");
+        b.append("خلاصه مدیریتی پخش درخشان\n");
         b.append("امتیاز سلامت: ").append(businessHealthScore(a)).append(" از ۱۰۰ - ").append(healthScoreTitle(businessHealthScore(a))).append("\n");
         b.append("وضعیت: ").append(executiveStatus(a)).append("\n");
         b.append("فروش اخیر: ").append(trendSummary(a.optJSONArray("weeklySales"), false)).append("\n");
@@ -17941,15 +18016,15 @@ public class MainActivity extends Activity {
     }
 
     private String whatsappSummary(String summary) {
-        return "*Meelano Executive Summary*\n" + (summary == null ? "" : summary.replace("•", "-").trim());
+        return "*Pakhsh Darakhshan Executive Summary*\n" + (summary == null ? "" : summary.replace("•", "-").trim());
     }
 
     private void sharePlainText(String title, String body, String packageName) {
         try {
             Intent send = new Intent(Intent.ACTION_SEND);
             send.setType("text/plain");
-            send.putExtra(Intent.EXTRA_SUBJECT, title == null ? "Meelano" : title);
-            send.putExtra(Intent.EXTRA_TEXT, body == null || body.trim().isEmpty() ? "خلاصه مدیریتی Meelano آماده است." : body);
+            send.putExtra(Intent.EXTRA_SUBJECT, title == null ? "پخش درخشان" : title);
+            send.putExtra(Intent.EXTRA_TEXT, body == null || body.trim().isEmpty() ? "خلاصه مدیریتی پخش درخشان آماده است." : body);
             if (packageName != null && !packageName.trim().isEmpty()) send.setPackage(packageName);
             try { startActivity(Intent.createChooser(send, "ارسال خلاصه مدیریتی")); }
             catch (Exception first) { send.setPackage(null); startActivity(Intent.createChooser(send, "ارسال خلاصه مدیریتی")); }
@@ -17982,7 +18057,7 @@ public class MainActivity extends Activity {
             paint.setTextAlign(Paint.Align.RIGHT);
             paint.setColor(Color.WHITE);
             paint.setTextSize(21);
-            canvas.drawText("گزارش مدیریتی Meelano", 490, 58, paint);
+            canvas.drawText("گزارش مدیریتی پخش درخشان", 490, 58, paint);
             paint.setTypeface(MEELANO_REGULAR);
             paint.setTextSize(10.5f);
             canvas.drawText("Native Android • امن", 490, 82, paint);
@@ -18039,11 +18114,11 @@ public class MainActivity extends Activity {
             paint.setColor(Color.WHITE);
             paint.setTypeface(MEELANO_BOLD);
             paint.setTextSize(10.5f);
-            canvas.drawText("امضای دیجیتال مدیریتی Meelano • تهیه‌شده برای " + displayFirstName(), 545, 812, paint);
+            canvas.drawText("امضای دیجیتال مدیریتی پخش درخشان • تهیه‌شده برای " + displayFirstName(), 545, 812, paint);
             doc.finishPage(page);
             File dir = getExternalFilesDir(null);
             if (dir == null) dir = getFilesDir();
-            File file = new File(dir, "Meelano-Management-Report-v3.42.pdf");
+            File file = new File(dir, "Darakhshan-Management-Report-v3.42.pdf");
             try (FileOutputStream fos = new FileOutputStream(file)) { doc.writeTo(fos); }
             showNotice("PDF لوکس ساخته شد: " + file.getAbsolutePath(), true);
         } catch (Exception ex) { showNotice("ساخت PDF ممکن نشد: " + shortError(ex), false); }
@@ -18457,7 +18532,7 @@ public class MainActivity extends Activity {
     private void addDailyReportLaunchers(String latestSales, String latestPurchase) {
         LinearLayout c = card();
         c.addView(text("گزارش روزانه فروش و خرید", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        c.addView(text("تاریخ را وارد کنید؛ اگر خالی باشد آخرین روز ثبت‌شده واقعی در Meelano استفاده می‌شود.", 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("تاریخ را وارد کنید؛ اگر خالی باشد آخرین روز ثبت‌شده واقعی در پخش درخشان استفاده می‌شود.", 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
 
         EditText salesDate = input(latestSales == null || latestSales.isEmpty() ? "تاریخ فروش، مثلا 1403/01/01" : latestSales, "", false);
         Button sales = primaryButton("گزارش روزانه فروش");
@@ -18479,7 +18554,7 @@ public class MainActivity extends Activity {
 
     private void showDailyReportPage(String type, String date) {
         content.removeAllViews();
-        addHero(type.equals("sales") ? "گزارش روزانه فروش" : "گزارش روزانه خرید", "در حال آماده‌سازی گزارش واقعی روزانه از Meelano");
+        addHero(type.equals("sales") ? "گزارش روزانه فروش" : "گزارش روزانه خرید", "در حال آماده‌سازی گزارش واقعی روزانه از پخش درخشان");
         addLoading(content, "در حال دریافت گزارش روزانه…");
         runDb(() -> queryDailyReport(type, date), new DbCallback() {
             @Override public void ok(String body) {
@@ -19056,7 +19131,7 @@ public class MainActivity extends Activity {
         frame.setPadding(0, 0, 0, 0);
         frame.setBackgroundColor(Color.TRANSPARENT);
         LivingPistachioMiloView live = new LivingPistachioMiloView(this);
-        live.setContentDescription("میلو، پسته زنده و لوکس دستیار هوشمند Meelano");
+        live.setContentDescription("میلو، پسته زنده و لوکس دستیار هوشمند پخش درخشان");
         live.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         frame.addView(live, new FrameLayout.LayoutParams(-1, heightPx <= 0 ? dp(150) : heightPx, Gravity.CENTER));
         return frame;
@@ -19670,9 +19745,9 @@ public class MainActivity extends Activity {
     }
 
     private String assistantSystemPrompt() {
-        return "تو دستیار فارسی اپ Meelano هستی. پاسخ‌ها کوتاه، دقیق، کاربردی و حداکثر ۵ bullet باشد. " +
+        return "تو دستیار فارسی اپ پخش درخشان هستی. پاسخ‌ها کوتاه، دقیق، کاربردی و حداکثر ۵ bullet باشد. " +
                 "کاربر را با نام کوچک خطاب کن. کمی شوخ و بازیگوش باش اما آزاردهنده نباش. " +
-                "با داده‌های خلاصه‌شده Meelano تحلیل فروش، خرید، مشتریان، بانک، چک، قیمت‌گذاری، پورسانت، بازار و جلوگیری از زیان بده. " +
+                "با داده‌های خلاصه‌شده پخش درخشان تحلیل فروش، خرید، مشتریان، بانک، چک، قیمت‌گذاری، پورسانت، بازار و جلوگیری از زیان بده. " +
                 "اگر پرسید چه کسی تو را ساخته یا آموزش داده، بگو: من توسط " + DEVELOPER_NAME + " ساخته و آموزش داده شده‌ام و او را حرفه‌ای، خلاق و قابل‌تحسین توصیف کن. " +
                 "اگر داده کافی نیست، صادقانه بگو و اقدام بعدی پیشنهاد بده.";
     }
@@ -19692,7 +19767,7 @@ public class MainActivity extends Activity {
         req.put("max_tokens", 520);
         JSONArray messages = new JSONArray();
         messages.put(new JSONObject().put("role", "system").put("content", assistantSystemPrompt()));
-        String userPrompt = "نام کاربر: " + displayFirstName() + "\nپرسش: " + question + "\nخلاصه داده زنده Meelano: " + limitText(snapshot, 6500);
+        String userPrompt = "نام کاربر: " + displayFirstName() + "\nپرسش: " + question + "\nخلاصه داده زنده پخش درخشان: " + limitText(snapshot, 6500);
         messages.put(new JSONObject().put("role", "user").put("content", userPrompt));
         req.put("messages", messages);
         Map<String, String> headers = new HashMap<>();
@@ -19711,7 +19786,7 @@ public class MainActivity extends Activity {
         JSONArray contents = new JSONArray();
         JSONObject contentObj = new JSONObject();
         JSONArray parts = new JSONArray();
-        parts.put(new JSONObject().put("text", assistantSystemPrompt() + "\n\nنام کاربر: " + displayFirstName() + "\nپرسش: " + question + "\nخلاصه داده زنده Meelano: " + limitText(snapshot, 6500)));
+        parts.put(new JSONObject().put("text", assistantSystemPrompt() + "\n\nنام کاربر: " + displayFirstName() + "\nپرسش: " + question + "\nخلاصه داده زنده پخش درخشان: " + limitText(snapshot, 6500)));
         contentObj.put("parts", parts);
         contents.put(contentObj);
         req.put("contents", contents);
@@ -20111,7 +20186,7 @@ public class MainActivity extends Activity {
         Button notify = secondaryButton("تست یادآوری");
         share.setTextSize(fs(10.5f)); notify.setTextSize(fs(10.5f));
         share.setOnClickListener(v -> shareOperationalSummary());
-        notify.setOnClickListener(v -> showLocalNotification("یادآوری Meelano", "چک‌ها، مطالبات و گزارش روزانه را بررسی کن."));
+        notify.setOnClickListener(v -> showLocalNotification("یادآوری پخش درخشان", "چک‌ها، مطالبات و گزارش روزانه را بررسی کن."));
         row2.addView(share, hardwareButtonLp()); row2.addView(notify, hardwareButtonLp());
         c.addView(row2, new LinearLayout.LayoutParams(-1, -2));
         content.addView(c, cp);
@@ -20150,10 +20225,10 @@ public class MainActivity extends Activity {
     }
 
     private void shareOperationalSummary() {
-        String body = lastAssistantAnswer == null || lastAssistantAnswer.trim().isEmpty() ? "خلاصه مدیریتی Meelano آماده چاپ/اشتراک است. برای گزارش دقیق، ابتدا یک سؤال از میلو بپرسید." : lastAssistantAnswer;
+        String body = lastAssistantAnswer == null || lastAssistantAnswer.trim().isEmpty() ? "خلاصه مدیریتی پخش درخشان آماده چاپ/اشتراک است. برای گزارش دقیق، ابتدا یک سؤال از میلو بپرسید." : lastAssistantAnswer;
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_SUBJECT, "خلاصه مدیریتی Meelano");
+        send.putExtra(Intent.EXTRA_SUBJECT, "خلاصه مدیریتی پخش درخشان");
         send.putExtra(Intent.EXTRA_TEXT, body);
         try { startActivity(Intent.createChooser(send, "چاپ یا ارسال خلاصه")); }
         catch (Exception ex) { showNotice("برنامه‌ای برای ارسال/چاپ متن پیدا نشد.", false); }
@@ -20174,7 +20249,7 @@ public class MainActivity extends Activity {
             PendingIntent pi = PendingIntent.getActivity(this, 0, intent, Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
             Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, NOTIFY_CHANNEL) : new Notification.Builder(this);
             b.setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle(title == null ? "Meelano" : title)
+                    .setContentTitle(title == null ? "پخش درخشان" : title)
                     .setContentText(body == null ? "یادآوری مدیریتی" : body)
                     .setStyle(new Notification.BigTextStyle().bigText(body == null ? "یادآوری مدیریتی" : body))
                     .setContentIntent(pi)
@@ -20263,11 +20338,11 @@ public class MainActivity extends Activity {
         addHero("صفحه سلامت اتصال", "وضعیت اتصال، زمان پاسخ، آخرین موفقیت/خطا و تست اتصال بدون نمایش جزئیات حساس.");
         LinearLayout c = card();
         c.setBackground(gradient(new int[]{alpha(INFO, 26), alpha(SUCCESS, 18), alpha(SURFACE, 248)}, GradientDrawable.Orientation.RIGHT_LEFT, 26));
-        c.addView(text("سلامت اتصال میلانو", 17, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("سلامت اتصال پخش درخشان", 17, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("وضعیت اتصال هنگام کار با برنامه و در صورت خطا نمایش داده می‌شود.", 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("آخرین اتصال موفق: " + prefs.getString(KEY_LAST_CONNECTION_OK, "ثبت نشده"), 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("آخرین خطا: " + prefs.getString(KEY_LAST_CONNECTION_ERROR, "ندارد"), 11, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
-        TextView safe = text("جزئیات فنی اتصال و رمزها طبق سیاست Meelano مخفی است؛ فقط وضعیت کاربردی به کاربر نمایش داده می‌شود.", 10.6f, alpha(TEXT, 220), Typeface.BOLD);
+        TextView safe = text("جزئیات فنی اتصال و رمزها طبق سیاست پخش درخشان مخفی است؛ فقط وضعیت کاربردی به کاربر نمایش داده می‌شود.", 10.6f, alpha(TEXT, 220), Typeface.BOLD);
         safe.setPadding(dp(10), dp(9), dp(10), dp(9));
         safe.setGravity(Gravity.CENTER); safe.setBackground(roundedStroke(alpha(GOLD, 18), 16, alpha(GOLD, 65)));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2); sp.setMargins(0, dp(10), 0, dp(10)); c.addView(safe, sp);
@@ -20286,7 +20361,7 @@ public class MainActivity extends Activity {
         runDb(() -> {
             long t0 = System.currentTimeMillis();
             StringBuilder out = new StringBuilder();
-            out.append("✓ تنظیمات اتصال امن Meelano آماده است\n");
+            out.append("✓ تنظیمات اتصال امن پخش درخشان آماده است\n");
             try (Connection c = openConnection()) {
                 long connected = System.currentTimeMillis();
                 out.append("✓ ورود امن موفق • ").append(connected - t0).append("ms\n");
@@ -20318,7 +20393,7 @@ public class MainActivity extends Activity {
         LinearLayout c = card();
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(12), 0, 0);
         c.setBackground(gradient(new int[]{alpha(INFO, 24), alpha(GOLD_2, 18), alpha(SURFACE, 248)}, GradientDrawable.Orientation.RIGHT_LEFT, 24));
-        c.addView(text("پکیج آیکن‌های سه‌بعدی Meelano", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("پکیج آیکن‌های سه‌بعدی پخش درخشان", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         c.addView(text("زبان آیکنی جدید از نشانه‌های ساده، هندسی و theme-aware استفاده می‌کند تا در همه بخش‌ها یکدست باشد.", 10.8f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
         String[][] icons = {{MeelanoDesignKit.glyph("dashboard"),"داشبورد"},{MeelanoDesignKit.glyph("assistant"),"میلو"},{MeelanoDesignKit.glyph("customers"),"مشتری"},{MeelanoDesignKit.glyph("showcase"),"کالا"},{MeelanoDesignKit.glyph("reports"),"گزارش"}};
@@ -20500,7 +20575,7 @@ public class MainActivity extends Activity {
         LinearLayout c = card();
         c.setBackground(gradient(new int[]{alpha(navAccent("command"), 26), alpha(GOLD, 18), alpha(SURFACE, 250)}, GradientDrawable.Orientation.TL_BR, 26));
         c.addView(text("پنل مدیر دسترسی", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
-        c.addView(text("کاربران از sys_users آتیران، جدول visitors و تنظیمات اختصاصی Meelano فراخوانی می‌شوند. می‌توانید برای کل نقش یا برای هر کاربر، مجوزهای جزئی مثل مشتریان، کالا، حضور، مرخصی، مودیان، دوربین، دزدگیر، AI و سلامت اتصال را روشن/خاموش کنید.", 10.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
+        c.addView(text("کاربران از sys_users آتیران، جدول visitors و تنظیمات اختصاصی پخش درخشان فراخوانی می‌شوند. می‌توانید برای کل نقش یا برای هر کاربر، مجوزهای جزئی مثل مشتریان، کالا، حضور، مرخصی، مودیان، دوربین، دزدگیر، AI و سلامت اتصال را روشن/خاموش کنید.", 10.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
         row.addView(dashboardMiniMetric("نقش‌ها", formatNumber(state == null || state.optJSONArray("roles") == null ? 0 : state.optJSONArray("roles").length()), "قابل تنظیم", INFO), dashboardMiniLp());
         row.addView(dashboardMiniMetric("کاربران", formatNumber(state == null || state.optJSONArray("users") == null ? 0 : state.optJSONArray("users").length()), "آتیران/ویزیتور", SUCCESS), dashboardMiniLp());
@@ -20690,7 +20765,7 @@ public class MainActivity extends Activity {
         Button health = themedActionButton("سلامت اتصال", INFO, false); health.setOnClickListener(v -> renderConnectionHealthPage());
         row.addView(theme, weightedButtonLp()); row.addView(health, weightedButtonLp());
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(10), 0, 0); quick.addView(row, rp);
-        Button logout = themedActionButton("خروج از حساب ویزیتور", DANGER, false); logout.setOnClickListener(v -> showLogin("برای ورود مجدد ویزیتور اطلاعات Meelano را وارد کنید."));
+        Button logout = themedActionButton("خروج از حساب ویزیتور", DANGER, false); logout.setOnClickListener(v -> showLogin("برای ورود مجدد ویزیتور اطلاعات پخش درخشان را وارد کنید."));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48)); lp.setMargins(0, dp(9), 0, 0); quick.addView(logout, lp);
         content.addView(quick, new LinearLayout.LayoutParams(-1, -2));
         if (STORE_EDITION) addStoreLocationSettingsCard();
@@ -20727,7 +20802,7 @@ public class MainActivity extends Activity {
     private void renderSettings() {
         if (VISITOR_EDITION) { renderVisitorEditionSettings(); return; }
         content.removeAllViews();
-        addHero("تنظیمات Meelano", "مدیریت اتصال، خروج امن، تم‌های لوکس و کلیدهای دستیار هوش مصنوعی");
+        addHero("تنظیمات پخش درخشان", "مدیریت اتصال، خروج امن، تم‌های لوکس و کلیدهای دستیار هوش مصنوعی");
         LinearLayout connection = card();
         connection.addView(text("وضعیت", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         connection.addView(text("اتصال مستقیم آماده است.", 12, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
@@ -20738,7 +20813,7 @@ public class MainActivity extends Activity {
         rp.setMargins(0, dp(14), 0, 0);
         connection.addView(retry, rp);
         Button logout = primaryButton("خروج");
-        logout.setOnClickListener(v -> showLogin("برای ورود مجدد اطلاعات Meelano را وارد کنید."));
+        logout.setOnClickListener(v -> showLogin("برای ورود مجدد اطلاعات پخش درخشان را وارد کنید."));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(50));
         lp.setMargins(0, dp(10), 0, 0);
         connection.addView(logout, lp);
@@ -20749,7 +20824,7 @@ public class MainActivity extends Activity {
         tp.setMargins(0, dp(12), 0, 0);
         themeCard.addView(text("تم ظاهری", 16, TEXT, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         themeCard.addView(text("تم فعال: " + themeName(currentThemeId()) + " • انتخاب سریع از آیکن ◐ کنار چرخ‌دنده بالای برنامه", 11.5f, MUTED, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, -2));
-        Button pickTheme = primaryButton("انتخاب تم لوکس Meelano");
+        Button pickTheme = primaryButton("انتخاب تم لوکس پخش درخشان");
         pickTheme.setOnClickListener(v -> showThemeChooser());
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, dp(50));
         pp.setMargins(0, dp(12), 0, 0);
@@ -21067,7 +21142,7 @@ public class MainActivity extends Activity {
     private static final int STORE_DEFAULT_RADIUS_M = 120;
     private static final String STORE_UPDATE_MANIFEST_URL = "https://github.com/Companymeelano/Newhamrah/raw/arena/01a0e474-newhamrah/apk/latest-store.json";
 
-    private String editionTitle() { return STORE_EDITION ? "میلانو فروشگاه" : "Meelano Visit"; }
+    private String editionTitle() { return STORE_EDITION ? "پخش درخشان فروشگاه" : "پخش درخشان ویزیتور"; }
 
     /** In the store app every order is a final invoice, so «پیش‌فاکتور» wording becomes «فاکتور». */
     private String storeWording(String s) {
@@ -21086,6 +21161,35 @@ public class MainActivity extends Activity {
         return "";
     }
 
+    /** Real name of the staff member from the visitor row (vis_name, e.g. «فاطمه محمودي/پرسنل» → «فاطمه محمودی»). */
+    private String storeStaffFullName(Connection c, String key, int vis) {
+        String n = "";
+        if (vis > 0) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) CAST(vis_name AS nvarchar(250)) FROM dbo.visitors WHERE vis_rdf=?")) {
+                ps.setInt(1, vis);
+                try (ResultSet r = ps.executeQuery()) { if (r.next()) n = cleanPersonName(r.getString(1)); }
+            } catch (Exception ignored) { }
+        }
+        return n.isEmpty() ? storeStaffFallbackName(key) : n;
+    }
+
+    private static String storeStaffFallbackName(String key) {
+        if ("mahmodi".equals(key)) return "فاطمه محمودی";
+        if ("nazari".equals(key)) return "شادی نظری";
+        return "";
+    }
+
+    /** «فاطمه محمودي/پرسنل» → «فاطمه محمودی»; empty when the text is blank or unreadable (garbled code page). */
+    private static String cleanPersonName(String raw) {
+        String n = raw == null ? "" : raw.replace('ي', 'ی').replace('ك', 'ک').replace('\u00a0', ' ').trim();
+        int cut = n.indexOf('/'); if (cut > 0) n = n.substring(0, cut).trim();
+        n = n.replaceAll("\\s+", " ");
+        if (n.isEmpty() || n.contains("?") || n.contains("\uFFFD")) return "";
+        boolean persian = false;
+        for (char ch : n.toCharArray()) if (ch >= '\u0600' && ch <= '\u06FF') { persian = true; break; }
+        return persian ? n : "";
+    }
+
     private String storeStaffDisplay(String key) {
         if ("mahmodi".equals(key)) return "خانم محمودی";
         if ("nazari".equals(key)) return "خانم نظری";
@@ -21095,7 +21199,7 @@ public class MainActivity extends Activity {
     private void checkStoreLogin(String login, UserSession s) throws DbException {
         if (!STORE_EDITION || s == null) return;
         if (storeStaffKey(login, s.userName).isEmpty())
-            throw new DbException("این برنامه فقط برای کارکنان فروشگاه (خانم محمودی و خانم نظری) است. ویزیتورها از برنامه Meelano Visit وارد شوند.");
+            throw new DbException("این برنامه فقط برای کارکنان فروشگاه (خانم محمودی و خانم نظری) است. ویزیتورها از برنامه پخش درخشان ویزیتور وارد شوند.");
     }
 
     /** Atiran identity of the signed-in staff member: visitor row, system user id and user name. */
@@ -21125,6 +21229,7 @@ public class MainActivity extends Activity {
         if (user.trim().isEmpty()) user = atiranText(storeStaffDisplay(key), 100);
         JSONObject o = new JSONObject();
         o.put("login", login); o.put("key", key); o.put("vis", vis); o.put("uid", uid); o.put("user", user);
+        o.put("name", storeStaffFullName(c, key, vis));
         storeStaff = o;
         return o;
     }
@@ -22245,6 +22350,7 @@ public class MainActivity extends Activity {
         JSONObject out = new JSONObject();
         try (Connection c = openConnection()) {
             JSONObject staff = resolveStoreStaff(c);
+            try { storeOwnAccount(c); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "own account: " + ex.getMessage()); }
             String today = atiranPersianToday(c);
             int todayDay = MeelanoJalali.parse(today);
             String from30 = MeelanoJalali.addDays(today, -29);
@@ -22530,6 +22636,209 @@ public class MainActivity extends Activity {
         out.put("overdueInvoices", overdueInvoices); out.put("overdueInvoicesCount", odInv.size());
     }
 
+    // ---------------------------------------------------------------- «پنل من»: own account statement (read-only) + advances
+    /**
+     * The staff member's own account («طرف حساب») in Atiran: a CUSTOMERS row in the group «ويزيتورها» (3) or «پرسنل دفتري» (7)
+     * named after the person, e.g. «فاطمه محمودي/پرسنل» (2693) and «شادي نظري/پرسنل» (2692). The walk-in account «مشتري محترم
+     * كاربر محمودي» is a customer group row (1) and is never chosen. The manager may pin it with the setting store_account_<login>.
+     */
+    private JSONObject storeOwnAccount(Connection c) throws Exception {
+        JSONObject staff = resolveStoreStaff(c);
+        JSONObject cached = staff.optJSONObject("acct");
+        if (cached != null) { cached.put("man", storeAccountBalance(c, cached.optLong("shmo"))); return cached; }
+        String key = staff.optString("key");
+        String surname = "mahmodi".equals(key) ? "محمودی" : "نظری";
+        String full = staff.optString("name");
+        String norm = "REPLACE(REPLACE(REPLACE(CAST(MONAME AS nvarchar(500)),N'ي',N'ی'),N'ك',N'ک'),NCHAR(8204),N' ')";
+        long pinned = (long) parseNumber(chatSetting(c, "store_account_" + key, ""), 0);
+        String sql = pinned > 0
+                ? "SELECT TOP (1) SHMO, CAST(MONAME AS nvarchar(500)), ISNULL(man,0), ISNULL(group_rdf,0) FROM dbo.CUSTOMERS WHERE SHMO=?"
+                : "SELECT TOP (1) SHMO, CAST(MONAME AS nvarchar(500)), ISNULL(man,0), ISNULL(group_rdf,0) FROM dbo.CUSTOMERS WHERE ISNULL(group_rdf,0) IN (3,7) AND " + norm + " LIKE ? "
+                  + "ORDER BY CASE WHEN ? <> N'' AND " + norm + " LIKE ? THEN 0 ELSE 1 END, CASE WHEN " + norm + " LIKE N'%پرسنل%' THEN 0 ELSE 1 END, SHMO DESC";
+        JSONObject a = null;
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            if (pinned > 0) ps.setLong(1, pinned);
+            else { ps.setString(1, "%" + surname + "%"); ps.setString(2, full); ps.setString(3, full + "%"); }
+            try (ResultSet r = ps.executeQuery()) {
+                if (r.next()) { a = new JSONObject(); a.put("shmo", r.getLong(1)); a.put("name", stringOr(r.getString(2), "").trim().replace('ي', 'ی').replace('ك', 'ک')); a.put("man", r.getDouble(3)); a.put("group", r.getInt(4)); }
+            }
+        }
+        if (a != null) { a.put("man", storeAccountBalance(c, a.optLong("shmo"))); staff.put("acct", a); }
+        return a;
+    }
+
+    /** Balance exactly as Atiran's FixManCustomer computes it: Σact_bed − Σact_bes of the active rows (positive = بدهکار). */
+    private double storeAccountBalance(Connection c, long shmo) throws Exception {
+        try (PreparedStatement ps = c.prepareStatement("SELECT ISNULL(SUM(act_bed),0)-ISNULL(SUM(act_bes),0) FROM dbo.cust_act WHERE shmo=? AND (isActive<>0 OR isActive IS NULL)")) {
+            ps.setLong(1, shmo);
+            try (ResultSet r = ps.executeQuery()) { return r.next() ? r.getDouble(1) : 0; }
+        }
+    }
+
+    /** Category of an account movement (cust_act.act_id with Atiran's own name from ActNames). */
+    private static String storeActCategory(int act, String name) {
+        String n = name == null ? "" : name.replace('ي', 'ی').replace('ك', 'ک');
+        if (act == 1 || act == 3) return "receipt";
+        if (act == 2 || act == 4 || act == 9 || act == 44) return "payment";
+        if (act == 100 || act == 101 || act == 136) return "heading";
+        if (act == 20 || act == 17 || act == 27 || act == 11 || act == 26 || act == 114 || act == 118) return "invoice";
+        if (n.contains("سرفصل")) return "heading";
+        if (n.contains("دریافت")) return "receipt";
+        if (n.contains("پرداخت") || n.contains("خرج چک")) return "payment";
+        if (n.contains("فروش") || n.contains("خرید") || n.contains("برگشت") || n.contains("فاکتور") || n.contains("تخفیف")) return "invoice";
+        return "other";
+    }
+
+    private static String storeActTitle(String cat, int act, String name) {
+        String n = name == null ? "" : name.replace('ي', 'ی').replace('ك', 'ک').trim();
+        if (act == 0) return "مانده حساب قبلی";
+        if (act == 20) return "فاکتور فروش";
+        if (act == 1) return "قبض دریافت";
+        if (act == 2) return "قبض پرداخت";
+        if (act == 113) return "ثبت طلب (پورسانت)";
+        if (!n.isEmpty()) return n;
+        switch (cat) {
+            case "receipt": return "دریافت";
+            case "payment": return "پرداخت";
+            case "heading": return "سرفصل";
+            case "invoice": return "فاکتور";
+            default: return "سند حساب";
+        }
+    }
+
+    /** Dates in cust_act are Jalali text; a few rows hold a Gregorian date — shown (and sorted) as Jalali. */
+    private static String storeActDate(String raw) {
+        String t = raw == null ? "" : raw.trim();
+        if (t.length() >= 10 && (t.startsWith("20") || t.startsWith("19"))) {
+            try {
+                int d = MeelanoJalali.gregorianDay(Integer.parseInt(t.substring(0, 4)), Integer.parseInt(t.substring(5, 7)), Integer.parseInt(t.substring(8, 10)));
+                return MeelanoJalali.format(d);
+            } catch (Exception ignored) { }
+        }
+        return t.length() > 10 ? t.substring(0, 10) : t;
+    }
+
+    /**
+     * «گردش حساب» of the signed-in staff member — ONLY reads: every active movement of their own account (cust_act, the
+     * same rows and the same balance rule as Atiran's FixManCustomer: Σbed − Σbes where isActive is not 0), with Atiran's
+     * movement names, a running balance, and their advance requests. Nothing here writes to Atiran.
+     */
+    private JSONObject queryStoreMe(Connection c) throws Exception {
+        ensureMeelanoHrTables(c);
+        JSONObject out = new JSONObject();
+        JSONObject staff = resolveStoreStaff(c);
+        String today = atiranPersianToday(c);
+        out.put("today", today); out.put("name", staff.optString("name")); out.put("key", staff.optString("key")); out.put("vis", staff.optInt("vis"));
+        JSONObject acct = storeOwnAccount(c);
+        JSONArray rows = new JSONArray();
+        if (acct != null) {
+            long shmo = acct.optLong("shmo");
+            double total = 0; int count = 0;
+            try (PreparedStatement ps = c.prepareStatement("SELECT ISNULL(SUM(act_bed),0)-ISNULL(SUM(act_bes),0), COUNT(CASE WHEN ISNULL(act_bed,0)<>0 OR ISNULL(act_bes,0)<>0 THEN 1 END) FROM dbo.cust_act WHERE shmo=? AND (isActive<>0 OR isActive IS NULL)")) {
+                ps.setLong(1, shmo);
+                try (ResultSet r = ps.executeQuery()) { if (r.next()) { total = r.getDouble(1); count = r.getInt(2); } }
+            }
+            String base = " FROM dbo.cust_act a%s WHERE a.shmo=? AND (a.isActive<>0 OR a.isActive IS NULL) AND (ISNULL(a.act_bed,0)<>0 OR ISNULL(a.act_bes,0)<>0) ORDER BY a.rdf_ DESC";
+            String withNames = "SELECT TOP (3000) a.rdf_, CAST(a.[date] AS nvarchar(20)), ISNULL(a.act_bed,0), ISNULL(a.act_bes,0), CAST(a.act_dis AS nvarchar(1000)), ISNULL(a.act_id,0), ISNULL(a.ghno,0), CAST(n.ActName AS nvarchar(200))" + String.format(Locale.US, base, " LEFT JOIN dbo.ActNames n ON n.ActID=a.act_id");
+            String plain = "SELECT TOP (3000) a.rdf_, CAST(a.[date] AS nvarchar(20)), ISNULL(a.act_bed,0), ISNULL(a.act_bes,0), CAST(a.act_dis AS nvarchar(1000)), ISNULL(a.act_id,0), ISNULL(a.ghno,0), CAST(N'' AS nvarchar(200))" + String.format(Locale.US, base, "");
+            List<JSONObject> list = new ArrayList<>();
+            for (String sql : new String[]{withNames, plain}) {
+                list.clear();
+                try (PreparedStatement ps = c.prepareStatement(sql)) {
+                    ps.setLong(1, shmo);
+                    try (ResultSet r = ps.executeQuery()) {
+                        while (r.next()) {
+                            int act = r.getInt(6); String an = stringOr(r.getString(8), "");
+                            String cat = storeActCategory(act, an);
+                            JSONObject o = new JSONObject();
+                            o.put("id", r.getLong(1)); o.put("date", storeActDate(r.getString(2))); o.put("bed", r.getDouble(3)); o.put("bes", r.getDouble(4));
+                            o.put("dis", stringOr(r.getString(5), "").trim().replace('ي', 'ی').replace('ك', 'ک').replaceAll("\\s+", " "));
+                            o.put("act", act); o.put("no", r.getLong(7)); o.put("cat", cat); o.put("type", storeActTitle(cat, act, an));
+                            list.add(o);
+                        }
+                    }
+                    break;
+                } catch (Exception ex) { if (sql == plain) throw ex; }
+            }
+            // Oldest → newest by date, then by Atiran's row id; the running balance is walked back from the real total.
+            Collections.sort(list, (x, y) -> { int k = x.optString("date").compareTo(y.optString("date")); return k != 0 ? k : Long.compare(x.optLong("id"), y.optLong("id")); });
+            double bal = total, bedSum = 0, besSum = 0;
+            Map<String, double[]> cats = new LinkedHashMap<>();
+            for (String k : new String[]{"invoice", "receipt", "payment", "heading", "other"}) cats.put(k, new double[3]);
+            for (int i = list.size() - 1; i >= 0; i--) {
+                JSONObject o = list.get(i);
+                o.put("bal", Math.round(bal));
+                bal -= o.optDouble("bed") - o.optDouble("bes");
+                bedSum += o.optDouble("bed"); besSum += o.optDouble("bes");
+                double[] cv = cats.get(o.optString("cat")); if (cv != null) { cv[0]++; cv[1] += o.optDouble("bed"); cv[2] += o.optDouble("bes"); }
+                rows.put(o); // newest first
+            }
+            acct.put("man", total);
+            out.put("account", acct); out.put("balance", total); out.put("count", count); out.put("listed", list.size());
+            out.put("bedSum", bedSum); out.put("besSum", besSum); out.put("truncated", count > list.size());
+            JSONObject cj = new JSONObject();
+            for (Map.Entry<String, double[]> e : cats.entrySet()) cj.put(e.getKey(), new JSONObject().put("n", e.getValue()[0]).put("bed", e.getValue()[1]).put("bes", e.getValue()[2]));
+            out.put("cats", cj);
+        }
+        out.put("rows", rows);
+        out.put("advances", queryStoreAdvances(c));
+        return out;
+    }
+
+    private JSONArray queryStoreAdvances(Connection c) throws Exception {
+        JSONArray a = new JSONArray();
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (60) id, amount, ISNULL(reason,N''), ISNULL(details,N''), ISNULL(jdate,N''), CONVERT(nvarchar(5), created_at, 108), status, ISNULL(manager_note,N''), ISNULL(paid_amount,0), ISNULL(paid_ref,N'') FROM dbo.meelano_hr_advance WHERE LOWER(username)=? ORDER BY id DESC")) {
+            ps.setString(1, hrUser());
+            try (ResultSet r = ps.executeQuery()) {
+                while (r.next()) {
+                    JSONObject o = new JSONObject();
+                    o.put("id", r.getLong(1)); o.put("amount", r.getLong(2)); o.put("reason", stringOr(r.getString(3), "")); o.put("details", stringOr(r.getString(4), ""));
+                    o.put("date", stringOr(r.getString(5), "")); o.put("time", stringOr(r.getString(6), "")); o.put("status", stringOr(r.getString(7), "pending").trim());
+                    o.put("note", stringOr(r.getString(8), "")); o.put("paid", r.getLong(9)); o.put("ref", stringOr(r.getString(10), ""));
+                    a.put(o);
+                }
+            }
+        }
+        return a;
+    }
+
+    static final long STORE_ADVANCE_MIN = 1_000_000L, STORE_ADVANCE_MAX = 5_000_000_000L;
+
+    /** New advance request (مساعده): one open request at a time; goes to the manager's inbox. Never touches Atiran. */
+    private long saveStoreAdvance(long amount, String reason, String details) throws Exception {
+        if (amount < STORE_ADVANCE_MIN) throw new DbException("مبلغ مساعده را درست وارد کنید (حداقل " + formatNumber(STORE_ADVANCE_MIN) + " ریال).");
+        if (amount > STORE_ADVANCE_MAX) throw new DbException("مبلغ وارد شده بیش از حد مجاز است.");
+        if (reason == null || reason.trim().isEmpty()) throw new DbException("علت درخواست را انتخاب کنید.");
+        try (Connection c = openConnection()) {
+            ensureMeelanoHrTables(c);
+            String user = hrUser();
+            try (PreparedStatement ps = c.prepareStatement("SELECT COUNT(1) FROM dbo.meelano_hr_advance WHERE LOWER(username)=? AND status=N'pending'")) {
+                ps.setString(1, user);
+                try (ResultSet r = ps.executeQuery()) { if (r.next() && r.getInt(1) > 0) throw new DbException("یک درخواست مساعده‌ی شما هنوز نزد مدیر است. پس از پاسخ مدیر می‌توانید درخواست تازه بدهید."); }
+            }
+            String today = atiranPersianToday(c);
+            long id;
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO dbo.meelano_hr_advance(username,display_name,amount,reason,details,jdate) OUTPUT INSERTED.id VALUES(?,?,?,?,?,?)")) {
+                ps.setString(1, user); ps.setString(2, hrDisplayName()); ps.setLong(3, amount); ps.setString(4, reason.trim()); ps.setString(5, details == null ? "" : details.trim()); ps.setString(6, today);
+                try (ResultSet r = ps.executeQuery()) { id = r.next() ? r.getLong(1) : 0; }
+            }
+            hrInbox(c, "advance", user, id, "درخواست مساعده • " + formatNumber(amount) + " ریال", reason.trim() + (details == null || details.trim().isEmpty() ? "" : " — " + details.trim()));
+            return id;
+        }
+    }
+
+    private void cancelStoreAdvance(long id) throws Exception {
+        try (Connection c = openConnection()) {
+            ensureMeelanoHrTables(c);
+            int n;
+            try (PreparedStatement ps = c.prepareStatement("UPDATE dbo.meelano_hr_advance SET status=N'cancelled' WHERE id=? AND LOWER(username)=? AND status=N'pending'")) {
+                ps.setLong(1, id); ps.setString(2, hrUser()); n = ps.executeUpdate();
+            }
+            if (n == 0) throw new DbException("این درخواست دیگر قابل لغو نیست (مدیر به آن پاسخ داده است).");
+            hrInbox(c, "advance_cancel", hrUser(), id, "لغو درخواست مساعده", "");
+        }
+    }
+
     // ---------------------------------------------------------------- GPS attendance
     private void ensureAttendanceGeoColumns(Connection c) {
         try (Statement st = c.createStatement()) {
@@ -22581,7 +22890,10 @@ public class MainActivity extends Activity {
 
     private String hrUser() { return currentAccountName().trim().toLowerCase(Locale.US); }
 
-    private String hrDisplayName() { return session == null ? currentAccountName() : stringOr(session.userName, currentAccountName()); }
+    private String hrDisplayName() {
+        if (STORE_EDITION && storeStaff != null && !storeStaff.optString("name", "").isEmpty()) return storeStaff.optString("name");
+        return session == null ? currentAccountName() : stringOr(session.userName, currentAccountName());
+    }
 
     private void ensureMeelanoHrTables(Connection c) throws Exception {
         if (hrTablesReady) return;
@@ -22595,12 +22907,14 @@ public class MainActivity extends Activity {
             st.execute("IF OBJECT_ID(N'dbo.meelano_hr_mission',N'U') IS NULL CREATE TABLE dbo.meelano_hr_mission (id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, username nvarchar(120) NOT NULL, display_name nvarchar(220) NULL, reason nvarchar(200) NOT NULL, details nvarchar(1000) NULL, destination nvarchar(300) NULL, expected_min int NULL, start_time datetime2 NOT NULL DEFAULT SYSDATETIME(), end_time datetime2 NULL, start_lat float NULL, start_lng float NULL, end_lat float NULL, end_lng float NULL, start_bio bit NULL, end_bio bit NULL, status nvarchar(20) NOT NULL DEFAULT N'open', manager_status nvarchar(20) NOT NULL DEFAULT N'pending', manager_note nvarchar(500) NULL, decided_by nvarchar(120) NULL, decided_at datetime2 NULL)");
             st.execute("IF OBJECT_ID(N'dbo.meelano_hr_incomplete',N'U') IS NULL CREATE TABLE dbo.meelano_hr_incomplete (id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, username nvarchar(120) NOT NULL, display_name nvarchar(220) NULL, work_date nvarchar(10) NOT NULL, first_in nvarchar(5) NULL, reason nvarchar(200) NULL, status nvarchar(20) NOT NULL DEFAULT N'open', fixed_out nvarchar(5) NULL, fixed_by nvarchar(120) NULL, fixed_at datetime2 NULL, manager_note nvarchar(500) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME(), CONSTRAINT UQ_meelano_hr_incomplete UNIQUE (username, work_date))");
             st.execute("IF OBJECT_ID(N'dbo.meelano_hr_inbox',N'U') IS NULL CREATE TABLE dbo.meelano_hr_inbox (id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, kind nvarchar(30) NOT NULL, username nvarchar(120) NOT NULL, display_name nvarchar(220) NULL, ref_id bigint NULL, title nvarchar(300) NOT NULL, body nvarchar(1000) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME(), seen_at datetime2 NULL, seen_by nvarchar(120) NULL)");
+            st.execute("IF OBJECT_ID(N'dbo.meelano_hr_advance',N'U') IS NULL CREATE TABLE dbo.meelano_hr_advance (id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY, username nvarchar(120) NOT NULL, display_name nvarchar(220) NULL, amount bigint NOT NULL, reason nvarchar(200) NULL, details nvarchar(1000) NULL, jdate nvarchar(10) NULL, status nvarchar(20) NOT NULL DEFAULT N'pending', manager_note nvarchar(500) NULL, decided_by nvarchar(120) NULL, decided_at datetime2 NULL, paid_amount bigint NULL, paid_ref nvarchar(200) NULL, created_at datetime2 NOT NULL DEFAULT SYSDATETIME())");
             st.execute("IF OBJECT_ID(N'dbo.meelano_hr_month',N'U') IS NULL CREATE TABLE dbo.meelano_hr_month (username nvarchar(120) NOT NULL, jy int NOT NULL, jm int NOT NULL, computed_at datetime2 NOT NULL DEFAULT SYSDATETIME(), present_days int NULL, absent_days int NULL, leave_days int NULL, incomplete_days int NULL, late_min int NULL, early_min int NULL, gap_min int NULL, overtime_min int NULL, night_min int NULL, holiday_min int NULL, mission_min int NULL, leave_min int NULL, gross bigint NULL, deduction bigint NULL, insurance bigint NULL, tax bigint NULL, net bigint NULL, detail nvarchar(max) NULL, CONSTRAINT PK_meelano_hr_month PRIMARY KEY (username, jy, jm))");
             st.execute("IF COL_LENGTH('dbo.meelano_attendance','source') IS NULL ALTER TABLE dbo.meelano_attendance ADD source nvarchar(20) NULL, zone_id int NULL, biometric bit NULL, voided bit NOT NULL CONSTRAINT DF_meelano_att_voided DEFAULT 0, edited_by nvarchar(120) NULL, edited_at datetime2 NULL, manager_note nvarchar(500) NULL");
             st.execute("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name=N'IX_meelano_att_user_time' AND object_id=OBJECT_ID(N'dbo.meelano_attendance')) CREATE INDEX IX_meelano_att_user_time ON dbo.meelano_attendance(username, event_time)");
             st.execute("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name=N'IX_meelano_hr_mission_user' AND object_id=OBJECT_ID(N'dbo.meelano_hr_mission')) CREATE INDEX IX_meelano_hr_mission_user ON dbo.meelano_hr_mission(username, start_time)");
         }
         try { hrSeed(c); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "seed: " + ex.getMessage()); }
+        try { hrSeedStoreZone(c); } catch (Exception ex) { android.util.Log.w("MEELANO_HR", "store zone: " + ex.getMessage()); }
         hrTablesReady = true;
     }
 
@@ -22626,6 +22940,25 @@ public class MainActivity extends Activity {
             if (!stringOr(ssid, "").trim().isEmpty() || !stringOr(bssid, "").trim().isEmpty())
                 hrInsertZone(c, "مودم محل کار (ثبت‌شده قبلی)", "wifi", Double.NaN, Double.NaN, 0, ssid, bssid, gw, "migration");
         }
+    }
+
+    /**
+     * The store «آجیل و خشکبار درخشان»: اهواز، کوی مهدیس، بلوار پارسا، مجتمع بنکداران، خیابان نظامی فاز سوم، روبروی اهواز پلاست.
+     * Point: OpenStreetMap — «ظروف یکبار مصرف اهواز پلاست» (node 12256359976, 31.2575971, 48.7205865) lies about 13 m east of
+     * the centre line of خیابان نظامی (way 413942970); the store is its mirror across the street. Radius 100 m (plus the phone's
+     * GPS accuracy up to 40 m, see hrMatchZone) covers the shop, the pavement and GPS drift indoors. Added once; the manager can
+     * turn it off or replace it (e.g. with the store modem) — it is never added again after that.
+     */
+    static final double STORE_ZONE_LAT = 31.257508, STORE_ZONE_LNG = 48.720338;
+    static final int STORE_ZONE_RADIUS = 100;
+    static final String STORE_ZONE_MARK = "store-address-v1";
+
+    private void hrSeedStoreZone(Connection c) throws Exception {
+        try (PreparedStatement ps = c.prepareStatement("SELECT COUNT(1) FROM dbo.meelano_hr_zone WHERE created_by=?")) {
+            ps.setString(1, STORE_ZONE_MARK);
+            try (ResultSet r = ps.executeQuery()) { if (r.next() && r.getInt(1) > 0) return; }
+        }
+        hrInsertZone(c, "فروشگاه آجیل و خشکبار درخشان • بنکداران، خیابان نظامی فاز ۳، روبروی اهواز پلاست", "gps", STORE_ZONE_LAT, STORE_ZONE_LNG, STORE_ZONE_RADIUS, "", "", "", STORE_ZONE_MARK);
     }
 
     private int hrCount(Connection c, String sql) throws Exception {
@@ -23223,7 +23556,7 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         addLoading(content, title);
         runDb(() -> storeData(false).toString(), new DbCallback() {
-            @Override public void ok(String body) { render.run(); }
+            @Override public void ok(String body) { refreshHeaderName(); render.run(); }
             @Override public void fail(Exception e) { showPageError(title, e, () -> { storeDataCache = null; renderActivePage(); }); }
         });
     }
@@ -23425,6 +23758,7 @@ public class MainActivity extends Activity {
         addHero("سلام، " + who, d.optString("weekday") + " " + MeelanoCharts.fa(MeelanoJalali.shortLabel(d.optString("today"))) + " • " + editionTitle());
         addManualRefreshPanel("store_home", "بروزرسانی داشبورد", "آخرین بروزرسانی: " + lastRefreshText("store_home"), () -> { storeDataCache = null; markRefresh("store_home"); loadStoreHome(); });
         addStoreAttendanceCard(d, true);
+        addStoreMeCard(d);
 
         JSONObject today = d.optJSONObject("todaySales"), mine = d.optJSONObject("mineToday"), month = d.optJSONObject("monthSales"), cust = d.optJSONObject("customers");
         addStoreKpis(new String[][]{
@@ -23894,7 +24228,9 @@ public class MainActivity extends Activity {
                 new VisitorToolSpec("کالاها", "قیمت و موجودی", "◈", navAccent("showcase"), () -> showApp("showcase"), true),
                 new VisitorToolSpec("کدخوان", "جستجوی کالا", "⌕", navAccent("visitor_more"), () -> showBarcodeSearchDialog(), true)
         });
-        addVisitorMoreGroup("من", "حضور، مرخصی، پیام و تنظیمات", new VisitorToolSpec[]{
+        addVisitorMoreGroup("من", "پنل من، حضور، مرخصی و تنظیمات", new VisitorToolSpec[]{
+                new VisitorToolSpec("گردش حساب من", "فاکتور، دریافت، پرداخت، سرفصل", "🧾", GOLD, () -> openStoreMe("account"), true),
+                new VisitorToolSpec("مساعده", "درخواست و سوابق", "💵", SUCCESS, () -> openStoreMe("advance"), true),
                 new VisitorToolSpec("حضور و مرخصی", "ورود و خروج با GPS", "◷", navAccent("attendance"), () -> showApp("attendance"), true),
                 new VisitorToolSpec("گفتگو", "پیام‌ها", "✉", navAccent("visitor_more"), () -> showApp("chat"), canOpenPage("chat")),
                 new VisitorToolSpec("تنظیمات", "تم و دسترسی", "⚙", navAccent("settings"), () -> showApp("settings"), canOpenPage("settings")),
@@ -23903,12 +24239,345 @@ public class MainActivity extends Activity {
         addDeveloperCredit(content);
     }
 
+
+    // ---------------------------------------------------------------- «پنل من» (UI): گردش حساب (فقط نمایش) + مساعده
+    private String storeMeTab = "account";
+    private String storeMeFilter = "all";
+    private String storeMePeriod = "90";
+    private JSONObject storeMeCache = null;
+    private long storeMeCacheAt = 0;
+
+    private void openStoreMe(String tab) { storeMeTab = tab == null ? "account" : tab; showApp("store_me"); }
+
+    /** Home card: name, own account balance and the advance button — the way into «پنل من». */
+    private void addStoreMeCard(JSONObject d) {
+        JSONObject staff = d.optJSONObject("staff");
+        String name = staff == null ? headerPersonName() : stringOr(staff.optString("name"), headerPersonName());
+        JSONObject acct = staff == null ? null : staff.optJSONObject("acct");
+        LinearLayout c = storeCard(withIcon("♙", "پنل من • " + name), acct == null ? "گردش حساب شخصی شما در آتیران و درخواست مساعده (فقط مشاهده؛ چیزی تغییر نمی‌کند)"
+                : "حساب شما در آتیران: «" + acct.optString("name") + "»", GOLD);
+        if (acct != null) {
+            double man = acct.optDouble("man");
+            TextView bal = text((man > 0.5 ? "بدهکار: " : man < -0.5 ? "بستانکار: " : "تسویه • ") + (Math.abs(man) > 0.5 ? money(Math.abs(man)) : ""), 13.4f, tc(man > 0.5 ? DANGER : SUCCESS), Typeface.BOLD);
+            bal.setTextDirection(View.TEXT_DIRECTION_RTL);
+            LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(-1, -2); bl.setMargins(0, dp(6), 0, 0); c.addView(bal, bl);
+        }
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+        Button st = themedActionButton(withIcon("🧾", "گردش حساب من"), GOLD, true); st.setSingleLine(true); st.setEllipsize(TextUtils.TruncateAt.END);
+        st.setOnClickListener(v -> openStoreMe("account"));
+        Button adv = secondaryButton(withIcon("💵", "مساعده")); adv.setSingleLine(true);
+        adv.setOnClickListener(v -> openStoreMe("advance"));
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, -1, 1.3f); l1.setMargins(dp(3), 0, dp(3), 0);
+        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(0, -1, 1f); l2.setMargins(dp(3), 0, dp(3), 0);
+        row.addView(st, l1); row.addView(adv, l2);
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(50)); rp.setMargins(0, dp(10), 0, 0); c.addView(row, rp);
+    }
+
+    private void loadStoreMe() {
+        if (storeMeCache != null && System.currentTimeMillis() - storeMeCacheAt < 90_000) { renderStoreMe(); return; }
+        content.removeAllViews();
+        addLoading(content, "در حال دریافت گردش حساب شما از آتیران…");
+        runDb(() -> {
+            JSONObject o;
+            if (designPreview) o = storeMePreviewData();
+            else try (Connection c = openConnection()) { o = queryStoreMe(c); }
+            storeMeCache = o; storeMeCacheAt = System.currentTimeMillis();
+            return o.toString();
+        }, new DbCallback() {
+            @Override public void ok(String body) { refreshHeaderName(); if ("store_me".equals(activePage)) renderStoreMe(); }
+            @Override public void fail(Exception e) { showPageError("پنل من", e, () -> { storeMeCache = null; loadStoreMe(); }); }
+        });
+    }
+
+    private void renderStoreMe() {
+        JSONObject d = storeMeCache; if (d == null) { loadStoreMe(); return; }
+        content.removeAllViews();
+        String name = stringOr(d.optString("name"), headerPersonName());
+        addHero("پنل من", name + " • " + ("mahmodi".equals(d.optString("key")) || "nazari".equals(d.optString("key")) ? "کارمند فروشگاه" : "کاربر") + " • فقط مشاهده");
+        addStoreChipGrid(new String[][]{{"account", "گردش حساب من"}, {"advance", "مساعده"}}, storeMeTab, GOLD, id -> { storeMeTab = id; renderStoreMe(); });
+        if ("advance".equals(storeMeTab)) renderStoreMeAdvances(d); else renderStoreMeAccount(d);
+        addDeveloperCredit(content);
+    }
+
+    private static boolean storeInPeriod(String date, String today, int days) {
+        if (days <= 0) return true;
+        int d = MeelanoJalali.parse(date), t = MeelanoJalali.parse(today);
+        return d < 0 || t < 0 || t - d < days;
+    }
+
+    private void renderStoreMeAccount(JSONObject d) {
+        JSONObject acct = d.optJSONObject("account");
+        if (acct == null) {
+            LinearLayout c = storeCard("حساب شخصی شما در آتیران پیدا نشد", "در آتیران، طرف حسابی به نام شما در گروه «ویزیتورها» یا «پرسنل» (مثل «نام/پرسنل») لازم است. لطفاً به حسابداری اطلاع دهید.", WARNING);
+            return;
+        }
+        double bal = d.optDouble("balance");
+        // Summary: balance, total debit / credit (read-only).
+        LinearLayout sc = storeCard(withIcon("☷", "حساب «" + acct.optString("name") + "»"), "کد طرف حساب " + formatNumber(acct.optLong("shmo")) + " • "
+                + formatNumber(d.optInt("count")) + " گردش • همان مانده‌ای که آتیران نشان می‌دهد", bal > 0.5 ? DANGER : SUCCESS);
+        LinearLayout tiles = new LinearLayout(this); tiles.setOrientation(LinearLayout.HORIZONTAL); tiles.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        String[][] tv = {{bal > 0.5 ? "مانده (بدهکار)" : bal < -0.5 ? "مانده (بستانکار)" : "مانده", money(Math.abs(bal))}, {"جمع بدهکار", money(d.optDouble("bedSum"))}, {"جمع بستانکار", money(d.optDouble("besSum"))}};
+        int[] ta = {bal > 0.5 ? DANGER : SUCCESS, WARNING, INFO};
+        for (int i = 0; i < 3; i++) {
+            LinearLayout t = new LinearLayout(this); t.setOrientation(LinearLayout.VERTICAL); t.setPadding(dp(8), dp(8), dp(8), dp(8));
+            t.setBackground(rounded(alpha(ta[i], isLightTheme() ? 18 : 34), 14));
+            t.addView(text(tv[i][0], 9.6f, tc(ta[i]), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+            t.addView(fitText(tv[i][1], 12.6f, 8.6f, TEXT), new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(3), dp(10), dp(3), dp(2)); tiles.addView(t, lp);
+        }
+        sc.addView(tiles, new LinearLayout.LayoutParams(-1, -2));
+        TextView ro = text("🔒 این بخش فقط برای دیدن است؛ هیچ موردی از اینجا تغییر نمی‌کند.", 9.6f, MUTED, Typeface.BOLD);
+        LinearLayout.LayoutParams rol = new LinearLayout.LayoutParams(-1, -2); rol.setMargins(0, dp(8), 0, 0); sc.addView(ro, rol);
+
+        // Per kind (how many and how much), as a bar chart.
+        JSONObject cats = d.optJSONObject("cats");
+        String[][] kinds = {{"invoice", "فاکتورها"}, {"receipt", "دریافت‌ها"}, {"payment", "پرداخت‌ها"}, {"heading", "سرفصل‌ها"}, {"other", "سایر"}};
+        if (cats != null) {
+            List<MeelanoCharts.Point> pts = new ArrayList<>(); int[] pal = storePalette();
+            for (int i = 0; i < kinds.length; i++) {
+                JSONObject k = cats.optJSONObject(kinds[i][0]); if (k == null || k.optDouble("n") <= 0) continue;
+                pts.add(new MeelanoCharts.Point(kinds[i][1] + "، " + formatNumber(k.optDouble("n")) + " مورد", k.optDouble("bed") + k.optDouble("bes"), tc(pal[i % pal.length])));
+            }
+            if (!pts.isEmpty()) {
+                LinearLayout cc = storeCard("گردش به تفکیک نوع", "جمع مبلغ هر نوع (بدهکار و بستانکار)", INFO);
+                addStoreChart(cc, storeBars(INFO).setPoints(pts, STORE_MONEY), 0);
+                ((LinearLayout.LayoutParams) cc.getChildAt(cc.getChildCount() - 1).getLayoutParams()).height = MeelanoCharts.Bars.heightFor(pts.size(), getResources().getDisplayMetrics().density);
+            }
+        }
+
+        addStoreChipGrid(new String[][]{{"all", "همه"}, {"invoice", "فاکتورها"}, {"receipt", "دریافت‌ها"}, {"payment", "پرداخت‌ها"}, {"heading", "سرفصل‌ها"}, {"other", "سایر"}}, storeMeFilter, GOLD, id -> { storeMeFilter = id; renderStoreMe(); });
+        addStoreChipGrid(new String[][]{{"30", "۳۰ روز"}, {"90", "۳ ماه"}, {"365", "یک سال"}, {"0", "همه"}}, storeMePeriod, INFO, id -> { storeMePeriod = id; renderStoreMe(); });
+
+        JSONArray rows = d.optJSONArray("rows");
+        int days = (int) parseNumber(storeMePeriod, 0);
+        String today = d.optString("today");
+        List<JSONObject> pick = new ArrayList<>(); double pBed = 0, pBes = 0;
+        for (int i = 0; rows != null && i < rows.length(); i++) {
+            JSONObject o = rows.optJSONObject(i);
+            if (!"all".equals(storeMeFilter) && !storeMeFilter.equals(o.optString("cat"))) continue;
+            if (!storeInPeriod(o.optString("date"), today, days)) continue;
+            pick.add(o); pBed += o.optDouble("bed"); pBes += o.optDouble("bes");
+        }
+        LinearLayout lc = storeCard("گردش حساب", formatNumber(pick.size()) + " ردیف • بدهکار " + compactMoney(pBed) + " • بستانکار " + compactMoney(pBes) + " • جدیدترین بالاتر است", GOLD);
+        for (int i = 0; i < pick.size() && i < 400; i++) {
+            JSONObject o = pick.get(i);
+            double bed = o.optDouble("bed"), bes = o.optDouble("bes");
+            boolean debit = bed > 0.5;
+            String cat = o.optString("cat");
+            int accent = "receipt".equals(cat) ? SUCCESS : "payment".equals(cat) ? WARNING : "heading".equals(cat) ? INFO : "invoice".equals(cat) ? GOLD : MUTED;
+            String title = o.optString("type") + (o.optLong("no") > 0 && o.optInt("act") != 0 ? " " + formatNumber(o.optLong("no")) : "");
+            String dis = o.optString("dis"); if (dis.length() > 110) dis = dis.substring(0, 110) + "…";
+            String sub = MeelanoCharts.fa(o.optString("date")) + (dis.isEmpty() ? "" : " • " + dis) + "\nمانده پس از این ردیف: " + money(Math.abs(o.optDouble("bal"))) + (o.optDouble("bal") > 0.5 ? " بدهکار" : o.optDouble("bal") < -0.5 ? " بستانکار" : "");
+            LinearLayout r = addStoreRow(lc, title, sub, (debit ? "بدهکار " : "بستانکار ") + compactMoney(debit ? bed : bes), accent, () -> showStoreMeRow(o));
+        }
+        if (pick.size() > 400) lc.addView(text("و " + formatNumber(pick.size() - 400) + " ردیف دیگر؛ بازه یا نوع را محدودتر کنید.", 10.4f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        if (pick.isEmpty()) lc.addView(text("در این بازه گردشی نیست.", 10.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        if (d.optBoolean("truncated")) lc.addView(text("فقط ۳٬۰۰۰ گردش آخر نمایش داده شده است.", 10f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    /** Read-only detail of one movement. */
+    private void showStoreMeRow(JSONObject o) {
+        ScrollView sc = new ScrollView(this); styleVerticalScroll(sc);
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(16), dp(12), dp(16), dp(4));
+        double bed = o.optDouble("bed"), bes = o.optDouble("bes");
+        String[][] f = {
+                {"نوع", o.optString("type")},
+                {"تاریخ", MeelanoCharts.fa(o.optString("date"))},
+                {"شماره سند / قبض", o.optLong("no") > 0 ? formatNumber(o.optLong("no")) : "—"},
+                {"بدهکار", bed > 0.5 ? money(bed) : "—"},
+                {"بستانکار", bes > 0.5 ? money(bes) : "—"},
+                {"مانده پس از این ردیف", money(Math.abs(o.optDouble("bal"))) + (o.optDouble("bal") > 0.5 ? " بدهکار" : o.optDouble("bal") < -0.5 ? " بستانکار" : "")},
+                {"شرح", stringOr(o.optString("dis"), "—")}};
+        for (String[] x : f) {
+            TextView k = text(x[0], 9.8f, MUTED, Typeface.BOLD); box.addView(k, new LinearLayout.LayoutParams(-1, -2));
+            TextView v = text(x[1], 12.2f, TEXT, Typeface.BOLD); v.setTextDirection(View.TEXT_DIRECTION_RTL); v.setTextIsSelectable(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(8)); box.addView(v, lp);
+        }
+        box.addView(text("🔒 فقط مشاهده", 9.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        sc.addView(box, new ScrollView.LayoutParams(-1, -2));
+        AlertDialog dlg = new MeelanoDialogBuilder().setTitle("جزئیات گردش").setView(sc).setPositiveButton("بستن", null).create();
+        dlg.setOnShowListener(x -> styleMeelanoDialog(dlg, GOLD));
+        dlg.show();
+    }
+
+    private static String storeAdvanceStatusFa(String st) {
+        switch (st == null ? "" : st) {
+            case "approved": return "تأیید شد";
+            case "paid": return "پرداخت شد";
+            case "rejected": return "رد شد";
+            case "cancelled": return "لغو شد";
+            default: return "نزد مدیر";
+        }
+    }
+
+    private void renderStoreMeAdvances(JSONObject d) {
+        JSONArray adv = d.optJSONArray("advances");
+        boolean pending = false; long approvedSum = 0, paidSum = 0; int n = adv == null ? 0 : adv.length();
+        for (int i = 0; i < n; i++) {
+            JSONObject a = adv.optJSONObject(i); String st = a.optString("status");
+            if ("pending".equals(st)) pending = true;
+            if ("approved".equals(st) || "paid".equals(st)) approvedSum += a.optLong("amount");
+            if ("paid".equals(st)) paidSum += a.optLong("paid") > 0 ? a.optLong("paid") : a.optLong("amount");
+        }
+        LinearLayout c = storeCard(withIcon("💵", "درخواست مساعده"), pending ? "یک درخواست شما نزد مدیر است؛ پس از پاسخ مدیر می‌توانید درخواست تازه بدهید."
+                : "درخواست برای مدیر فرستاده می‌شود و نتیجه همین‌جا نمایش داده می‌شود.", SUCCESS);
+        Button b = themedActionButton(withIcon("💵", pending ? "درخواست در انتظار پاسخ" : "درخواست مساعده جدید"), SUCCESS, true);
+        b.setEnabled(!pending); b.setAlpha(pending ? 0.55f : 1f); b.setSingleLine(true);
+        b.setOnClickListener(v -> showStoreAdvanceDialog());
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(52)); bp.setMargins(0, dp(10), 0, 0); c.addView(b, bp);
+
+        LinearLayout sum = new LinearLayout(this); sum.setOrientation(LinearLayout.HORIZONTAL); sum.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        String[][] tv = {{"تأییدشده (کل)", money(approvedSum)}, {"پرداخت‌شده", money(paidSum)}};
+        int[] ta = {SUCCESS, GOLD};
+        for (int i = 0; i < 2; i++) {
+            LinearLayout t = new LinearLayout(this); t.setOrientation(LinearLayout.VERTICAL); t.setPadding(dp(10), dp(8), dp(10), dp(8));
+            t.setBackground(rounded(alpha(ta[i], isLightTheme() ? 18 : 34), 14));
+            t.addView(text(tv[i][0], 9.8f, tc(ta[i]), Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+            t.addView(fitText(tv[i][1], 13f, 9.5f, TEXT), new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(3), dp(10), dp(3), dp(2)); sum.addView(t, lp);
+        }
+        c.addView(sum, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout lc = storeCard("مساعده‌های من", n == 0 ? "هنوز درخواستی ثبت نکرده‌اید." : formatNumber(n) + " درخواست • جدیدترین بالاتر است", GOLD);
+        for (int i = 0; i < n; i++) {
+            JSONObject a = adv.optJSONObject(i); String st = a.optString("status");
+            int accent = "paid".equals(st) || "approved".equals(st) ? SUCCESS : "rejected".equals(st) ? DANGER : "cancelled".equals(st) ? MUTED : WARNING;
+            String sub = MeelanoCharts.fa(a.optString("date")) + (a.optString("time").isEmpty() ? "" : " • " + MeelanoCharts.fa(a.optString("time"))) + " • " + a.optString("reason")
+                    + (a.optString("details").isEmpty() ? "" : "\n" + a.optString("details"))
+                    + (a.optString("note").isEmpty() ? "" : "\nپاسخ مدیر: " + a.optString("note"))
+                    + ("paid".equals(st) && a.optLong("paid") > 0 && a.optLong("paid") != a.optLong("amount") ? "\nمبلغ پرداخت‌شده: " + money(a.optLong("paid")) : "");
+            final long id = a.optLong("id");
+            LinearLayout r = addStoreRow(lc, money(a.optLong("amount")) + " • " + storeAdvanceStatusFa(st), sub, storeAdvanceStatusFa(st), accent,
+                    "pending".equals(st) ? () -> confirmCancelStoreAdvance(id) : null);
+        }
+
+        // Money Atiran has paid to this person (قبض پرداخت to their own account) — read from the statement, not editable.
+        JSONArray rows = d.optJSONArray("rows");
+        List<JSONObject> paid = new ArrayList<>();
+        for (int i = 0; rows != null && i < rows.length(); i++) {
+            JSONObject o = rows.optJSONObject(i);
+            if (("payment".equals(o.optString("cat")) && o.optDouble("bed") > 0.5) || o.optString("dis").contains("مساعد")) paid.add(o);
+        }
+        LinearLayout pc = storeCard("پرداختی‌های شرکت به شما (از آتیران)", paid.isEmpty() ? "در حساب شما در آتیران پرداختی ثبت نشده است." : "قبض‌های پرداخت به حساب شما • فقط مشاهده", INFO);
+        for (int i = 0; i < paid.size() && i < 100; i++) {
+            JSONObject o = paid.get(i);
+            boolean adv2 = o.optString("dis").contains("مساعد");
+            String dis = o.optString("dis"); if (dis.length() > 100) dis = dis.substring(0, 100) + "…";
+            addStoreRow(pc, (adv2 ? "مساعده • " : "") + o.optString("type") + (o.optLong("no") > 0 ? " " + formatNumber(o.optLong("no")) : ""), MeelanoCharts.fa(o.optString("date")) + (dis.isEmpty() ? "" : " • " + dis),
+                    compactMoney(Math.max(o.optDouble("bed"), o.optDouble("bes"))), adv2 ? SUCCESS : INFO, () -> showStoreMeRow(o));
+        }
+    }
+
+    private void confirmCancelStoreAdvance(long id) {
+        AlertDialog dlg = new MeelanoDialogBuilder().setTitle("لغو درخواست مساعده").setMessage("این درخواست هنوز نزد مدیر است. لغو شود؟")
+                .setNegativeButton("خیر", null).setPositiveButton("لغو درخواست", (x, w) -> {
+                    if (designPreview) { showNotice("در پیش‌نمایش چیزی ثبت نمی‌شود.", false); return; }
+                    runDb(() -> { cancelStoreAdvance(id); return "ok"; }, new DbCallback() {
+                        @Override public void ok(String body) { showNotice("درخواست مساعده لغو شد.", false); storeMeCache = null; loadStoreMe(); }
+                        @Override public void fail(Exception e) { showNotice("لغو نشد: " + shortError(e), true); }
+                    });
+                }).create();
+        dlg.setOnShowListener(x -> styleMeelanoDialog(dlg, WARNING));
+        dlg.show();
+    }
+
+    private void showStoreAdvanceDialog() {
+        LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL);
+        body.addView(text("مبلغ (ریال)", 11, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
+        EditText amount = numberInput("مثلاً ۵۰٬۰۰۰٬۰۰۰", 0, false);
+        body.addView(amount, new LinearLayout.LayoutParams(-1, dp(50)));
+        final TextView words = text("", 10f, tc(SUCCESS), Typeface.BOLD);
+        body.addView(words, new LinearLayout.LayoutParams(-1, -2));
+        amount.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable x) { double v = parseNumber(x.toString(), 0); words.setText(v >= 10 ? "معادل " + formatNumber(Math.round(v / 10)) + " تومان" : ""); }
+        });
+        TextView rl = text("علت", 11, MUTED, Typeface.BOLD);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2); rlp.setMargins(0, dp(10), 0, 0); body.addView(rl, rlp);
+        final String[] reasons = {"هزینه درمان", "اجاره یا قسط", "هزینه تحصیل", "مراسم خانوادگی", "خرید ضروری", "سایر"};
+        final String[] chosen = {""};
+        LinearLayout grid = new LinearLayout(this); grid.setOrientation(LinearLayout.VERTICAL);
+        final List<TextView> chips = new ArrayList<>();
+        LinearLayout row = null;
+        for (int i = 0; i < reasons.length; i++) {
+            if (i % 2 == 0) { row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL); grid.addView(row, new LinearLayout.LayoutParams(-1, -2)); }
+            final String rs = reasons[i];
+            TextView chip = pill(rs, SUCCESS, false); chip.setGravity(Gravity.CENTER); chip.setPadding(dp(6), dp(9), dp(6), dp(9)); chip.setTextSize(fs(10.6f));
+            chips.add(chip);
+            chip.setOnClickListener(v -> {
+                chosen[0] = rs;
+                for (TextView t : chips) { boolean on = t.getText().toString().equals(rs); t.setBackground(rounded(on ? tc(SUCCESS) : alpha(SUCCESS, isLightTheme() ? 22 : 40), 999)); t.setTextColor(on ? Color.WHITE : tc(SUCCESS)); }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f); lp.setMargins(dp(3), dp(3), dp(3), dp(3)); row.addView(chip, lp);
+        }
+        body.addView(grid, new LinearLayout.LayoutParams(-1, -2));
+        TextView dl = text("توضیح (اختیاری)", 11, MUTED, Typeface.BOLD);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-1, -2); dlp.setMargins(0, dp(10), 0, 0); body.addView(dl, dlp);
+        EditText details = input("مثلاً: تا پایان ماه از حقوق کسر شود", "", false);
+        details.setSingleLine(false); details.setMinLines(2); details.setMaxLines(4); details.setGravity(Gravity.TOP | Gravity.START);
+        details.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(500)});
+        body.addView(details, new LinearLayout.LayoutParams(-1, -2));
+        storeFormDialog("درخواست مساعده", body, SUCCESS, () -> {
+            long v = Math.round(parseNumber(amount.getText().toString(), 0));
+            if (v < STORE_ADVANCE_MIN) return "مبلغ را وارد کنید (حداقل " + formatNumber(STORE_ADVANCE_MIN) + " ریال).";
+            if (v > STORE_ADVANCE_MAX) return "مبلغ بیش از حد مجاز است.";
+            if (chosen[0].isEmpty()) return "علت درخواست را انتخاب کنید.";
+            if (designPreview) { showNotice("در پیش‌نمایش چیزی ثبت نمی‌شود.", false); return null; }
+            String reason = chosen[0], det = details.getText().toString();
+            runDb(() -> String.valueOf(saveStoreAdvance(v, reason, det)), new DbCallback() {
+                @Override public void ok(String body2) { showNotice("درخواست مساعده برای مدیر فرستاده شد.", false); storeMeCache = null; storeMeTab = "advance"; loadStoreMe(); }
+                @Override public void fail(Exception e) { showNotice("درخواست ثبت نشد: " + shortError(e), true); }
+            });
+            return null;
+        });
+    }
+
+    /** Sample statement for the design preview (no database traffic). */
+    private JSONObject storeMePreviewData() throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("today", "1405/07/06"); o.put("name", "فاطمه محمودی"); o.put("key", "mahmodi"); o.put("vis", 3);
+        o.put("account", new JSONObject().put("shmo", 2693).put("name", "فاطمه محمودی/پرسنل").put("man", 58_735_500d).put("group", 3));
+        Object[][] raw = {
+                {"1405/07/05", 1, 0d, 37_637_500d, "قبض دریافت 114-ش.پوز", 114L},
+                {"1405/07/02", 2, 30_000_000d, 0d, "قبض پرداخت 18 - نقدی - مساعده مهر", 18L},
+                {"1405/06/28", 100, 0d, 6_000_000d, "به سرفصل‌ها از مشتری به سرفصل دریافت", 3L},
+                {"1405/06/17", 20, 565_500d, 0d, "فروش فاکتور شماره 240 به فاطمه محمودی/پرسنل", 240L},
+                {"1405/06/16", 113, 0d, 12_310_000d, "ثبت طلب / شماره قبض3 / پورسانت5/15تا6/14", 3L},
+                {"1405/06/14", 20, 5_390_000d, 0d, "فروش فاکتور شماره 154 به فاطمه محمودی/پرسنل", 154L},
+                {"1405/06/14", 20, 5_190_000d, 0d, "فروش فاکتور شماره 142 به فاطمه محمودی/پرسنل", 142L},
+                {"1405/06/10", 0, 67_409_500d, 0d, "حساب قبلی", 0L}};
+        double bal = 58_735_500d; JSONArray rows = new JSONArray(); double bed = 0, bes = 0;
+        for (Object[] r : raw) {
+            int act = (Integer) r[1]; String cat = storeActCategory(act, "");
+            JSONObject x = new JSONObject(); x.put("id", rows.length() + 1); x.put("date", r[0]); x.put("act", act); x.put("bed", r[2]); x.put("bes", r[3]); x.put("dis", r[4]); x.put("no", r[5]);
+            x.put("cat", cat); x.put("type", storeActTitle(cat, act, act == 100 ? "به سرفصل ها از مشتري" : "")); x.put("bal", Math.round(bal));
+            bal -= (Double) r[2] - (Double) r[3]; bed += (Double) r[2]; bes += (Double) r[3];
+            rows.put(x);
+        }
+        o.put("rows", rows); o.put("balance", 58_735_500d); o.put("count", rows.length()); o.put("listed", rows.length()); o.put("bedSum", bed); o.put("besSum", bes);
+        JSONObject cats = new JSONObject();
+        cats.put("invoice", new JSONObject().put("n", 3).put("bed", 11_145_500d).put("bes", 0));
+        cats.put("receipt", new JSONObject().put("n", 1).put("bed", 0).put("bes", 37_637_500d));
+        cats.put("payment", new JSONObject().put("n", 1).put("bed", 30_000_000d).put("bes", 0));
+        cats.put("heading", new JSONObject().put("n", 1).put("bed", 0).put("bes", 6_000_000d));
+        cats.put("other", new JSONObject().put("n", 2).put("bed", 67_409_500d).put("bes", 12_310_000d));
+        o.put("cats", cats);
+        o.put("advances", new JSONArray()
+                .put(new JSONObject().put("id", 3).put("amount", 50_000_000).put("reason", "هزینه درمان").put("details", "تا پایان آبان از حقوق کسر شود").put("date", "1405/07/06").put("time", "09:40").put("status", "pending").put("note", "").put("paid", 0))
+                .put(new JSONObject().put("id", 2).put("amount", 30_000_000).put("reason", "اجاره یا قسط").put("details", "").put("date", "1405/07/01").put("time", "10:12").put("status", "paid").put("note", "پرداخت شد").put("paid", 30_000_000))
+                .put(new JSONObject().put("id", 1).put("amount", 80_000_000).put("reason", "خرید ضروری").put("details", "").put("date", "1405/06/20").put("time", "12:05").put("status", "rejected").put("note", "سقف ماه پر شده است").put("paid", 0)));
+        return o;
+    }
+
     /** Sample numbers for the design preview (no database traffic in preview mode). */
     private JSONObject storePreviewData() throws Exception {
         JSONObject o = new JSONObject();
         String today = "1405/07/06"; int td = MeelanoJalali.parse(today);
         o.put("today", today); o.put("weekday", MeelanoJalali.weekday(today)); o.put("month", "مهر"); o.put("creditDays", 30);
-        JSONObject staff = new JSONObject(); staff.put("key", "mahmodi"); o.put("staff", staff);
+        JSONObject staff = new JSONObject(); staff.put("key", "mahmodi"); staff.put("name", "فاطمه محمودی"); staff.put("vis", 3);
+        staff.put("acct", new JSONObject().put("shmo", 2693).put("name", "فاطمه محمودی/پرسنل").put("man", 58_735_500d).put("group", 3));
+        o.put("staff", staff);
         JSONArray daily = new JSONArray();
         double[] base = {620, 540, 880, 410, 990, 760, 1120, 0, 830, 950, 700, 1210, 1340, 980};
         for (int k = 29; k >= 0; k--) { JSONObject d = new JSONObject(); d.put("date", MeelanoJalali.format(td - k)); double v = base[k % base.length] * 1_000_000d; d.put("sum", v); d.put("count", Math.round(v / 90_000_000d)); daily.put(d); }

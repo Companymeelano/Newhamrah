@@ -575,6 +575,37 @@ def verify_store(cur, out, checks):
     checks["store_app_hides_times_and_pay"] = "app_shows_no_times_or_pay=true" in joined
     checks["store_hr_step_ok"] = "STEP store_hr OK" in joined
 
+    # v5.7.0: store zone from the address, personal account statement (read-only) and advance requests.
+    zs = safe_rows(cur, out, "SELECT title, kind, lat, lng, radius_m, active, created_by FROM dbo.meelano_hr_zone WHERE created_by='store-address-v1'")
+    out["store_zone_seed"] = zs
+    zr = zs.get("rows") or []
+    checks["store_zone_seeded_from_address"] = "STEP store_zone_seed OK" in joined and len(zr) == 1 and abs(float(zr[0][2]) - 31.257508) < 1e-5 and abs(float(zr[0][3]) - 48.720338) < 1e-5 and int(zr[0][4]) == 100
+    zl = re.findall(r"STORE ZONE (\w+) (in|out)", joined)
+    out["store_zone_points"] = zl
+    zd = dict(zl)
+    checks["store_zone_matches_store_not_complex"] = zd.get("store") == "in" and zd.get("ahvazplast") == "in" and zd.get("bonakdaran_center") == "out"
+    me = re.search(r"STORE ME name=(.*?) header=(.*?) shmo=(\d+) acct=(.*?) balance=(-?\d+) count=(\d+) listed=(\d+) rowsum=(-?\d+) first_bal=(-?\d+)", joined)
+    out["store_me"] = me.group(0)[:600] if me else None
+    acct = real = None
+    try:
+        acct = rows(cur, "SELECT SHMO, CAST(MONAME AS nvarchar(500)), man FROM dbo.CUSTOMERS WHERE SHMO=%s" % int(me.group(3)))["rows"][0] if me else None
+        real = rows(cur, "SELECT ISNULL(SUM(act_bed),0)-ISNULL(SUM(act_bes),0), COUNT(CASE WHEN ISNULL(act_bed,0)<>0 OR ISNULL(act_bes,0)<>0 THEN 1 END) FROM dbo.cust_act WHERE shmo=%s AND (isActive<>0 OR isActive IS NULL)" % int(me.group(3)))["rows"][0] if me else None
+        out["store_me_db"] = {"acct": acct, "sum_count": real}
+        checks["store_me_personal_account_2693"] = bool(me) and int(me.group(3)) == 2693 and "\u067e\u0631\u0633\u0646\u0644" in me.group(4)
+        checks["store_me_balance_matches_atiran"] = bool(me) and abs(float(me.group(5)) - float(real[0])) < 1 and abs(float(acct[2] or 0) - float(real[0])) < 1
+        checks["store_me_all_rows_listed"] = bool(me) and int(me.group(6)) == int(real[1]) and int(me.group(7)) == int(real[1]) and abs(float(me.group(8)) - float(real[0])) < 1 and abs(float(me.group(9)) - float(real[0])) < 1
+        checks["store_header_real_name"] = bool(me) and "\u0641\u0627\u0637\u0645\u0647 \u0645\u062d\u0645\u0648\u062f\u06cc" in me.group(2) and "/" not in me.group(2)
+    except Exception as ex:
+        out["store_me_error"] = str(ex)
+        checks["store_me_balance_matches_atiran"] = False
+    adv = safe_rows(cur, out, "SELECT amount, reason, status, jdate FROM dbo.meelano_hr_advance WHERE username='mahmodi' ORDER BY id")
+    out["store_advances"] = adv
+    ar = adv.get("rows") or []
+    checks["store_advance_flow"] = [str(r[2]) for r in ar] == ["cancelled", "pending"] and int(ar[0][0]) == 25000000 and all("STEP store_adv%s OK" % k in joined for k in ("", "_second", "_small", "_after_cancel"))
+    ib = [str(r[0]) for r in (safe_rows(cur, out, "SELECT kind FROM dbo.meelano_hr_inbox WHERE username='mahmodi' AND kind LIKE 'advance%' ORDER BY id").get("rows") or [])]
+    checks["store_advance_sent_to_manager"] = ib == ["advance", "advance_cancel", "advance"]
+    checks["store_me_no_atiran_writes"] = bool(me) and acct is not None and real is not None and abs(float(acct[2] or 0) - float(real[0])) < 1
+
 
 if __name__ == "__main__":
     {"restore": restore, "verify": verify}[sys.argv[1]](sys.argv[2])

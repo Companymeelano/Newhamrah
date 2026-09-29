@@ -63,7 +63,7 @@ check_back () {  # page expected(exit|stay) [screenshot-name]
 }
 check_back visitor_dashboard exit
 check_back showcase stay 11-back-from-products
-# ---- store edition («میلانو فروشگاه») ----
+# ---- store edition («پخش درخشان فروشگاه») ----
 if [ -f app-store-debug.apk ]; then
   adb install -r -g app-store-debug.apk
   PKG=ir.meelano.store.debug
@@ -85,11 +85,17 @@ if [ -f app-store-debug.apk ]; then
   shot 35-store-attendance-mission attendance_mission emerald_royal
   shot 36-store-mission-dialog mission_dialog emerald_royal
   shot 37-store-reports-customers store_reports:customers emerald_royal
+  shot 43-store-me-account store_me:account emerald_royal
+  shot 44-store-me-advance store_me:advance emerald_royal
+  shot 45-store-advance-dialog advance_dialog emerald_royal
+  shot 46-store-me-dark store_me:account noir_aurora
+  shot 48-store-me-row store_me_row emerald_royal
   # responsive check: a narrow phone and a tablet-sized screen
   adb shell wm size 720x1520; adb shell wm density 320
   shot 38-store-narrow-home store_home emerald_royal
   shot 39-store-narrow-debtors store_reports:debtors emerald_royal
   shot 40-store-narrow-sales store_reports:sales emerald_royal
+  shot 47-store-narrow-me store_me:account emerald_royal
   adb shell wm size 1600x2560; adb shell wm density 320
   shot 41-store-tablet-home store_home emerald_royal
   shot 42-store-tablet-debtors store_reports:debtors emerald_royal

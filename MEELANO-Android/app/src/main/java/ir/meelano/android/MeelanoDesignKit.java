@@ -64,6 +64,6 @@ final class MeelanoDesignKit {
         if ("taxpayers".equals(key)) return "ارسال سازمانی با وضعیت روشن";
         if ("cameras".equals(key) || "alarm".equals(key)) return "کنترل سخت‌افزار با کارت وضعیت";
         if ("settings".equals(key)) return "آزمایشگاه تم، حرکت و امنیت محلی";
-        return "زبان بصری یکپارچه Meelano";
+        return "زبان بصری یکپارچه پخش درخشان";
     }
 }

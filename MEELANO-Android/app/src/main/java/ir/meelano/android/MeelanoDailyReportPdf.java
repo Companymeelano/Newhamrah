@@ -126,7 +126,7 @@ final class MeelanoDailyReportPdf {
         p.setTypeface(regular); p.setTextSize(11); p.setColor(Color.argb(230, 255, 240, 214));
         c.drawText(d.visitor + "  •  " + d.date, W - M - 84, 86, p);
         p.setTextAlign(Paint.Align.LEFT); p.setTypeface(bold); p.setTextSize(12); p.setColor(GOLD);
-        c.drawText("Meelano Visit", M + 8, 60, p);
+        c.drawText("پخش درخشان ویزیتور", M + 8, 60, p);
         return 128;
     }
 
@@ -134,7 +134,7 @@ final class MeelanoDailyReportPdf {
         p.setColor(LINE); c.drawRect(M, H - 42, W - M, H - 41, p);
         p.setTypeface(regular); p.setTextSize(9); p.setColor(MUTED);
         p.setTextAlign(Paint.Align.RIGHT);
-        c.drawText("Meelano Visit " + d.appVersion + "  •  طراحی و برنامه‌نویسی: " + d.developer, W - M, H - 26, p);
+        c.drawText("پخش درخشان ویزیتور " + d.appVersion + "  •  طراحی و برنامه‌نویسی: " + d.developer, W - M, H - 26, p);
         p.setTextAlign(Paint.Align.LEFT);
         c.drawText("صفحه " + faDigits(String.valueOf(pageNo)), M, H - 26, p);
     }

@@ -13,7 +13,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="right"
-        android:text="Meelano امروز"
+        android:text="پخش درخشان امروز"
         android:textColor="#FFFFFF"
         android:textStyle="bold"
         android:textSize="15sp" />
