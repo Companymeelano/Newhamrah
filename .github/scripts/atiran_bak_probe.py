@@ -339,6 +339,18 @@ def stage7(c, cur, q, out):
                       "WHERE OBJECT_NAME(c.object_id) IN (N'CUSTOMERS', N'inventory') AND (c.name LIKE N'%active%' OR c.name LIKE N'%delet%' OR c.name LIKE N'%hide%' OR c.name LIKE N'%show%' "
                       "OR c.name LIKE N'%etebar%' OR c.name LIKE N'%credit%' OR c.name LIKE N'%type%' OR c.name LIKE N'%kind%' OR c.name LIKE N'%Is%' OR c.name LIKE N'%status%' OR c.name LIKE N'%sagf%' OR c.name LIKE N'%saqf%' OR c.name LIKE N'%max%')")
     q("s7_inventory_counts", "SELECT COUNT(*), SUM(CASE WHEN ISNULL(TRY_CONVERT(decimal(19,2),mojkavah),0)>0 OR ISNULL(TRY_CONVERT(decimal(19,2),mojkajoz),0)>0 THEN 1 ELSE 0 END) FROM dbo.inventory")
+    q("s7b_groups", ";WITH x AS (SELECT c.SHMO, ISNULL(c.group_rdf,-1) g, ISNULL(c.man,0) man, CAST(c.MONAME AS nvarchar(300)) nm, ISNULL(c.active,'t') act, ISNULL(c.kind,-1) kind, ISNULL(c.IsEmp,-1) emp, "
+                    "CASE WHEN EXISTS (SELECT 1 FROM dbo.sailfact s WHERE s.shmo=c.SHMO AND s.active='t') THEN 1 ELSE 0 END sold, "
+                    "CASE WHEN EXISTS (SELECT 1 FROM dbo.buyfact b WHERE b.shmo=c.SHMO AND b.active='t') THEN 1 ELSE 0 END bought FROM dbo.CUSTOMERS c) "
+                    "SELECT g, COUNT(*), SUM(sold), SUM(bought), SUM(CASE WHEN sold=0 AND bought=0 THEN 1 ELSE 0 END), SUM(CASE WHEN nm LIKE N'%0[0-9]%' THEN 1 ELSE 0 END), "
+                    "SUM(CASE WHEN man>0 THEN 1 ELSE 0 END), SUM(CASE WHEN act<>'t' THEN 1 ELSE 0 END), MIN(SHMO), MAX(SHMO) FROM x GROUP BY g ORDER BY g")
+    q("s7b_kind", "SELECT ISNULL(kind,-1), ISNULL(group_rdf,-1), COUNT(*) FROM dbo.CUSTOMERS GROUP BY ISNULL(kind,-1), ISNULL(group_rdf,-1) ORDER BY 1,2")
+    q("s7b_active", "SELECT ISNULL(active,'?'), COUNT(*) FROM dbo.CUSTOMERS GROUP BY ISNULL(active,'?')")
+    q("s7b_g2_sold", "SELECT TOP (40) c.SHMO, CAST(c.MONAME AS nvarchar(300)), c.man, (SELECT COUNT(*) FROM dbo.sailfact s WHERE s.shmo=c.SHMO AND s.active='t'), (SELECT COUNT(*) FROM dbo.buyfact b WHERE b.shmo=c.SHMO AND b.active='t'), c.vis_rdf "
+                     "FROM dbo.CUSTOMERS c WHERE c.group_rdf=2 ORDER BY 4 DESC")
+    q("s7b_g2_tagged_nosale", "SELECT COUNT(*) FROM dbo.CUSTOMERS c WHERE c.group_rdf=2 AND CAST(c.MONAME AS nvarchar(300)) LIKE N'%0[0-9]%' AND NOT EXISTS (SELECT 1 FROM dbo.buyfact b WHERE b.shmo=c.SHMO AND b.active='t')")
+    q("s7b_staffgroups_sample", "SELECT TOP (80) c.SHMO, CAST(c.MONAME AS nvarchar(300)), c.group_rdf, c.man, (SELECT COUNT(*) FROM dbo.sailfact s WHERE s.shmo=c.SHMO AND s.active='t') FROM dbo.CUSTOMERS c WHERE c.group_rdf IN (3,4,5,6,7,8) ORDER BY c.group_rdf, c.SHMO")
+    q("s7b_inv_active", "SELECT ISNULL(active,'?'), ISNULL(black_list,-1), COUNT(*) FROM dbo.inventory GROUP BY ISNULL(active,'?'), ISNULL(black_list,-1)")
     q("s7_inventory_groups", "SELECT i.group_rdf, CAST(g.group_name AS nvarchar(200)), COUNT(*) FROM dbo.inventory i LEFT JOIN dbo.kagroup g ON g.group_rdf=i.group_rdf GROUP BY i.group_rdf, CAST(g.group_name AS nvarchar(200)) ORDER BY 1")
 
 
