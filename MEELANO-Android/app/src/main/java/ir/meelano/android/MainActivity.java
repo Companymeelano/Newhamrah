@@ -274,6 +274,8 @@ public class MainActivity extends Activity {
     private String productsCacheFilter = "all";
     private String showcaseCacheJson = "";
     private String showcaseCacheQuery = "";
+    /** Search text and filter currently on the product page (the cache may hold the full, unfiltered list). */
+    private String showcaseViewQuery = "", showcaseViewFilter = "all";
     private String showcaseCacheFilter = "all";
     private int showcaseShownLimit = 24;
     private String visitorDashboardCacheJson = "";
@@ -560,6 +562,7 @@ public class MainActivity extends Activity {
         try {
             selfTestLog("STORE customers=" + jsonArrayLength(queryCustomers("", "all")) + " products=" + jsonArrayLength(queryProducts("", "all")));
         } catch (Throwable ex) { selfTestLog("STEP store_lists FAIL " + ex.getMessage()); }
+        selfTestStoreV59();
         try {
             JSONArray products = new JSONArray(queryProducts("", "all"));
             visitorCartItems = new JSONArray(); visitorCartDraftId = ""; visitorCartGlobalDiscount = 0; visitorCartTaxPercent = 0;
@@ -577,7 +580,9 @@ public class MainActivity extends Activity {
             visitorCartNotes = "آزمون خودکار فروشگاه";
             JSONObject snap = buildCartSnapshot("sent");
             long shmoT = (long) parseNumber(customer, 0);
+            storeCheckoutSnap = snap;
             JSONObject ref = queryStoreCheckoutRef(shmoT);
+            selfTestLog("STORE guards cred=" + Math.round(ref.optDouble("cred", -1)) + " blocked=" + ref.optBoolean("blocked") + " liveStock=" + ref.optJSONObject("liveStock"));
             StringBuilder vids = new StringBuilder();
             for (int i = 0; ref.optJSONArray("visitors") != null && i < ref.optJSONArray("visitors").length(); i++) vids.append(ref.optJSONArray("visitors").optJSONObject(i).optInt("id")).append(',');
             JSONArray bankList = ref.optJSONArray("banks");
@@ -720,6 +725,43 @@ public class MainActivity extends Activity {
      * one Sayad-confirmed electronic, one unconfirmed paper), a resend with the same unique id, then a
      * receipt-only payment that settles the two oldest open invoices (DaryaftMultiFactor + tasvieh).
      */
+    /** v5.9.0: every customer except suppliers / staff, every product, exact ledger stock, Atiran photos, tolerant search. */
+    private void selfTestStoreV59() {
+        try {
+            JSONArray cs = new JSONArray(queryCustomers("", "all"));
+            boolean h2595 = false, h2475 = false; int staffAcc = 0;
+            for (int i = 0; i < cs.length(); i++) {
+                JSONObject o = cs.optJSONObject(i); if (o == null) continue;
+                long code = (long) parseNumber(o.optString("کد", o.optString("code", "")), 0);
+                if (code == 2595) h2595 = true;
+                if (code == 2475) h2475 = true;
+                if (code >= 2692 && code <= 2699) staffAcc++;
+            }
+            JSONArray ps = new JSONArray(queryProducts("", "all"));
+            double s526 = -1; int withImg = 0; JSONObject probe = null;
+            for (int i = 0; i < ps.length(); i++) {
+                JSONObject o = ps.optJSONObject(i); if (o == null) continue;
+                if ("526".equals(safeDisplayText(o.opt("کد"), ""))) s526 = jsonDouble(o, "موجودی", 0);
+                if (o.optLong("تصویر_آتیران", 0) > 0) withImg++;
+                String n = MeelanoSearch.norm(o.optString("نام", ""));
+                if (probe == null && n.split(" ").length >= 3 && n.length() >= 12) probe = o;
+            }
+            // Search: the words of a real name in reverse order, typed with Arabic ي / ك and without half-spaces.
+            boolean searchOk = false; String probeQ = "";
+            if (probe != null) {
+                String[] w = MeelanoSearch.norm(probe.optString("نام")).split(" ");
+                probeQ = (w[w.length - 1] + " " + w[0]).replace('ی', 'ي').replace('ک', 'ك');
+                JSONArray hit = visitorProductSearchFilteredRows(ps, probeQ, "all");
+                for (int i = 0; i < Math.min(15, hit.length()); i++) if (safeDisplayText(hit.optJSONObject(i).opt("کد"), "").equals(safeDisplayText(probe.opt("کد"), ""))) searchOk = true;
+            }
+            JSONArray byCode = visitorProductSearchFilteredRows(ps, "526", "all");
+            boolean codeOk = byCode.length() > 0 && "526".equals(safeDisplayText(byCode.optJSONObject(0).opt("کد"), ""));
+            selfTestLog("STORE v59 customers=" + cs.length() + " has2595=" + h2595 + " has2475=" + h2475 + " staffAccounts=" + staffAcc
+                    + " products=" + ps.length() + " stock526=" + s526 + " withImage=" + withImg + " search=" + searchOk + " code=" + codeOk + " q=" + probeQ);
+            selfTestLog("STEP store_v59 " + (!h2595 && h2475 && staffAcc == 0 && ps.length() > 1000 && Math.abs(s526 - 93.8) < 0.01 && searchOk && codeOk ? "OK" : "FAIL"));
+        } catch (Throwable ex) { selfTestLog("STEP store_v59 FAIL " + ex.getClass().getSimpleName() + ": " + ex.getMessage()); }
+    }
+
     private void selfTestStoreReceipts(long shmo, JSONObject ref, JSONObject inv) {
         try {
             JSONArray banks = ref.optJSONArray("banks");
@@ -9147,7 +9189,8 @@ public class MainActivity extends Activity {
         String f = VISITOR_EDITION && !("all".equals(rawFilter) || "route_today".equals(rawFilter)) ? "all" : rawFilter;
         String previousFilter = customersCacheFilter == null ? "all" : customersCacheFilter;
         if (customersSortOrder == null || customersSortOrder.trim().isEmpty() || !f.equals(previousFilter)) customersSortOrder = defaultCustomerSort(f);
-        if (!force && customersCacheJson != null && !customersCacheJson.trim().isEmpty() && (VISITOR_EDITION || q.equals(customersCacheQuery))) {
+        boolean allLocal = VISITOR_EDITION || STORE_EDITION;
+        if (!force && customersCacheJson != null && !customersCacheJson.trim().isEmpty() && (allLocal || q.equals(customersCacheQuery))) {
             try {
                 JSONArray cached = new JSONArray(customersCacheJson);
                 if (VISITOR_EDITION || customersCacheAllRows || f.equals(customersCacheFilter)) { customersCacheFilter = f; renderCustomersFromJson(cached, q, f); return; }
@@ -9162,11 +9205,11 @@ public class MainActivity extends Activity {
         list.setOrientation(LinearLayout.VERTICAL);
         content.addView(list, new LinearLayout.LayoutParams(-1, -2));
         addLoading(list, "در حال دریافت مشتریان…");
-        runDb(() -> queryCustomers(VISITOR_EDITION ? "" : q, "all"), new DbCallback() {
+        runDb(() -> queryCustomers(allLocal ? "" : q, "all"), new DbCallback() {
             @Override public void ok(String body) {
                 try {
                     customersCacheJson = body;
-                    customersCacheQuery = VISITOR_EDITION ? "" : q;
+                    customersCacheQuery = allLocal ? "" : q;
                     customersCacheFilter = f;
                     customersCacheAllRows = true;
                     markRefresh("customers");
@@ -10158,7 +10201,8 @@ public class MainActivity extends Activity {
             if ("settled".equals(filter)) where.add("ABS(ISNULL(" + balanceExpr + ",0))<=0.0001");
             if ("no_buy".equals(filter) && canSales) where.add("ISNULL(sf.sales_count,0)=0");
             String order = "top".equals(filter) ? " ORDER BY جمع_فروش DESC, نام" : ("debt".equals(filter) ? " ORDER BY مانده DESC, نام" : " ORDER BY نام, کد");
-            String topClause = VISITOR_EDITION ? "" : "TOP (350) ";
+            // visitor and store load every allowed customer once (the page draws them 30 at a time).
+            String topClause = VISITOR_EDITION || STORE_EDITION ? "" : "TOP (350) ";
             String sql = "SELECT " + topClause + join(select, ",") + " FROM dbo.[CUSTOMERS] c " + saleApply + checkApply +
                     (where.isEmpty() ? "" : " WHERE " + join(where, " AND ")) + order;
             try (PreparedStatement ps = c.prepareStatement(sql)) {
@@ -11963,7 +12007,8 @@ public class MainActivity extends Activity {
         if (!canUsePermission("showcase")) { showApp("dashboard"); return; }
         String q = query == null ? "" : query;
         String f = filter == null || filter.trim().isEmpty() ? "all" : filter;
-        if (!force && showcaseCacheJson != null && !showcaseCacheJson.trim().isEmpty() && (VISITOR_EDITION || (q.equals(showcaseCacheQuery) && f.equals(showcaseCacheFilter)))) {
+        boolean allLocal = VISITOR_EDITION || STORE_EDITION;
+        if (!force && showcaseCacheJson != null && !showcaseCacheJson.trim().isEmpty() && (allLocal || (q.equals(showcaseCacheQuery) && f.equals(showcaseCacheFilter)))) {
             try { renderShowcaseProducts(new JSONArray(showcaseCacheJson), q, f, Math.max(VISITOR_EDITION ? visitorShowcasePageSize() : (compactUi() ? 18 : 24), showcaseShownLimit)); return; } catch (Exception ignored) { }
         }
         content.removeAllViews();
@@ -11976,12 +12021,12 @@ public class MainActivity extends Activity {
         }
         LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); content.addView(list, new LinearLayout.LayoutParams(-1, -2));
         if (VISITOR_EDITION) addVisitorShowcaseSkeleton(list); else addLoading(list, "در حال آماده‌سازی کالاها…");
-        runDb(() -> queryProducts(VISITOR_EDITION ? "" : q, VISITOR_EDITION ? "all" : f), new DbCallback() {
+        runDb(() -> queryProducts(allLocal ? "" : q, allLocal ? "all" : f), new DbCallback() {
             @Override public void ok(String body) {
                 try {
                     showcaseCacheJson = body;
-                    showcaseCacheQuery = VISITOR_EDITION ? "" : q;
-                    showcaseCacheFilter = VISITOR_EDITION ? "all" : f;
+                    showcaseCacheQuery = allLocal ? "" : q;
+                    showcaseCacheFilter = allLocal ? "all" : f;
                     markRefresh("showcase");
                     renderShowcaseProducts(new JSONArray(body), q, f);
                 }
@@ -11999,7 +12044,7 @@ public class MainActivity extends Activity {
     private void rerenderShowcaseFast(String query, String filter) {
         String q = query == null ? "" : query;
         String f = filter == null || filter.trim().isEmpty() ? "all" : filter;
-        if (showcaseCacheJson != null && !showcaseCacheJson.trim().isEmpty() && (VISITOR_EDITION || (q.equals(showcaseCacheQuery) && f.equals(showcaseCacheFilter)))) {
+        if (showcaseCacheJson != null && !showcaseCacheJson.trim().isEmpty() && (VISITOR_EDITION || STORE_EDITION || (q.equals(showcaseCacheQuery) && f.equals(showcaseCacheFilter)))) {
             try { renderShowcaseProducts(new JSONArray(showcaseCacheJson), q, f, Math.max(VISITOR_EDITION ? visitorShowcasePageSize() : (compactUi() ? 18 : 24), showcaseShownLimit)); return; } catch (Exception ignored) { }
         }
         loadShowcase(q, f);
@@ -12259,6 +12304,7 @@ public class MainActivity extends Activity {
         }
         // Best matches first; the original order (sort of the list) is kept inside each rank.
         if (!sq.isEmpty()) Collections.sort(ranked, (x, y) -> { int c = Integer.compare((Integer) x[0], (Integer) y[0]); return c != 0 ? c : Integer.compare((Integer) x[1], (Integer) y[1]); });
+        else if ("top".equals(f)) Collections.sort(ranked, (x, y) -> Double.compare(jsonDouble((JSONObject) y[2], "مبلغ_فروش", 0), jsonDouble((JSONObject) x[2], "مبلغ_فروش", 0)));
         for (Object[] o : ranked) out.put(o[2]);
         return out;
     }
@@ -12391,32 +12437,93 @@ public class MainActivity extends Activity {
     }
 
     private void renderShowcaseProducts(JSONArray rows, String query, String filter, int requestedLimit) {
+        showcaseViewQuery = query == null ? "" : query;
+        showcaseViewFilter = filter == null || filter.trim().isEmpty() ? "all" : filter;
         if (VISITOR_EDITION) {
             rows = mergeVisitorLocalProducts(rows, "", "all");
             normalizeVisitorExactPrices(rows);
             rows = visitorProductSearchFilteredRows(rows, query, filter);
         }
-        else normalizeVisitorExactPrices(rows);
+        else {
+            normalizeVisitorExactPrices(rows);
+            // Store: the whole list is on the phone; search (ranked, spelling-tolerant) and filters run here.
+            if (STORE_EDITION) rows = visitorProductSearchFilteredRows(rows, query, filter);
+        }
         computeShowcaseBadges(rows);
         content.removeAllViews();
         if (VISITOR_EDITION) {
             addVisitorShowcaseSmartControls(rows, query, filter, false);
             if (visitorCartItems.length() > 0 && !"compact".equals(visitorShowcaseMode()) && !"ultra".equals(visitorShowcaseMode())) addVisitorSmartOfferBar(rows, query, filter);
         } else {
-            addHero("کالاها", "کالاها با قیمت فروش ۱ و ۲");
+            addHero("کالاها", STORE_EDITION ? "همه کالاهای آتیران • قیمت فروش ۱ و ۲ و موجودی دقیق" : "کالاها با قیمت فروش ۱ و ۲");
             addManualRefreshPanel("showcase", "بروزرسانی کالا", "آخرین بروزرسانی: " + lastRefreshText("showcase"), () -> loadShowcase(query, filter, true));
             addSearchBox("جستجوی کالا، کد یا بارکد…", query, q -> loadShowcase(q, filter));
             addShowcaseFilters(query, filter);
-            addShowcaseIntelligencePanel(rows, query, filter);
+            if (STORE_EDITION) addStoreShowcaseModeBar(rows == null ? 0 : rows.length(), query, filter);
+            if (!(STORE_EDITION && storeShowcaseList)) addShowcaseIntelligencePanel(rows, query, filter);
         }
         LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); content.addView(list, new LinearLayout.LayoutParams(-1, -2));
         if (rows == null || rows.length() == 0) { addEmptyTo(list, "کالایی برای این فیلتر پیدا نشد."); addShowcaseFloatingCartBar(); return; }
         int total = rows.length();
+        if (STORE_EDITION && storeShowcaseList) { renderStoreProductList(list, rows, query, filter, Math.max(STORE_LIST_PAGE, requestedLimit)); addShowcaseFloatingCartBar(); return; }
         int renderLimit = Math.min(total, Math.max(1, requestedLimit));
         showcaseShownLimit = renderLimit;
         for (int i = 0; i < renderLimit; i++) addShowcaseProductCard(list, rows.optJSONObject(i), i, query, filter);
         if (total > renderLimit) addShowcaseMoreButton(list, rows, query, filter, total, renderLimit);
         addShowcaseFloatingCartBar();
+    }
+
+    // ---------------------------------------------------------------- store: «فهرست همه کالاها» (light rows)
+    private boolean storeShowcaseList = false;
+    private static final int STORE_LIST_PAGE = 150;
+
+    private void addStoreShowcaseModeBar(int count, String query, String filter) {
+        LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL); bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(10), dp(6), dp(6), dp(6));
+        bar.setBackground(roundedStroke(alpha(SUCCESS, isLightTheme() ? 12 : 22), 16, alpha(SUCCESS, 60)));
+        String what = query == null || query.trim().isEmpty() ? ("all".equals(filter) || filter == null ? "همه کالاها" : "کالاهای این فیلتر") : "نتیجه جستجو";
+        TextView t = text(what + ": " + formatNumber(count) + " کالا", 11.2f, TEXT, Typeface.BOLD);
+        bar.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView list = pill("فهرستی", SUCCESS, storeShowcaseList), cards = pill("کارتی", SUCCESS, !storeShowcaseList);
+        for (TextView p : new TextView[]{list, cards}) { p.setTextSize(fs(10.2f)); p.setPadding(dp(12), dp(7), dp(12), dp(7)); }
+        list.setOnClickListener(v -> { if (!storeShowcaseList) { storeShowcaseList = true; loadShowcase(query, filter); } });
+        cards.setOnClickListener(v -> { if (storeShowcaseList) { storeShowcaseList = false; loadShowcase(query, filter); } });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2); lp.setMargins(dp(3), 0, dp(3), 0);
+        bar.addView(list, lp); bar.addView(cards, new LinearLayout.LayoutParams(lp));
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2); bp.setMargins(0, 0, 0, dp(10));
+        content.addView(bar, bp);
+    }
+
+    /** Every product as a light row (name, code, group, exact stock, price 1): tap = details, long-press = add to the invoice. */
+    private void renderStoreProductList(LinearLayout list, JSONArray rows, String query, String filter, int limit) {
+        int total = rows.length();
+        int shown = Math.min(total, limit);
+        showcaseShownLimit = shown;
+        for (int i = 0; i < shown; i++) {
+            JSONObject r = rows.optJSONObject(i);
+            if (r == null) continue;
+            double stock = jsonDouble(r, "موجودی", 0), p1 = jsonDouble(r, "قیمت_فروش", 0);
+            String unit = r.optString("واحد", "").trim(), group = r.optString("گروه", "").trim();
+            String sub = "کد " + MeelanoCharts.fa(r.optString("کد")) + (group.isEmpty() ? "" : " • " + group)
+                    + "\nموجودی: " + (stock > 0 ? formatNumber(stock) + (unit.isEmpty() ? "" : " " + unit) : "ناموجود");
+            LinearLayout row = addStoreRow(list, safeDisplayText(r.opt("نام"), "کالا"), sub, p1 > 0 ? money(p1) : "بدون قیمت", stock > 0 ? (p1 > 0 ? SUCCESS : WARNING) : DANGER,
+                    () -> showProductDetailDialog(r, query, filter));
+            row.setOnLongClickListener(v -> { cardAddToCart(r, 1, query, filter); return true; });
+        }
+        if (total > shown) {
+            LinearLayout c = new LinearLayout(this); c.setOrientation(LinearLayout.HORIZONTAL);
+            int next = Math.min(STORE_LIST_PAGE, total - shown);
+            Button more = themedActionButton(formatNumber(next) + " کالای دیگر", SUCCESS, true);
+            more.setOnClickListener(v -> renderShowcaseProducts(rows, query, filter, shown + STORE_LIST_PAGE));
+            Button all = secondaryButton("نمایش همه (" + formatNumber(total) + ")");
+            all.setOnClickListener(v -> renderShowcaseProducts(rows, query, filter, total));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(46), 1f); lp.setMargins(dp(3), 0, dp(3), 0);
+            c.addView(more, lp); c.addView(all, new LinearLayout.LayoutParams(lp));
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2); cp.setMargins(0, dp(10), 0, dp(10)); list.addView(c, cp);
+        }
+        TextView hint = text("روی هر کالا بزنید تا جزئیات و افزودن به فاکتور باز شود؛ نگه داشتن انگشت هم مستقیم تعداد را می‌پرسد.", 10f, MUTED, Typeface.NORMAL);
+        hint.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, -2); hp.setMargins(0, dp(8), 0, dp(80)); list.addView(hint, hp);
     }
 
     private void addShowcaseMoreButton(LinearLayout parent, JSONArray rows, String query, String filter, int total, int shown) {
@@ -17267,7 +17374,8 @@ public class MainActivity extends Activity {
             else if ("image".equals(filter) && imageCol != null) where.add(imageBinary ? "DATALENGTH(i.[" + imageCol + "])>20" : "LEN(LTRIM(RTRIM(TRY_CONVERT(nvarchar(max),i.[" + imageCol + "]))))>20");
             if ("package".equals(filter) && packCount != null) where.add("ISNULL(" + sqlNumberExpr("i", packCount, "decimal(19,3)") + ",0)>1");
             String order = "top".equals(filter) ? " ORDER BY مبلغ_فروش DESC, نام" : ("low".equals(filter) ? " ORDER BY موجودی ASC, نام" : ("price2".equals(filter) ? " ORDER BY قیمت_فروش۲ DESC, نام" : " ORDER BY نام, کد"));
-            int productTopLimit = VISITOR_EDITION ? 6000 : 160; // visitor: every product is loaded once at login
+            // visitor and store: every product is loaded once, then searched / filtered on the phone (no 160 cut-off).
+            int productTopLimit = VISITOR_EDITION || STORE_EDITION ? 6000 : 160;
             String sql = "SELECT TOP (" + productTopLimit + ") " + join(select, ",") + " FROM dbo.[inventory] i " + unitJoin + groupJoin + kaImageApply + saleApply + buyApply + priceApply + stockApply +
                     (where.isEmpty() ? "" : " WHERE " + join(where, " AND ")) + order;
             try {
@@ -17446,7 +17554,7 @@ public class MainActivity extends Activity {
                 if (prefs != null) prefs.edit().putString(key, result).apply();
                 productBitmapCache.evictAll();
                 showNotice("تصویر کالا با ابعاد ۵۱۲×۵۱۲ ذخیره شد: " + stringOr(name, "کالا"), true);
-                if ("showcase".equals(activePage)) rerenderShowcaseFast(showcaseCacheQuery, showcaseCacheFilter);
+                if ("showcase".equals(activePage)) rerenderShowcaseFast(showcaseViewQuery, showcaseViewFilter);
                 else if ("cart".equals(activePage)) renderCartPage();
             });
         });
@@ -23284,8 +23392,44 @@ public class MainActivity extends Activity {
             o.put("anbars", anbars);
 
             if (shmo > 0) addStoreOpenInvoices(c, shmo, o);
+            if (shmo > 0) addStoreCheckoutGuards(c, shmo, o);
         }
         return o;
+    }
+
+    /**
+     * Checked again right before the final invoice: the customer's credit limit (CUSTOMERS.cred) and block
+     * (inactive / black_list), and the live stock of every item in the cart from Atiran's ledger.
+     */
+    private void addStoreCheckoutGuards(Connection c, long shmo, JSONObject o) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT TOP (1) ISNULL(TRY_CONVERT(decimal(19,2),cred),0), ISNULL(TRY_CONVERT(nvarchar(5),active),N't'), ISNULL(TRY_CONVERT(int,black_list),0) FROM dbo.CUSTOMERS WHERE SHMO=?")) {
+            ps.setLong(1, shmo);
+            try (ResultSet r = ps.executeQuery()) {
+                if (r.next()) {
+                    o.put("cred", r.getDouble(1));
+                    o.put("blocked", "f".equalsIgnoreCase(stringOr(r.getString(2), "t").trim()) || r.getInt(3) != 0);
+                }
+            }
+        } catch (Exception ignored) { }
+        try {
+            JSONArray items = storeCheckoutSnap == null ? null : storeCheckoutSnap.optJSONArray("items");
+            List<Long> codes = new ArrayList<>();
+            for (int i = 0; items != null && i < items.length(); i++) {
+                long k = (long) parseNumber(items.optJSONObject(i).optString("code"), 0);
+                if (k > 0 && !codes.contains(k) && codes.size() < 400) codes.add(k);
+            }
+            if (codes.isEmpty() || !atiranStockLedger(c)) return;
+            StringBuilder in = new StringBuilder();
+            for (int i = 0; i < codes.size(); i++) in.append(i == 0 ? "?" : ",?");
+            JSONObject stock = new JSONObject();
+            String sql = "SELECT i.shka, CAST(ISNULL(st.stock_qty,0)/ISNULL(NULLIF(TRY_CONVERT(decimal(19,3),i.mohvah),0),1) AS decimal(19,3)) FROM dbo.inventory i "
+                    + atiranStockApply("i", "st") + "WHERE i.shka IN (" + in + ")";
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                for (int i = 0; i < codes.size(); i++) ps.setLong(i + 1, codes.get(i));
+                try (ResultSet r = ps.executeQuery()) { while (r.next()) stock.put(String.valueOf(r.getLong(1)), r.getDouble(2)); }
+            }
+            o.put("liveStock", stock);
+        } catch (Exception ignored) { }
     }
 
     /**
@@ -23602,12 +23746,13 @@ public class MainActivity extends Activity {
         }
 
         if (rs.optDouble("cash", 0) > 0)
-            addStoreRow(rc, "نقد", "به صندوق • برای حذف بزنید", money(rs.optDouble("cash")), SUCCESS, () -> confirmStoreReceiptRemove("cash", -1, rs, rerender));
+            addStoreRow(rc, "نقد", "به صندوق • برای ویرایش یا حذف بزنید", money(rs.optDouble("cash")), SUCCESS, () -> showStoreReceiptLineActions("cash", "cash", -1, rs, ref, withNewInvoice, rerender));
         JSONArray rows = rs.optJSONArray("rows");
         for (int i = 0; rows != null && i < rows.length(); i++) {
             JSONObject p = rows.optJSONObject(i); final int ix = i;
             String sub = p.optString("bn") + (p.optString("t").isEmpty() ? "" : " • پیگیری " + MeelanoCharts.fa(p.optString("t"))) + (p.optString("d").isEmpty() ? "" : " • " + MeelanoCharts.fa(p.optString("d")));
-            addStoreRow(rc, storeKindName(p.optString("k")), sub, money(p.optDouble("m")), "pos".equals(p.optString("k")) ? INFO : GOLD, () -> confirmStoreReceiptRemove("row", ix, rs, rerender));
+            final String rk = p.optString("k");
+            addStoreRow(rc, storeKindName(rk), sub.trim().isEmpty() ? "برای ویرایش یا حذف بزنید" : sub, money(p.optDouble("m")), "pos".equals(rk) ? INFO : GOLD, () -> showStoreReceiptLineActions("row", rk, ix, rs, ref, withNewInvoice, rerender));
         }
         JSONArray ch = rs.optJSONArray("cheques");
         for (int i = 0; ch != null && i < ch.length(); i++) {
@@ -23615,7 +23760,24 @@ public class MainActivity extends Activity {
             String sub = "بانک " + c.optString("bn") + " • شماره " + MeelanoCharts.fa(c.optString("s")) + " • سررسید " + MeelanoCharts.fa(c.optString("sd"))
                     + "\n" + (c.optInt("ct", 1) == 2 ? "الکترونیک" : "کاغذی") + (c.optString("sy").isEmpty() ? "" : " • صیاد " + MeelanoCharts.fa(c.optString("sy")))
                     + " • " + (c.optBoolean("ri") ? "تأیید سامانه ✓" : "عدم تأیید سامانه");
-            addStoreRow(rc, "چک", sub, money(c.optDouble("m")), c.optBoolean("ri") ? WARNING : DANGER, () -> confirmStoreReceiptRemove("chk", ix, rs, rerender));
+            addStoreRow(rc, "چک", sub, money(c.optDouble("m")), c.optBoolean("ri") ? WARNING : DANGER, () -> showStoreReceiptLineActions("chk", "chk", ix, rs, ref, withNewInvoice, rerender));
+        }
+        int lines = (rs.optDouble("cash", 0) > 0 ? 1 : 0) + (rows == null ? 0 : rows.length()) + (ch == null ? 0 : ch.length());
+        if (lines > 0) {
+            TextView hint = text(lines > 1 ? "هر ردیف را بزنید تا ویرایش یا حذف شود." : "ردیف را بزنید تا ویرایش یا حذف شود.", 10.2f, MUTED, Typeface.NORMAL);
+            LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, -2); hp.setMargins(dp(4), dp(6), dp(4), 0); rc.addView(hint, hp);
+        }
+        if (lines > 1) {
+            Button clear = storeChoiceButton(withIcon("✕", "پاک کردن همه دریافت‌ها"), DANGER);
+            clear.setOnClickListener(v -> {
+                AlertDialog d = new MeelanoDialogBuilder().setTitle("پاک کردن دریافت").setMessage("همه ردیف‌های دریافت (" + MeelanoCharts.fa(String.valueOf(lines)) + " ردیف، " + money(got) + ") پاک شوند؟")
+                        .setNegativeButton("خیر", null).setPositiveButton("پاک شود", (di, w) -> {
+                            try { rs.put("cash", 0); rs.put("rows", new JSONArray()); rs.put("cheques", new JSONArray()); } catch (Exception ignored) { }
+                            rerender.run();
+                        }).create();
+                d.setOnShowListener(x -> styleMeelanoDialog(d, DANGER)); d.show();
+            });
+            LinearLayout.LayoutParams clp = storeFieldLp(42); clp.setMargins(0, dp(8), 0, 0); rc.addView(clear, clp);
         }
 
         JSONArray open = ref == null ? null : ref.optJSONArray("invoices");
@@ -23643,6 +23805,32 @@ public class MainActivity extends Activity {
         } else storeCheckoutAlloc = null;
     }
 
+    /** Live «… ریال» in words under an amount field, so a missing or extra zero is noticed before saving. */
+    private void addRialWords(LinearLayout box, EditText amount) {
+        final TextView words = text("", 10.2f, tc(SUCCESS), Typeface.BOLD);
+        words.setTextDirection(View.TEXT_DIRECTION_RTL);
+        LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, -2); wp.setMargins(dp(4), dp(4), dp(4), 0);
+        box.addView(words, wp);
+        Runnable upd = () -> { double v = parseNumber(amount.getText().toString(), 0); words.setText(v >= 1 ? MeelanoCharts.rialWords(v) : ""); words.setVisibility(v >= 1 ? View.VISIBLE : View.GONE); };
+        amount.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence x, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable x) { upd.run(); }
+        });
+        upd.run();
+    }
+
+    /** A receipt line was tapped: edit it (same form, filled in) or remove it. */
+    private void showStoreReceiptLineActions(String what, String kind, int ix, JSONObject rs, JSONObject ref, boolean withNewInvoice, Runnable rerender) {
+        String[] items = {"✎  ویرایش این ردیف", "✕  حذف این ردیف"};
+        AlertDialog d = new MeelanoDialogBuilder().setTitle(storeKindName(kind)).setItems(items, (di, w) -> {
+            if (w == 0) showStoreReceiptDialog(kind, rs, ref, withNewInvoice, rerender, "cash".equals(what) ? -1 : ix);
+            else confirmStoreReceiptRemove(what, ix, rs, rerender);
+        }).setNegativeButton("بستن", null).create();
+        d.setOnShowListener(x -> styleMeelanoDialog(d, SUCCESS));
+        d.show();
+    }
+
     private void confirmStoreReceiptRemove(String what, int ix, JSONObject rs, Runnable rerender) {
         AlertDialog d = new MeelanoDialogBuilder().setTitle("حذف از دریافت").setMessage("این مورد از دریافت حذف شود؟")
                 .setNegativeButton("خیر", null).setPositiveButton("حذف", (di, w) -> {
@@ -23664,12 +23852,23 @@ public class MainActivity extends Activity {
 
     /** One receipt line: cash, card reader, card-to-card / transfer, havaleh or a cheque. */
     private void showStoreReceiptDialog(String kind, JSONObject rs, JSONObject ref, boolean withNewInvoice, Runnable rerender) {
+        showStoreReceiptDialog(kind, rs, ref, withNewInvoice, rerender, -1);
+    }
+
+    /** {@code editIx} >= 0 edits that row / cheque in place (the form opens filled in); -1 adds a new one. */
+    private void showStoreReceiptDialog(String kind, JSONObject rs, JSONObject ref, boolean withNewInvoice, Runnable rerender, int editIx) {
+        JSONArray editList = editIx < 0 || "cash".equals(kind) ? null : rs.optJSONArray("chk".equals(kind) ? "cheques" : "rows");
+        final JSONObject old = editList == null ? null : editList.optJSONObject(editIx);
+        final int editAt = old == null ? -1 : editIx;
+        double oldAmount = "cash".equals(kind) ? rs.optDouble("cash", 0) : old == null ? 0 : old.optDouble("m", 0);
         double payable = withNewInvoice ? storeCheckoutPayable() : Math.max(0, ref == null ? 0 : ref.optDouble("man", 0));
-        double remain = Math.max(0, payable - storeReceiptSum(rs) + ("cash".equals(kind) ? rs.optDouble("cash", 0) : 0));
+        double remain = Math.max(0, payable - storeReceiptSum(rs) + oldAmount);
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL);
         storeFieldLabel(box, "مبلغ (ریال)");
-        EditText amount = numberInput("مبلغ", "cash".equals(kind) ? rs.optDouble("cash", 0) : 0, false);
+        EditText amount = numberInput("مبلغ", oldAmount, false);
+        if (oldAmount <= 0) amount.setText("");
         box.addView(amount, storeFieldLp(50));
+        addRialWords(box, amount);
         if (remain > 0.5) {
             Button all = storeChoiceButton(withIcon("✓", "کل مانده: " + money(remain)), SUCCESS);
             all.setOnClickListener(v -> amount.setText(plainNumber(Math.round(remain))));
@@ -23678,9 +23877,9 @@ public class MainActivity extends Activity {
         final int[] bank = {0};
         EditText track = null, desc = null;
         final EditText[] chk = new EditText[5];
-        final String[] chkBank = {""};
-        final int[] chkType = {1};
-        final boolean[] sayadOk = {false};
+        final String[] chkBank = {old == null ? "" : old.optString("bn")};
+        final int[] chkType = {old == null ? 1 : old.optInt("ct", 1)};
+        final boolean[] sayadOk = {old != null && old.optBoolean("ri")};
         if (!"cash".equals(kind) && !"chk".equals(kind)) {
             JSONArray banks = ref == null ? null : ref.optJSONArray("banks");
             for (int i = 0; banks != null && i < banks.length() && bank[0] == 0; i++) {
@@ -23690,24 +23889,27 @@ public class MainActivity extends Activity {
             if (bank[0] == 0 && banks != null && banks.length() > 0) bank[0] = banks.optJSONObject(0).optInt("id");
             JSONArray rows = rs.optJSONArray("rows");
             for (int i = rows == null ? -1 : rows.length() - 1; i >= 0; i--) if (kind.equals(rows.optJSONObject(i).optString("k"))) { bank[0] = rows.optJSONObject(i).optInt("b"); break; }
+            if (old != null && old.optInt("b") > 0) bank[0] = old.optInt("b");
             storeFieldLabel(box, "pos".equals(kind) ? "حساب بانکی کارت‌خوان" : "به حساب بانکی");
             JSONObject bsel = storeFindById(banks, bank[0]);
             Button bb = storeChoiceButton(withIcon("◉", bsel == null ? "انتخاب حساب" : bsel.optString("name")), INFO);
             bb.setOnClickListener(v -> pickStoreFromList("حساب بانکی", banks, id -> { bank[0] = id; JSONObject s = storeFindById(banks, id); bb.setText(withIcon("◉", s == null ? "حساب " + id : s.optString("name"))); }));
             box.addView(bb, storeFieldLp(48));
             storeFieldLabel(box, "pos".equals(kind) ? "شماره پیگیری / مرجع (اختیاری)" : "hav".equals(kind) ? "شماره حواله" : "شماره پیگیری (اختیاری)");
-            track = input("شماره", "", false); box.addView(track, storeFieldLp(48));
+            track = input("شماره", old == null ? "" : old.optString("t"), false); box.addView(track, storeFieldLp(48));
             if (!"pos".equals(kind)) {
                 storeFieldLabel(box, "trf".equals(kind) ? "از کارت / حساب (اختیاری)" : "توضیح (اختیاری)");
-                desc = input("trf".equals(kind) ? "مثلاً چهار رقم آخر کارت مشتری" : "توضیح", "", false); box.addView(desc, storeFieldLp(48));
+                String oldDesc = old == null ? "" : old.optString("d");
+                if ("trf".equals(kind)) oldDesc = oldDesc.replaceFirst("^کارت به کارت( از )?", "").trim();
+                desc = input("trf".equals(kind) ? "مثلاً چهار رقم آخر کارت مشتری" : "توضیح", oldDesc, false); box.addView(desc, storeFieldLp(48));
             }
         }
         if ("chk".equals(kind)) {
             storeFieldLabel(box, "شماره چک (سریال)");
-            chk[0] = input("مثلاً ۷۱۱۹۶۰", "", false); chk[0].setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(chk[0], storeFieldLp(48));
+            chk[0] = input("مثلاً ۷۱۱۹۶۰", old == null ? "" : old.optString("s"), false); chk[0].setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(chk[0], storeFieldLp(48));
             storeFieldLabel(box, "تاریخ سررسید");
             String today = ref == null ? "" : ref.optString("today");
-            chk[1] = input("۱۴۰۵/۰۸/۱۵", "", false); box.addView(chk[1], storeFieldLp(48));
+            chk[1] = input("۱۴۰۵/۰۸/۱۵", old == null ? "" : old.optString("sd"), false); box.addView(chk[1], storeFieldLp(48));
             if (!today.isEmpty()) {
                 LinearLayout quick = new LinearLayout(this); quick.setOrientation(LinearLayout.HORIZONTAL);
                 int[] offs = {0, 30, 60, 90}; String[] ol = {"امروز", "یک ماه", "دو ماه", "سه ماه"};
@@ -23721,7 +23923,7 @@ public class MainActivity extends Activity {
             }
             storeFieldLabel(box, "بانک صادرکننده");
             JSONArray names = ref == null ? new JSONArray() : ref.optJSONArray("bankNames");
-            Button bn = storeChoiceButton(withIcon("◉", "انتخاب بانک"), INFO);
+            Button bn = storeChoiceButton(withIcon("◉", chkBank[0].isEmpty() ? "انتخاب بانک" : "بانک " + chkBank[0]), INFO);
             bn.setOnClickListener(v -> {
                 String[] arr = new String[names == null ? 0 : names.length()];
                 for (int i = 0; i < arr.length; i++) arr[i] = names.optString(i);
@@ -23730,12 +23932,12 @@ public class MainActivity extends Activity {
             });
             box.addView(bn, storeFieldLp(48));
             storeFieldLabel(box, "شعبه (اختیاری)");
-            chk[2] = input("نام یا کد شعبه", "", false); box.addView(chk[2], storeFieldLp(48));
+            chk[2] = input("نام یا کد شعبه", old == null ? "" : old.optString("br"), false); box.addView(chk[2], storeFieldLp(48));
             storeFieldLabel(box, "شناسه صیاد ۱۶ رقمی");
-            chk[3] = input("شناسه ۱۶ رقمی روی چک", "", false); chk[3].setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(chk[3], storeFieldLp(48));
+            chk[3] = input("شناسه ۱۶ رقمی روی چک", old == null ? "" : old.optString("sy"), false); chk[3].setInputType(InputType.TYPE_CLASS_NUMBER); box.addView(chk[3], storeFieldLp(48));
             storeFieldLabel(box, "وضعیت ثبت در سامانه صیاد");
             LinearLayout sy = new LinearLayout(this); sy.setOrientation(LinearLayout.HORIZONTAL);
-            TextView yes = pill("تأیید سامانه", SUCCESS, false), no = pill("عدم تأیید سامانه", DANGER, true);
+            TextView yes = pill("تأیید سامانه", SUCCESS, sayadOk[0]), no = pill("عدم تأیید سامانه", DANGER, !sayadOk[0]);
             for (TextView t : new TextView[]{yes, no}) { t.setTextSize(fs(10.6f)); t.setPadding(dp(8), dp(10), dp(8), dp(10)); }
             yes.setOnClickListener(v -> { sayadOk[0] = true; yes.setBackground(rounded(tc(SUCCESS), 999)); yes.setTextColor(onColorFor(SUCCESS)); no.setBackground(roundedStroke(alpha(DANGER, 16), 999, alpha(DANGER, 90))); no.setTextColor(tc(DANGER)); });
             no.setOnClickListener(v -> { sayadOk[0] = false; no.setBackground(rounded(tc(DANGER), 999)); no.setTextColor(onColorFor(DANGER)); yes.setBackground(roundedStroke(alpha(SUCCESS, 16), 999, alpha(SUCCESS, 90))); yes.setTextColor(tc(SUCCESS)); });
@@ -23744,17 +23946,17 @@ public class MainActivity extends Activity {
             box.addView(sy, new LinearLayout.LayoutParams(-1, -2));
             storeFieldLabel(box, "نوع چک");
             LinearLayout ty = new LinearLayout(this); ty.setOrientation(LinearLayout.HORIZONTAL);
-            TextView paper = pill("کاغذی", INFO, true), ele = pill("الکترونیک", INFO, false);
+            TextView paper = pill("کاغذی", INFO, chkType[0] != 2), ele = pill("الکترونیک", INFO, chkType[0] == 2);
             for (TextView t : new TextView[]{paper, ele}) { t.setTextSize(fs(10.6f)); t.setPadding(dp(8), dp(10), dp(8), dp(10)); }
             paper.setOnClickListener(v -> { chkType[0] = 1; paper.setBackground(rounded(tc(INFO), 999)); paper.setTextColor(onColorFor(INFO)); ele.setBackground(roundedStroke(alpha(INFO, 16), 999, alpha(INFO, 90))); ele.setTextColor(tc(INFO)); });
             ele.setOnClickListener(v -> { chkType[0] = 2; ele.setBackground(rounded(tc(INFO), 999)); ele.setTextColor(onColorFor(INFO)); paper.setBackground(roundedStroke(alpha(INFO, 16), 999, alpha(INFO, 90))); paper.setTextColor(tc(INFO)); });
             ty.addView(paper, slp); ty.addView(ele, new LinearLayout.LayoutParams(slp));
             box.addView(ty, new LinearLayout.LayoutParams(-1, -2));
             storeFieldLabel(box, "شماره حساب چک (اختیاری)");
-            chk[4] = input("شماره حساب صادرکننده", "", false); box.addView(chk[4], storeFieldLp(48));
+            chk[4] = input("شماره حساب صادرکننده", old == null ? "" : old.optString("hs"), false); box.addView(chk[4], storeFieldLp(48));
         }
         final EditText fTrack = track, fDesc = desc;
-        storeFormDialog(storeKindName(kind), box, "chk".equals(kind) ? WARNING : SUCCESS, () -> {
+        storeFormDialog((editAt >= 0 || ("cash".equals(kind) && oldAmount > 0) ? "ویرایش " : "") + storeKindName(kind), box, "chk".equals(kind) ? WARNING : SUCCESS, () -> {
             double m = Math.round(parseNumber(amount.getText().toString(), 0));
             if (m <= 0 && !"cash".equals(kind)) return "مبلغ را وارد کنید.";
             try {
@@ -23772,7 +23974,7 @@ public class MainActivity extends Activity {
                     JSONObject c = new JSONObject();
                     c.put("m", m); c.put("s", serial); c.put("sd", due); c.put("bn", chkBank[0]); c.put("br", chk[2].getText().toString().trim());
                     c.put("hs", normalizeDigits(chk[4].getText().toString()).trim()); c.put("sy", sayad); c.put("ri", sayadOk[0]); c.put("ct", chkType[0]);
-                    rs.optJSONArray("cheques").put(c);
+                    if (editAt >= 0) rs.optJSONArray("cheques").put(editAt, c); else rs.optJSONArray("cheques").put(c);
                 } else {
                     if (bank[0] <= 0) return "حساب بانکی را انتخاب کنید.";
                     String t = fTrack == null ? "" : normalizeDigits(fTrack.getText().toString()).trim();
@@ -23782,7 +23984,7 @@ public class MainActivity extends Activity {
                     if ("trf".equals(kind)) d = "کارت به کارت" + (d.isEmpty() ? "" : " از " + d);
                     JSONObject p = new JSONObject();
                     p.put("k", kind); p.put("m", m); p.put("b", bank[0]); p.put("bn", bsel == null ? "" : bsel.optString("name")); p.put("t", t); p.put("d", d);
-                    rs.optJSONArray("rows").put(p);
+                    if (editAt >= 0) rs.optJSONArray("rows").put(editAt, p); else rs.optJSONArray("rows").put(p);
                 }
             } catch (Exception e) { return "ثبت نشد: " + e.getMessage(); }
             rerender.run();
@@ -23793,12 +23995,39 @@ public class MainActivity extends Activity {
     private void confirmStoreCheckout(JSONObject rs) {
         if (storeCheckoutSending) return;
         double got = storeReceiptSum(rs), payable = storeCheckoutPayable();
+        // Last checks before a final invoice: no line without a price; warn about stock, credit limit and blocked customers.
+        JSONArray items = storeCheckoutSnap.optJSONArray("items");
+        JSONObject live = storeCheckoutRef == null ? null : storeCheckoutRef.optJSONObject("liveStock");
+        StringBuilder zero = new StringBuilder(), shortList = new StringBuilder();
+        for (int i = 0; items != null && i < items.length(); i++) {
+            JSONObject it = items.optJSONObject(i);
+            if (it == null) continue;
+            String name = shortProductTitle(it.optString("name"), 34);
+            if (it.optDouble("price", 0) <= 0) zero.append("\n• ").append(name);
+            String code = String.valueOf((long) parseNumber(it.optString("code"), 0));
+            double have = live != null && live.has(code) ? live.optDouble(code, 0) : it.optDouble("stock", Double.NaN);
+            double want = it.optDouble("qty", 0);
+            if (!Double.isNaN(have) && want > have + 1e-6)
+                shortList.append("\n• ").append(name).append(": ").append(formatNumber(want)).append(" از ").append(have > 0 ? formatNumber(have) : "۰");
+        }
+        if (zero.length() > 0) {
+            AlertDialog z = new MeelanoDialogBuilder().setTitle("کالای بدون قیمت").setMessage("این کالاها قیمت ندارند و فاکتور قطعی با آن‌ها ثبت نمی‌شود؛ قیمت را اصلاح یا ردیف را حذف کنید:" + zero)
+                    .setPositiveButton("باشه", null).create();
+            z.setOnShowListener(x -> styleMeelanoDialog(z, DANGER)); z.show();
+            return;
+        }
+        StringBuilder warn = new StringBuilder();
+        if (storeCheckoutRef != null && storeCheckoutRef.optBoolean("blocked")) warn.append("\n\n⚠ این مشتری در آتیران غیرفعال یا در فهرست سیاه است.");
+        double cred = storeCheckoutRef == null ? 0 : storeCheckoutRef.optDouble("cred", 0);
+        double after = (storeCheckoutRef == null ? 0 : storeCheckoutRef.optDouble("man", 0)) + payable - got;
+        if (cred > 0 && after > cred + 0.5) warn.append("\n\n⚠ مانده مشتری بعد از ثبت (").append(money(after)).append(") از سقف اعتبار او (").append(money(cred)).append(") بیشتر می‌شود.");
+        if (shortList.length() > 0) warn.append("\n\n⚠ موجودی این کالاها در آتیران کمتر از مقدار فاکتور است:").append(shortList);
         String m = "فاکتور قطعی به مبلغ " + money(payable) + " برای «" + storeCheckoutSnap.optString("customerName") + "» ثبت می‌شود"
                 + (got > 0 ? " و قبض دریافت به مبلغ " + money(got) + " هم صادر می‌شود." : ".")
-                + "\nاز موجودی انبار کم و به بدهی مشتری اضافه می‌شود.";
-        AlertDialog d = new MeelanoDialogBuilder().setTitle("ثبت نهایی").setMessage(m).setNegativeButton("بازگشت", null)
-                .setPositiveButton("ثبت", (di, w) -> submitStoreCheckout(rs)).create();
-        d.setOnShowListener(x -> styleMeelanoDialog(d, SUCCESS));
+                + "\nاز موجودی انبار کم و به بدهی مشتری اضافه می‌شود." + warn;
+        AlertDialog d = new MeelanoDialogBuilder().setTitle(warn.length() > 0 ? "ثبت نهایی — توجه کنید" : "ثبت نهایی").setMessage(m).setNegativeButton("بازگشت", null)
+                .setPositiveButton(warn.length() > 0 ? "با این حال ثبت شود" : "ثبت", (di, w) -> submitStoreCheckout(rs)).create();
+        d.setOnShowListener(x -> styleMeelanoDialog(d, warn.length() > 0 ? WARNING : SUCCESS));
         d.show();
     }
 
@@ -25530,6 +25759,7 @@ public class MainActivity extends Activity {
         addManualRefreshPanel("store_home", "بروزرسانی داشبورد", "آخرین بروزرسانی: " + lastRefreshText("store_home"), () -> { storeDataCache = null; markRefresh("store_home"); loadStoreHome(); });
         addStoreAttendanceCard(d, true);
         addStoreMeCard(d);
+        addStoreAdvanceHomeCard();
         addStoreDeliveryHomeCard(d);
 
         JSONObject today = d.optJSONObject("todaySales"), mine = d.optJSONObject("mineToday"), month = d.optJSONObject("monthSales"), cust = d.optJSONObject("customers");
@@ -25579,7 +25809,8 @@ public class MainActivity extends Activity {
                 new VisitorToolSpec("سررسید گذشته", "پیگیری وصول", "◷", WARNING, () -> openStoreReports("overdue"), true),
                 new VisitorToolSpec("حضور و مرخصی", "ورود، خروج، مرخصی", "◷", navAccent("attendance"), () -> showApp("attendance"), true),
                 new VisitorToolSpec("گزارش فروش", "به تفکیک ویزیتور", "↗", GOLD, () -> openStoreReports("sales"), true),
-                new VisitorToolSpec("دریافت وجه", "نقد، کارت، چک، حواله", "☷", SUCCESS, () -> openStoreReceipt(null), true)
+                new VisitorToolSpec("دریافت وجه", "نقد، کارت، چک، حواله", "☷", SUCCESS, () -> openStoreReceipt(null), true),
+                new VisitorToolSpec("مساعده", "درخواست از مدیر", "💵", GOLD, () -> openStoreMe("advance"), true)
         });
         addDeveloperCredit(content);
     }
@@ -26024,6 +26255,29 @@ public class MainActivity extends Activity {
     private void openStoreMe(String tab) { storeMeTab = tab == null ? "account" : tab; showApp("store_me"); }
 
     /** Home card: name, own account balance and the advance button — the way into «پنل من». */
+    /** «مساعده» on the home page: a new request in one tap and the latest request's answer from the manager. */
+    private void addStoreAdvanceHomeCard() {
+        JSONArray adv = storeMeCache == null ? null : storeMeCache.optJSONArray("advances");
+        JSONObject last = adv == null || adv.length() == 0 ? null : adv.optJSONObject(0);
+        boolean pending = false;
+        for (int i = 0; adv != null && i < adv.length(); i++) if ("pending".equals(adv.optJSONObject(i).optString("status"))) pending = true;
+        String sub = last == null ? "درخواست مساعده برای مدیر فرستاده می‌شود و پاسخ مدیر همین‌جا دیده می‌شود."
+                : "آخرین درخواست: " + money(last.optLong("amount")) + " • " + storeAdvanceStatusFa(last.optString("status")) + " • " + MeelanoCharts.fa(last.optString("date"))
+                + (last.optString("note").isEmpty() ? "" : "\nپاسخ مدیر: " + last.optString("note"));
+        LinearLayout c = storeCard(withIcon("💵", "مساعده"), sub, GOLD);
+        LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
+        Button req = themedActionButton(withIcon("💵", pending ? "درخواست در انتظار پاسخ" : "درخواست مساعده"), SUCCESS, true);
+        req.setSingleLine(true); req.setEllipsize(TextUtils.TruncateAt.END);
+        final boolean waiting = pending;
+        req.setOnClickListener(v -> { if (waiting) openStoreMe("advance"); else showStoreAdvanceDialog(); });
+        Button hist = secondaryButton(withIcon("🧾", "سوابق")); hist.setSingleLine(true);
+        hist.setOnClickListener(v -> openStoreMe("advance"));
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, -1, 1.5f); l1.setMargins(dp(3), 0, dp(3), 0);
+        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(0, -1, 1f); l2.setMargins(dp(3), 0, dp(3), 0);
+        row.addView(req, l1); row.addView(hist, l2);
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(50)); rp.setMargins(0, dp(10), 0, 0); c.addView(row, rp);
+    }
+
     private void addStoreMeCard(JSONObject d) {
         JSONObject staff = d.optJSONObject("staff");
         String name = staff == null ? headerPersonName() : stringOr(staff.optString("name"), headerPersonName());
@@ -26266,7 +26520,7 @@ public class MainActivity extends Activity {
         amount.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence x, int a, int b, int c) { }
             @Override public void onTextChanged(CharSequence x, int a, int b, int c) { }
-            @Override public void afterTextChanged(Editable x) { double v = parseNumber(x.toString(), 0); words.setText(v >= 10 ? "معادل " + formatNumber(Math.round(v / 10)) + " تومان" : ""); }
+            @Override public void afterTextChanged(Editable x) { double v = parseNumber(x.toString(), 0); words.setText(v >= 1 ? MeelanoCharts.rialWords(v) : ""); }
         });
         TextView rl = text("علت", 11, MUTED, Typeface.BOLD);
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2); rlp.setMargins(0, dp(10), 0, 0); body.addView(rl, rlp);

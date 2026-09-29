@@ -39,6 +39,34 @@ final class MeelanoCharts {
     }
 
     /** Full amount in rials, grouped three by three: «۱۲٬۴۵۰٬۰۰۰ ریال». */
+    private static final String[] W_ONES = {"", "یک", "دو", "سه", "چهار", "پنج", "شش", "هفت", "هشت", "نه", "ده", "یازده", "دوازده", "سیزده", "چهارده", "پانزده", "شانزده", "هفده", "هجده", "نوزده"};
+    private static final String[] W_TENS = {"", "", "بیست", "سی", "چهل", "پنجاه", "شصت", "هفتاد", "هشتاد", "نود"};
+    private static final String[] W_HUNDREDS = {"", "صد", "دویست", "سیصد", "چهارصد", "پانصد", "ششصد", "هفتصد", "هشتصد", "نهصد"};
+    private static final String[] W_SCALE = {"", " هزار", " میلیون", " میلیارد", " هزار میلیارد"};
+
+    private static String words999(int n) {
+        StringBuilder b = new StringBuilder();
+        if (n >= 100) { b.append(W_HUNDREDS[n / 100]); n %= 100; }
+        if (n >= 20) { if (b.length() > 0) b.append(" و "); b.append(W_TENS[n / 10]); n %= 10; }
+        if (n > 0) { if (b.length() > 0) b.append(" و "); b.append(W_ONES[n]); }
+        return b.toString();
+    }
+
+    /** Amount in Persian words, e.g. 52500000 → «پنجاه و دو میلیون و پانصد هزار ریال». */
+    static String rialWords(double value) {
+        long v = Math.abs(Math.round(value));
+        if (v == 0) return "صفر ریال";
+        if (v >= 1_000_000_000_000_000L) return rial(value);
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        int scale = 0;
+        while (v > 0) {
+            int chunk = (int) (v % 1000);
+            if (chunk > 0) parts.add(0, words999(chunk) + W_SCALE[scale]);
+            v /= 1000; scale++;
+        }
+        return (value < 0 ? "منفی " : "") + String.join(" و ", parts) + " ریال";
+    }
+
     static String rial(double v) {
         return fa(new java.text.DecimalFormat("#,##0", java.text.DecimalFormatSymbols.getInstance(java.util.Locale.US)).format(Math.round(v)).replace(',', '٬')) + " ریال";
     }

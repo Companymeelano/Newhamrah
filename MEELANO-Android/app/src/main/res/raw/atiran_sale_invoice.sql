@@ -87,6 +87,27 @@ IF ISNULL(@anbarIn, 0) > 0 AND EXISTS (SELECT 1 FROM dbo.anbars WHERE rdf_anbar 
 DECLARE @id bigint;
 
 BEGIN TRANSACTION;
+-- Two sends of the same invoice at the same moment (double tap, retry after a slow network) must not both pass the
+-- UniqueID check above: the second one waits here for the first, then finds its invoice and returns it.
+-- The lock belongs to this transaction and is released by COMMIT / ROLLBACK.
+DECLARE @lockName nvarchar(255) = N'meelano_sale_' + @uniq, @lockRc int;
+EXEC @lockRc = sp_getapplock @Resource = @lockName, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 30000;
+IF @lockRc < 0
+BEGIN
+    ROLLBACK TRANSACTION;
+    RAISERROR (N'فاکتور ديگري با همين شناسه در حال ثبت است؛ چند لحظه بعد دوباره بفرستيد', 16, 1);
+    RETURN;
+END
+SET @old = (SELECT TOP (1) shfacfo FROM dbo.sailfact WHERE UniqueID = @uniq AND active = 't' ORDER BY shfacfo DESC);
+IF @old IS NOT NULL
+BEGIN
+    ROLLBACK TRANSACTION;
+    SELECT @old AS shfacfo, 1 AS duplicate,
+           ISNULL((SELECT TOP (1) [Status] FROM dbo.sailfact WHERE shfacfo = @old AND active = 't'), 0) AS confirmed,
+           (SELECT TOP (1) man FROM dbo.CUSTOMERS WHERE SHMO = @shmo) AS man, N'' AS note,
+           (SELECT TOP (1) [all] FROM dbo.sailfact WHERE shfacfo = @old AND active = 't') AS total;
+    RETURN;
+END
 EXEC dbo.AddInvoice
      @username = @user, @date = @date, @shmo = @shmo, @barbari = @barbari, @description = @desc, @vis_rdf = @vis,
      @sumlineall = @sum, @all = @all, @tafif = @tafif, @SumTafifAghlam = @ltaf, @done_date = @date,

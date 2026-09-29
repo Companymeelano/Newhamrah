@@ -383,6 +383,30 @@ def verify_store(cur, out, checks):
         # the visitor test before this one adds its test customers, so compare with the current count
         checks["store_customers_total_match_db"] = int(d.group(4)) == store_scope_customers(cur)["total"]
         checks["store_overdue_found"] = int(d.group(2)) > 0 and 0 < int(d.group(3)) <= float(before["debtors"][1]) + 1
+    # v5.9.0: all customers except suppliers (custgroup 2 without a visitor tag) and staff accounts; all products;
+    # stock from Atiran's ka_act ledger (item 526 = 93.8); Atiran photos (ka_image); spelling-tolerant search.
+    v59 = re.search(r"STORE v59 customers=(\d+) has2595=(\w+) has2475=(\w+) staffAccounts=(\d+) products=(\d+) stock526=(-?[\d.]+) withImage=(\d+) search=(\w+) code=(\w+)", joined)
+    out["store_v59"] = v59.group(0) if v59 else None
+    checks["store_v59_step_ok"] = "STEP store_v59 OK" in joined
+    if v59:
+        checks["store_hides_supplier_2595"] = v59.group(2) == "false"
+        checks["store_shows_tagged_customer_2475"] = v59.group(3) == "true"
+        checks["store_hides_staff_accounts"] = int(v59.group(4)) == 0
+        checks["store_stock_526_exact"] = abs(float(v59.group(6)) - 93.8) < 0.01
+        checks["store_search_tolerant"] = v59.group(8) == "true" and v59.group(9) == "true"
+        try:
+            cur.execute("SELECT COUNT(*) FROM dbo.inventory WHERE ISNULL(active,'t')='t'")
+            inv_n = int(cur.fetchone()[0])
+            cur.execute("SELECT COUNT(DISTINCT shka) FROM dbo.ka_image WHERE DATALENGTH(pic)>100")
+            img_n = int(cur.fetchone()[0])
+            out["store_v59_db"] = {"inventory_active": inv_n, "ka_image_with_data": img_n}
+            checks["store_all_products_loaded"] = int(v59.group(5)) >= inv_n
+            checks["store_image_count_matches_db"] = int(v59.group(7)) <= img_n
+        except Exception as ex:
+            out["errors"].append("v59 db: %s" % ex)
+    gm = re.search(r"STORE guards cred=(-?\d+) blocked=(\w+) liveStock=(\{.*?\}|null)", joined)
+    out["store_guards"] = gm.group(0)[:400] if gm else None
+    checks["store_checkout_guards_live_stock"] = bool(gm) and gm.group(3).startswith("{")
     g = re.search(r"STORE groups (.*)", joined)
     if g and before.get("debtors"):
         total = sum(int(x.rsplit("/", 1)[1]) for x in g.group(1).split(";") if "/" in x)
