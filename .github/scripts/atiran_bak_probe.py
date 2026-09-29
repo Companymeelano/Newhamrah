@@ -322,6 +322,26 @@ def stage6(c, cur, q, out):
     q("s6_server_date", "SELECT dbo.ReturnDateServer()")
 
 
+def stage7(c, cur, q, out):
+    """Store app (v5.9.0): customer groups (who is a supplier / staff), how suppliers appear in purchase
+    invoices, product flags (active / hidden) and credit-limit columns. Read-only."""
+    q("s7_custgroup", _sel6(cur, "custgroup", top=100, order="1"))
+    q("s7_group_counts", "SELECT ISNULL(c.group_rdf,-1), COUNT(*), SUM(CASE WHEN ISNULL(c.man,0)>0 THEN 1 ELSE 0 END), "
+                         "SUM(CASE WHEN EXISTS (SELECT 1 FROM dbo.sailfact s WHERE s.shmo=c.SHMO AND s.active='t') THEN 1 ELSE 0 END), "
+                         "SUM(CASE WHEN EXISTS (SELECT 1 FROM dbo.buyfact b WHERE b.shmo=c.SHMO) THEN 1 ELSE 0 END) FROM dbo.CUSTOMERS c GROUP BY ISNULL(c.group_rdf,-1) ORDER BY 1")
+    q("s7_customer_cols", "SELECT c.name, ty.name FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.CUSTOMERS') ORDER BY c.column_id")
+    q("s7_buyfact_cols", "SELECT c.name, ty.name FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.buyfact') ORDER BY c.column_id")
+    q("s7_suppliers", "SELECT TOP (60) c.SHMO, CAST(c.MONAME AS nvarchar(300)), c.group_rdf, c.man, (SELECT COUNT(*) FROM dbo.buyfact b WHERE b.shmo=c.SHMO), "
+                      "(SELECT COUNT(*) FROM dbo.sailfact s WHERE s.shmo=c.SHMO AND s.active='t') FROM dbo.CUSTOMERS c WHERE EXISTS (SELECT 1 FROM dbo.buyfact b WHERE b.shmo=c.SHMO) ORDER BY 5 DESC")
+    for g in (2, 5, 12, 13, 14, 15):
+        q("s7_group_sample_%d" % g, "SELECT TOP (15) SHMO, CAST(MONAME AS nvarchar(300)), man FROM dbo.CUSTOMERS WHERE group_rdf=%d ORDER BY SHMO" % g)
+    q("s7_flag_cols", "SELECT OBJECT_NAME(c.object_id), c.name, ty.name FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id "
+                      "WHERE OBJECT_NAME(c.object_id) IN (N'CUSTOMERS', N'inventory') AND (c.name LIKE N'%active%' OR c.name LIKE N'%delet%' OR c.name LIKE N'%hide%' OR c.name LIKE N'%show%' "
+                      "OR c.name LIKE N'%etebar%' OR c.name LIKE N'%credit%' OR c.name LIKE N'%type%' OR c.name LIKE N'%kind%' OR c.name LIKE N'%Is%' OR c.name LIKE N'%status%' OR c.name LIKE N'%sagf%' OR c.name LIKE N'%saqf%' OR c.name LIKE N'%max%')")
+    q("s7_inventory_counts", "SELECT COUNT(*), SUM(CASE WHEN ISNULL(TRY_CONVERT(decimal(19,2),mojkavah),0)>0 OR ISNULL(TRY_CONVERT(decimal(19,2),mojkajoz),0)>0 THEN 1 ELSE 0 END) FROM dbo.inventory")
+    q("s7_inventory_groups", "SELECT i.group_rdf, CAST(g.group_name AS nvarchar(200)), COUNT(*) FROM dbo.inventory i LEFT JOIN dbo.kagroup g ON g.group_rdf=i.group_rdf GROUP BY i.group_rdf, CAST(g.group_name AS nvarchar(200)) ORDER BY 1")
+
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -330,6 +350,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "7":
+        stage7(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 7 done; errors:", len(out["errors"]))
+        return
     if os.environ.get("PROBE_STAGE") == "6":
         stage6(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
