@@ -527,6 +527,10 @@ public class MainActivity extends Activity {
                     + " topProducts=" + (d.optJSONArray("topProducts") == null ? 0 : d.optJSONArray("topProducts").length()) + " lowStock=" + (d.optJSONArray("lowStock") == null ? 0 : d.optJSONArray("lowStock").length())
                     + " creditDays=" + d.optInt("creditDays"));
             selfTestLog("STORE groups " + g);
+            StringBuilder bv = new StringBuilder();
+            JSONArray byU = d.optJSONArray("byUser");
+            for (int i = 0; byU != null && i < byU.length(); i++) bv.append(byU.optJSONObject(i).optString("name")).append(';');
+            selfTestLog("STORE byVisitor " + bv + " attendanceInData=" + d.has("attendance"));
             JSONArray od = d.optJSONArray("overdue");
             for (int i = 0; od != null && i < Math.min(3, od.length()); i++) { JSONObject o = od.optJSONObject(i); selfTestLog("STORE overdue_row code=" + o.optLong("code") + " days=" + o.optInt("days") + " overdue=" + Math.round(o.optDouble("overdue")) + " man=" + Math.round(o.optDouble("man"))); }
             selfTestLog("STEP store_data OK");
@@ -2272,7 +2276,7 @@ public class MainActivity extends Activity {
         if (t.contains("کالا")) return "فروش سریع کالا";
         if (t.contains("سبد")) return "سبد فروش";
         if (t.contains("مشتری")) return "مشتریان";
-        if (t.contains("حضور")) return "حضور و وضعیت روز";
+        if (t.contains("حضور")) return STORE_EDITION ? "حضور و مرخصی" : "حضور و وضعیت روز";
         if (t.contains("گفتگو")) return "گفتگوی تیم فروش";
         if (t.contains("تنظیمات")) return "تنظیمات";
         return t.isEmpty() ? editionTitle() : t;
@@ -6231,6 +6235,7 @@ public class MainActivity extends Activity {
 
     private boolean canUsePermission(String key) {
         if (key == null || key.trim().isEmpty()) return true;
+        if (STORE_EDITION && ("chat".equals(key.trim()) || "personnel".equals(key.trim()) || "attendance_admin".equals(key.trim()))) return false;
         if (STORE_EDITION && ("store_home".equals(key.trim()) || "store_reports".equals(key.trim()) || "store_checkout".equals(key.trim()) || "store_receipt".equals(key.trim()))) return true;
         if (VISITOR_EDITION) return visitorEditionPermissionAllowed(key);
         if (isFullAccessUser()) return true;
@@ -22164,11 +22169,19 @@ public class MainActivity extends Activity {
             }
             out.put("monthly", rowsJson(c, "SELECT LEFT(s.[date],7), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s WHERE" + live + "AND s.[date]>=? GROUP BY LEFT(s.[date],7) ORDER BY 1", new String[]{"month", "count", "sum"}, from6m));
             // Sales of this month per visitor (sailfact.vis_rdf), not per system user.
-            JSONArray byVis = rowsJson(c, "SELECT x.nm, COUNT(*), ISNULL(SUM(x.a),0) FROM (SELECT ISNULL(CAST(v.vis_name AS nvarchar(250)), N'ویزیتور ' + CAST(s.vis_rdf AS nvarchar(12))) AS nm, s.[all] AS a FROM dbo.sailfact s LEFT JOIN dbo.visitors v ON v.vis_rdf=s.vis_rdf WHERE" + live + "AND s.[date]>=?) x GROUP BY x.nm ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month);
-            for (int i = 0; i < byVis.length(); i++) {
-                JSONObject o = byVis.optJSONObject(i); String n = o.optString("name").trim();
-                if (n.contains("/")) o.put("name", n.substring(0, n.indexOf('/')).trim());
+            JSONArray rawVis = rowsJson(c, "SELECT ISNULL(s.vis_rdf,0), MAX(ISNULL(CAST(v.vis_name AS nvarchar(250)),N'')), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s LEFT JOIN dbo.visitors v ON v.vis_rdf=s.vis_rdf WHERE" + live + "AND s.[date]>=? GROUP BY ISNULL(s.vis_rdf,0)", new String[]{"id", "raw", "count", "sum"}, month);
+            int myVisS = storeMyVis(c);
+            Map<String, double[]> merged = new LinkedHashMap<>();
+            for (int vi = 0; vi < rawVis.length(); vi++) {
+                JSONObject vrow = rawVis.optJSONObject(vi);
+                String vlabel = storeVisitorLabel(vrow.optString("raw"), (int) parseNumber(vrow.optString("id"), 0), myVisS);
+                double[] vacc = merged.get(vlabel); if (vacc == null) { vacc = new double[2]; merged.put(vlabel, vacc); }
+                vacc[0] += vrow.optDouble("count"); vacc[1] += vrow.optDouble("sum");
             }
+            List<JSONObject> vs = new ArrayList<>();
+            for (Map.Entry<String, double[]> vent : merged.entrySet()) vs.add(new JSONObject().put("name", vent.getKey()).put("count", vent.getValue()[0]).put("sum", vent.getValue()[1]));
+            Collections.sort(vs, (va, vb) -> Double.compare(vb.optDouble("sum"), va.optDouble("sum")));
+            JSONArray byVis = new JSONArray(); for (JSONObject vrow2 : vs) byVis.put(vrow2);
             out.put("byUser", byVis);
             out.put("topCustomers", rowsJson(c, "SELECT TOP (8) CAST(MAX(cu.MONAME) AS nvarchar(500)), COUNT(*), ISNULL(SUM(s.[all]),0) FROM dbo.sailfact s JOIN dbo.CUSTOMERS cu ON cu.SHMO=s.shmo WHERE" + live + "AND s.[date]>=? GROUP BY s.shmo ORDER BY 3 DESC", new String[]{"name", "count", "sum"}, month));
             out.put("topProducts", rowsJson(c, "SELECT TOP (8) CAST(MAX(d.naka) AS nvarchar(500)), ISNULL(SUM(d.TEDVAH),0), ISNULL(SUM(d.LINESUM),0) FROM dbo.subsailfact d JOIN dbo.sailfact s ON s.shfacfo=d.shfacfo AND s.rdf__=d.rdf__ WHERE" + live + "AND d.active='t' AND s.[date]>=? GROUP BY d.SHKA ORDER BY 3 DESC", new String[]{"name", "qty", "sum"}, month));
@@ -22181,7 +22194,6 @@ public class MainActivity extends Activity {
                 if (r.next()) { JSONObject o = new JSONObject(); o.put("total", r.getLong(1)); o.put("debtors", r.getLong(2)); o.put("creditors", r.getLong(3)); o.put("debt", r.getDouble(4)); o.put("credit", r.getDouble(5)); out.put("customers", o); }
             }
             queryStoreDebts(c, out, todayDay, creditDays);
-            out.put("attendance", queryStoreAttendance(c));
             try { out.put("myLeaves", queryLeaveRequestsForUser(c, currentAccountName())); } catch (Exception e) { out.put("myLeaves", new JSONArray()); }
             String lat = chatSetting(c, "work_lat", ""), lng = chatSetting(c, "work_lng", "");
             out.put("storeLat", lat); out.put("storeLng", lng); out.put("storeRadius", chatSetting(c, "work_radius", String.valueOf(STORE_DEFAULT_RADIUS_M)));
@@ -22220,14 +22232,33 @@ public class MainActivity extends Activity {
      * way Atiran's own FixTasvie does it: the balance is covered by the newest invoices first; an
      * invoice is due «date + modpar» days later, or «date + setting 15» when modpar is 0.
      */
+    /**
+     * Name shown for a visitor row in the store app: real visitors (name marked «ویزیتور»), the store row and the
+     * signed-in person's own visitor. Office staff and other personnel are never named — they become «سایر».
+     */
+    private String storeVisitorLabel(String raw, int id, int myVis) {
+        String n = stringOr(raw, "").trim().replace('ي', 'ی').replace('ك', 'ک');
+        boolean visitor = (n.contains("ویزیتور") || n.contains("فروشگاه")) && !n.contains("سیستم");
+        if (n.contains("/")) n = n.substring(0, n.indexOf('/')).trim();
+        if (id > 0 && id == myVis) return n.isEmpty() ? "خودم" : n + " (خودم)";
+        if (visitor) return n.isEmpty() ? "ویزیتور " + id : n;
+        return STORE_OTHER_VISITORS;
+    }
+
+    private static final String STORE_OTHER_VISITORS = "سایر (غیر ویزیتور)";
+
+    private int storeMyVis(Connection c) {
+        try { return resolveStoreStaff(c).optInt("vis", 0); } catch (Exception e) { return 0; }
+    }
+
     private void queryStoreDebts(Connection c, JSONObject out, int todayDay, int creditDays) throws Exception {
         Map<Integer, String> visName = new HashMap<>();
         int latifi = 0, khodayar = 0;
+        int myVis = storeMyVis(c);
         try (Statement st = c.createStatement(); ResultSet r = st.executeQuery("SELECT vis_rdf, ISNULL(CAST(vis_name AS nvarchar(250)),N''), LOWER(LTRIM(RTRIM(ISNULL(CAST(Username AS nvarchar(120)),N'')))) FROM dbo.visitors")) {
             while (r.next()) {
-                int id = r.getInt(1); String name = stringOr(r.getString(2), "").trim(); String u = stringOr(r.getString(3), "");
-                if (name.contains("/")) name = name.substring(0, name.indexOf('/')).trim();
-                visName.put(id, name.replace('ي', 'ی').replace('ك', 'ک'));
+                int id = r.getInt(1); String u = stringOr(r.getString(3), "");
+                visName.put(id, storeVisitorLabel(r.getString(2), id, myVis));
                 if ("latifi".equals(u)) latifi = id;
                 if ("khodayar".equals(u)) khodayar = id;
             }
@@ -22687,27 +22718,21 @@ public class MainActivity extends Activity {
         if (compact) { card.setClickable(true); applyTouchFeedback(card); card.setOnClickListener(v -> openStoreReports("overdue")); }
     }
 
+    /** Entry/exit buttons only: the app records presence but does not show attendance history or times. */
     private void addStoreAttendanceCard(JSONObject d, boolean compact) {
-        String me = storeStaffKey(currentAccountName(), session == null ? "" : session.userName);
-        String[] todayJ = attendanceJalali(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()));
-        String in = "", out = "";
-        for (JSONObject day : attendanceDays(d.optJSONArray("attendance"))) {
-            if (me.equals(day.optString("staff")) && todayJ[0].equals(day.optString("date"))) { in = day.optString("in"); out = day.optString("out"); }
-        }
         boolean located = !d.optString("storeLat").isEmpty();
-        int accent = in.isEmpty() ? SUCCESS : out.isEmpty() ? WARNING : INFO;
-        LinearLayout c = storeCard("حضور امروز", located ? "ورود: " + stringOr(MeelanoCharts.fa(in), "—") + "   •   خروج: " + stringOr(MeelanoCharts.fa(out), "—") : "مکان فروشگاه هنوز ثبت نشده است؛ یک بار داخل فروشگاه از «تنظیمات» آن را ثبت کنید.", accent);
+        LinearLayout c = storeCard("ثبت حضور", located ? "ورود و خروج فقط داخل محدوده فروشگاه ثبت می‌شود." : "مکان فروشگاه هنوز ثبت نشده است؛ یک بار داخل فروشگاه از «تنظیمات» آن را ثبت کنید.", SUCCESS);
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL);
         if (!located) {
             Button set = primaryButton(withIcon("⚙", "تنظیم در تنظیمات")); set.setOnClickListener(v -> showApp("settings"));
             row.addView(set, weightedButtonLp());
         } else {
-            Button bIn = in.isEmpty() ? primaryButton(withIcon("↘", "ثبت ورود")) : secondaryButton(withIcon("↘", "ورود"));
+            Button bIn = primaryButton(withIcon("↘", "ثبت ورود"));
             bIn.setOnClickListener(v -> recordStoreAttendance("in"));
-            Button bOut = !in.isEmpty() && out.isEmpty() ? primaryButton(withIcon("↗", "ثبت خروج")) : secondaryButton(withIcon("↗", "خروج"));
+            Button bOut = themedActionButton(withIcon("↗", "ثبت خروج"), GOLD, false);
             bOut.setOnClickListener(v -> recordStoreAttendance("out"));
             row.addView(bIn, weightedButtonLp()); row.addView(bOut, weightedButtonLp());
-            if (compact) { Button more = secondaryButton("حضور من"); more.setOnClickListener(v -> showApp("attendance")); row.addView(more, weightedButtonLp()); }
+            if (compact) { Button leave = secondaryButton(withIcon("☘", "مرخصی")); leave.setOnClickListener(v -> showApp("attendance")); row.addView(leave, weightedButtonLp()); }
         }
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.setMargins(0, dp(10), 0, 0); c.addView(row, rp);
     }
@@ -22885,7 +22910,7 @@ public class MainActivity extends Activity {
     private void renderStoreAttendancePage() {
         JSONObject d = storeDataCache; if (d == null) { loadStoreAttendance(); return; }
         content.removeAllViews();
-        addHero("حضور و مرخصی", "ثبت ورود و خروج فقط داخل محدوده فروشگاه • درخواست مرخصی");
+        addHero("حضور و مرخصی", "ثبت ورود و خروج داخل محدوده فروشگاه و درخواست مرخصی");
         addStoreAttendanceCard(d, false);
 
         Button leave = primaryButton(withIcon("☘", "درخواست مرخصی"));
@@ -22902,19 +22927,6 @@ public class MainActivity extends Activity {
                     leaveStatusFa(st), accent, null);
         }
 
-        List<JSONObject> days = attendanceDays(d.optJSONArray("attendance"));
-        String month = MeelanoJalali.monthStart(d.optString("today"));
-        int mDays = 0, mMin = 0;
-        for (JSONObject day : days) if (day.optString("date").compareTo(month) >= 0) { mDays++; mMin += day.optInt("minutes"); }
-        LinearLayout list = storeCard("حضور من در " + d.optString("month"), formatNumber(mDays) + " روز حضور • " + hoursText(mMin) + " کار ثبت‌شده", navAccent("attendance"));
-        int n = 0;
-        for (JSONObject day : days) {
-            addStoreRow(list, MeelanoJalali.weekday(day.optString("date")) + " " + MeelanoCharts.fa(day.optString("date")),
-                    "ورود: " + stringOr(MeelanoCharts.fa(day.optString("in")), "—") + "   خروج: " + stringOr(MeelanoCharts.fa(day.optString("out")), "—"),
-                    hoursText(day.optInt("minutes")), day.optString("out").isEmpty() ? WARNING : SUCCESS, null);
-            if (++n >= 40) break;
-        }
-        if (n == 0) list.addView(text("هنوز حضوری ثبت نشده است.", 10.6f, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         addDeveloperCredit(content);
     }
 
@@ -22987,7 +22999,7 @@ public class MainActivity extends Activity {
         o.put("mineToday", new JSONObject().put("count", 5).put("sum", 512_000_000d));
         o.put("monthSales", new JSONObject().put("count", 86).put("sum", 6_480_000_000d));
         o.put("customers", new JSONObject().put("total", 2716).put("debtors", 394).put("creditors", 210).put("debt", 104_030_000_000d).put("credit", 3_200_000_000d));
-        String[][] groups = {{"اسما حمدانی", "201", "47209411245"}, {"مصطفی خدایار", "91", "22369583619"}, {"شادی نظری", "10", "8956666000"}, {"ویزیتور سیستم", "27", "7964000954"}, {"جواد لطیفی", "39", "6480211869"}, {"الهام حمدانی", "19", "4756866101"}, {"فاطمه محمودی", "4", "1708647940"}};
+        String[][] groups = {{"سایر (غیر ویزیتور)", "257", "68886000000"}, {"مصطفی خدایار", "91", "22369583619"}, {"جواد لطیفی", "39", "6480211869"}, {"فروشگاه", "12", "2950000000"}, {"قریشی", "9", "1840000000"}, {"فاطمه محمودی (خودم)", "4", "1708647940"}};
         JSONArray gs = new JSONArray();
         String[] names = {"۰۸ فروشگاه آجیل ستاره", "سوپر مارکت امید", "آجیل و خشکبار نگین", "فروشگاه پسته طلایی", "خشکبار برادران", "۰۷ آجیل فروشی کیان"};
         JSONArray overdue = new JSONArray();
@@ -23008,7 +23020,7 @@ public class MainActivity extends Activity {
         JSONArray monthly = new JSONArray(); String[] ms = {"1405/02", "1405/03", "1405/04", "1405/05", "1405/06", "1405/07"}; double[] mv = {18.2e9, 21.4e9, 19.9e9, 24.6e9, 27.1e9, 6.48e9};
         for (int i = 0; i < ms.length; i++) monthly.put(new JSONObject().put("month", ms[i]).put("count", 240 + i * 11).put("sum", mv[i]));
         o.put("monthly", monthly);
-        o.put("byUser", new JSONArray().put(new JSONObject().put("name", "مصطفی خدایار").put("count", 29).put("sum", 2.4e9)).put(new JSONObject().put("name", "جواد لطیفی").put("count", 24).put("sum", 1.9e9)).put(new JSONObject().put("name", "فروشگاه").put("count", 21).put("sum", 1.4e9)).put(new JSONObject().put("name", "فاطمه محمودی").put("count", 12).put("sum", 0.78e9)));
+        o.put("byUser", new JSONArray().put(new JSONObject().put("name", "مصطفی خدایار").put("count", 29).put("sum", 2.4e9)).put(new JSONObject().put("name", "جواد لطیفی").put("count", 24).put("sum", 1.9e9)).put(new JSONObject().put("name", "فروشگاه").put("count", 21).put("sum", 1.4e9)).put(new JSONObject().put("name", "فاطمه محمودی (خودم)").put("count", 12).put("sum", 0.78e9)));
         o.put("topCustomers", new JSONArray().put(new JSONObject().put("name", "سوپر مارکت امید").put("count", 6).put("sum", 1.2e9)).put(new JSONObject().put("name", "آجیل و خشکبار نگین").put("count", 4).put("sum", 0.94e9)).put(new JSONObject().put("name", "فروشگاه پسته طلایی").put("count", 3).put("sum", 0.61e9)));
         o.put("lowStock", new JSONArray().put(new JSONObject().put("name", "پسته کله قوچی براق").put("stock", 2).put("code", 628)).put(new JSONObject().put("name", "مغز گردو A امسالی").put("stock", 0).put("code", 786)));
         o.put("stock", new JSONObject().put("total", 1801).put("inStock", 1240));

@@ -341,6 +341,12 @@ def verify_store(cur, out, checks):
         total = sum(int(x.rsplit("/", 1)[1]) for x in g.group(1).split(";") if "/" in x)
         checks["store_debt_groups_add_up"] = abs(total - float(before["debtors"][1])) < 10
 
+    # v5.4.1: only visitors (and the signed-in person) are named; office staff become «سایر»; no attendance history.
+    bvm = re.search(r"STORE byVisitor (.*) attendanceInData=(\w+)", joined)
+    names_txt = (g.group(1) if g else "") + ";" + (bvm.group(1) if bvm else "")
+    out["store_visitor_names"] = names_txt
+    checks["store_reports_only_visitor_names"] = bool(g) and bool(bvm) and not any(x in names_txt for x in ("حمدان", "مدير", "مدیر", "سيستم", "سیستم"))
+    checks["store_no_attendance_history_in_app"] = bool(bvm) and bvm.group(2) == "false"
     inv = [s for s in st if s.startswith("STORE INVOICE1 ")]
     inv2 = [s for s in st if s.startswith("STORE INVOICE2 ")]
     r1 = json.loads(inv[0].split(" ", 2)[2]) if inv else {}
