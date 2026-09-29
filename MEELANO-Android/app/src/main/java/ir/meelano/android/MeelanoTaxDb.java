@@ -909,17 +909,24 @@ final class MeelanoTaxDb {
      * @throws IllegalStateException with a Persian message when the document already has a live submission.
      */
     static long reserve(Connection c, Log l, long serialSeed) throws Exception {
+        // The lock is owned by the session (not the transaction): with the driver's implicit-transaction mode no
+        // transaction is open yet at this point, and a transaction-owned applock would be refused (-999).
+        String resource = "meelano_tax_" + l.docKind + "_" + l.backKind + "_" + l.docNo;
+        boolean locked = false;
         boolean auto = c.getAutoCommit();
-        c.setAutoCommit(false);
         try {
-            try (PreparedStatement ps = c.prepareStatement("DECLARE @r int; EXEC @r = sp_getapplock @Resource=?, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=20000; SELECT @r")) {
-                ps.setString(1, "meelano_tax_" + l.docKind + "_" + l.backKind + "_" + l.docNo);
+            c.setAutoCommit(true);
+            try (PreparedStatement ps = c.prepareStatement("SET NOCOUNT ON; DECLARE @r int; EXEC @r = sp_getapplock @Resource=?, @LockMode='Exclusive', @LockOwner='Session', @LockTimeout=20000; SELECT @r AS r; SET NOCOUNT OFF")) {
+                ps.setString(1, resource);
                 boolean rs = ps.execute();
                 while (!rs && ps.getUpdateCount() != -1) rs = ps.getMoreResults();
-                if (rs) try (ResultSet r = ps.getResultSet()) {
-                    if (r.next() && r.getInt(1) < 0) throw new IllegalStateException("این سند همین حالا در دستگاه دیگری در حال ارسال است.");
-                }
+                int code = -999;
+                if (rs) try (ResultSet r = ps.getResultSet()) { if (r.next()) code = r.getInt(1); }
+                if (code == -1) throw new IllegalStateException("این سند همین حالا در دستگاه دیگری در حال ارسال است.");
+                if (code < 0) throw new IllegalStateException("قفل ارسال سند گرفته نشد (کد " + code + ").");
+                locked = true;
             }
+            c.setAutoCommit(false);
             String dup = "SELECT TOP (1) status, taxid FROM dbo.meelano_tax_invoices WITH (UPDLOCK, HOLDLOCK) WHERE doc_kind=? AND doc_no=? AND ISNULL(back_kind,0)=? AND ins=? "
                     + "AND ISNULL(rdf,0)=? AND status IN ('SENDING','PENDING','IN_PROGRESS','UNKNOWN','SUCCESS','EXTERNAL')" + (l.ins == MeelanoTaxInvoice.INS_CORRECTION ? " AND content_hash=?" : "");
             try (PreparedStatement ps = c.prepareStatement(dup)) {
@@ -941,9 +948,16 @@ final class MeelanoTaxDb {
             c.commit();
             return id;
         } catch (Exception e) {
-            try { c.rollback(); } catch (Exception ignored) { }
+            try { if (!c.getAutoCommit()) c.rollback(); } catch (Exception ignored) { }
             throw e;
         } finally {
+            try { c.setAutoCommit(true); } catch (Exception ignored) { }
+            if (locked) {
+                try (PreparedStatement ps = c.prepareStatement("EXEC sp_releaseapplock @Resource=?, @LockOwner='Session'")) {
+                    ps.setString(1, resource);
+                    ps.execute();
+                } catch (Exception ignored) { }
+            }
             try { c.setAutoCommit(auto); } catch (Exception ignored) { }
         }
     }
