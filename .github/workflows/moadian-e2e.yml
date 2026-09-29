@@ -1,0 +1,105 @@
+name: Moadian end-to-end test
+
+# Runs only when the commit message contains [moadian-e2e].
+# Restores the Atiran2 backup into a private SQL Server container on the runner and runs the Moadian app's real
+# data layer + send engine (MeelanoTaxDb / Engine / Invoice / Crypto / Api) against it. The tax portal is replaced by
+# a local fake that decrypts every packet and verifies the signature, so nothing is sent to the real Moadian system
+# and the live Atiran server is never contacted. Results are committed encrypted.
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+jobs:
+  moadian:
+    if: contains(github.event.head_commit.message, '[moadian-e2e]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get the Atiran backup from main
+        run: |
+          git fetch --depth=1 origin main
+          git show origin/main:Atiran2.zip > "$RUNNER_TEMP/atiran.zip"
+          unzip -o -q "$RUNNER_TEMP/atiran.zip" -d "$RUNNER_TEMP/bak"
+
+      - name: Start private SQL Server and copy the backup in
+        run: |
+          SA="Sa1!$(openssl rand -hex 12)"; echo "::add-mask::$SA"; echo "SA_PASS=$SA" >> "$GITHUB_ENV"
+          E2E="E2e7$(openssl rand -hex 6)"; echo "::add-mask::$E2E"; echo "E2E_PASS=$E2E" >> "$GITHUB_ENV"
+          docker run -d --name mssql -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$SA" -e MSSQL_COLLATION=Arabic_CI_AS -e MSSQL_PID=Developer -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+          docker exec -u 0 mssql mkdir -p /var/opt/mssql/backup
+          docker cp "$RUNNER_TEMP/bak/Atiran2" mssql:/var/opt/mssql/backup/Atiran2.bak
+          docker exec -u 0 mssql chown -R mssql /var/opt/mssql/backup
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore Atiran2
+        run: |
+          pip install --quiet python-tds
+          for i in 1 2 3 4; do
+            if [ "$(docker inspect -f '{{.State.Running}}' mssql)" != "true" ]; then echo "::notice::mssql stopped, starting again"; docker start mssql; sleep 25; fi
+            if python3 .github/scripts/atiran_e2e.py restore "$RUNNER_TEMP/restore.json" > "$RUNNER_TEMP/r.log" 2>&1; then echo "::notice::restore ok (try $i)"; break; fi
+            grep -v -i "password" "$RUNNER_TEMP/r.log" | tail -4 | cut -c1-300 | sed 's/^/::notice::restore try '"$i"': /'
+            sleep 20
+          done
+          test -s "$RUNNER_TEMP/restore.json"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Compile the app's tax classes + harness
+        run: |
+          M="$RUNNER_TEMP/m"; P="$M/src/ir/meelano/android"; mkdir -p "$P" "$M/classes"
+          S=MEELANO-Android/app/src/main/java/ir/meelano/android
+          for f in MeelanoTaxDb MeelanoTaxEngine MeelanoTaxInvoice MeelanoTaxJson MeelanoTaxCrypto MeelanoTaxApi MeelanoJalali; do cp "$S/$f.java" "$P/"; done
+          # Only in this harness copy: allow the fake portal to extend the API client.
+          sed -i 's/^final class MeelanoTaxApi/class MeelanoTaxApi/' "$P/MeelanoTaxApi.java"
+          cp .github/moadian-e2e/MoadianE2E.java "$P/"
+          curl -sSfL -o "$M/jtds.jar" https://repo1.maven.org/maven2/net/sourceforge/jtds/jtds/1.3.1/jtds-1.3.1.jar
+          if ! javac -encoding UTF-8 -nowarn -cp "$M/jtds.jar" -d "$M/classes" "$P"/*.java > "$M/javac.log" 2>&1; then
+            cat "$M/javac.log"; grep -E "error:" "$M/javac.log" | head -10 | sed 's/^/::error title=javac::/'; exit 1
+          fi
+          keytool -genkeypair -alias e2e -keyalg RSA -keysize 2048 -validity 30 \
+            -dname "CN=Derakhshan E2E [Stamp], SERIALNUMBER=14000000000, O=Non-Governmental, C=IR" \
+            -keystore "$M/e2e.p12" -storetype PKCS12 -storepass e2e-pass -keypass e2e-pass
+
+      - name: Run against the restored Atiran copy
+        run: |
+          M="$RUNNER_TEMP/m"
+          set +e
+          java -Xmx2g -cp "$M/classes:$M/jtds.jar" ir.meelano.android.MoadianE2E "$RUNNER_TEMP/moadian.json" "$M/e2e.p12" e2e-pass > "$RUNNER_TEMP/moadian.log" 2>&1
+          RC=$?
+          set -e
+          grep -E "^\[(ok|FAIL)\]|CHECK|PASSED" "$RUNNER_TEMP/moadian.log" | cut -c1-400 || true
+          grep -E "^\[FAIL\]" "$RUNNER_TEMP/moadian.log" | head -8 | cut -c1-900 | sed 's/^/::error title=Moadian e2e::/' || true
+          grep -E "^\[(ok|FAIL)\]" "$RUNNER_TEMP/moadian.log" | tr '\n' ' ' | cut -c1-3000 | sed 's/^/::notice title=Moadian steps::/' || true
+          tail -1 "$RUNNER_TEMP/moadian.log" | sed 's/^/::notice title=Moadian e2e result::/'
+          echo "RC=$RC" >> "$GITHUB_ENV"
+
+      - name: Encrypt and commit results
+        if: always()
+        run: |
+          set -e
+          rm -rf "$RUNNER_TEMP/res" && mkdir -p tools/moadian-e2e "$RUNNER_TEMP/res"
+          cp "$RUNNER_TEMP"/moadian.json "$RUNNER_TEMP"/moadian.log "$RUNNER_TEMP/res/" 2>/dev/null || true
+          tar -czf "$RUNNER_TEMP/m.tgz" -C "$RUNNER_TEMP" res
+          openssl rand -out "$RUNNER_TEMP/k.bin" 32
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in "$RUNNER_TEMP/m.tgz" -out tools/moadian-e2e/result.tgz.enc -pass file:"$RUNNER_TEMP/k.bin"
+          openssl pkeyutl -encrypt -pubin -inkey tools/atiran-probe/probe-public-key.pem -pkeyopt rsa_padding_mode:oaep -in "$RUNNER_TEMP/k.bin" -out tools/moadian-e2e/result.key.enc
+          rm -f "$RUNNER_TEMP/k.bin" "$RUNNER_TEMP/m.tgz"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add tools/moadian-e2e
+          git commit -m "Moadian e2e result (encrypted) [skip ci]" || echo "No changes"
+          for i in 1 2 3; do git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin HEAD:${GITHUB_REF_NAME} && break; sleep 5; done
+
+      - name: Fail when checks failed
+        run: test "${RC:-1}" = "0"
