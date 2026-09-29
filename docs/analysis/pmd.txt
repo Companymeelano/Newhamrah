@@ -3284,9 +3284,9 @@ MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:821:	Appe
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:849:	InsufficientStringBufferDeclaration:	StringBuilder has been initialized with size 28, but has at least 235 characters appended.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:852:	LiteralsFirstInComparisons:	Position literals first in String comparisons
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:884:	UseConcurrentHashMap:	If you run in Java5 or newer and have concurrent access, you should use the ConcurrentHashMap implementation
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:1062:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:1103:	UseConcurrentHashMap:	If you run in Java5 or newer and have concurrent access, you should use the ConcurrentHashMap implementation
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:1113:	AvoidDuplicateLiterals:	The String literal "MsgErrorTax" appears 4 times in this file; the first occurrence is on line 1,113
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:1076:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:1117:	UseConcurrentHashMap:	If you run in Java5 or newer and have concurrent access, you should use the ConcurrentHashMap implementation
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxDb.java:1127:	AvoidDuplicateLiterals:	The String literal "MsgErrorTax" appears 4 times in this file; the first occurrence is on line 1,127
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxEngine.java:27:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxEngine.java:55:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoTaxEngine.java:116:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
