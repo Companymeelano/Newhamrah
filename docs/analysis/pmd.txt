@@ -2844,37 +2844,37 @@ MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:43:	Av
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:98:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:125:	ConsecutiveAppendsShouldReuse:	StringBuffer (or StringBuilder).append is called consecutively without reusing the target variable.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:172:	CheckResultSet:	Always check the return of one of the navigation method (next,previous,first,last) of a ResultSet.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:277:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:304:	AvoidDuplicateLiterals:	The String literal "customer" appears 5 times in this file; the first occurrence is on line 304
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:305:	AvoidDuplicateLiterals:	The String literal "status" appears 10 times in this file; the first occurrence is on line 305
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:306:	AvoidDuplicateLiterals:	The String literal "assignee" appears 10 times in this file; the first occurrence is on line 306
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:307:	AvoidDuplicateLiterals:	The String literal "pendingTo" appears 5 times in this file; the first occurrence is on line 307
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:310:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:311:	AvoidDuplicateLiterals:	The String literal "missing" appears 8 times in this file; the first occurrence is on line 311
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:311:	AvoidDuplicateLiterals:	The String literal "pending" appears 4 times in this file; the first occurrence is on line 311
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:386:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:400:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:419:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:433:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:487:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:511:	CheckResultSet:	Always check the return of one of the navigation method (next,previous,first,last) of a ResultSet.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:551:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:555:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:616:	AvoidDuplicateLiterals:	The String literal " \u2022 " appears 5 times in this file; the first occurrence is on line 616
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:629:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:644:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:650:	AvoidDuplicateLiterals:	The String literal "kind" appears 4 times in this file; the first occurrence is on line 650
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:650:	AvoidDuplicateLiterals:	The String literal "title" appears 5 times in this file; the first occurrence is on line 650
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:650:	AvoidDuplicateLiterals:	The String literal "body" appears 6 times in this file; the first occurrence is on line 650
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:653:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:656:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:666:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:667:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:676:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:707:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:713:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:713:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:717:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:279:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:306:	AvoidDuplicateLiterals:	The String literal "customer" appears 5 times in this file; the first occurrence is on line 306
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:307:	AvoidDuplicateLiterals:	The String literal "status" appears 10 times in this file; the first occurrence is on line 307
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:308:	AvoidDuplicateLiterals:	The String literal "assignee" appears 10 times in this file; the first occurrence is on line 308
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:309:	AvoidDuplicateLiterals:	The String literal "pendingTo" appears 5 times in this file; the first occurrence is on line 309
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:312:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:313:	AvoidDuplicateLiterals:	The String literal "missing" appears 8 times in this file; the first occurrence is on line 313
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:313:	AvoidDuplicateLiterals:	The String literal "pending" appears 4 times in this file; the first occurrence is on line 313
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:388:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:402:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:421:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:435:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:489:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:513:	CheckResultSet:	Always check the return of one of the navigation method (next,previous,first,last) of a ResultSet.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:553:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:557:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:618:	AvoidDuplicateLiterals:	The String literal " \u2022 " appears 5 times in this file; the first occurrence is on line 618
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:631:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:646:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:652:	AvoidDuplicateLiterals:	The String literal "kind" appears 4 times in this file; the first occurrence is on line 652
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:652:	AvoidDuplicateLiterals:	The String literal "title" appears 5 times in this file; the first occurrence is on line 652
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:652:	AvoidDuplicateLiterals:	The String literal "body" appears 6 times in this file; the first occurrence is on line 652
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:655:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:658:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:668:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:669:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:678:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:709:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:715:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:715:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDelivery.java:719:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDeliveryJob.java:22:	DoNotUseThreads:	To be compliant to J2EE, a webapp should not use any thread.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDeliveryJob.java:22:	AvoidUsingVolatile:	Use of modifier volatile is not recommended.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoDeliveryJob.java:45:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
