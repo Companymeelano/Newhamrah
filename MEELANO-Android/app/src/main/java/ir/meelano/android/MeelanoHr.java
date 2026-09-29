@@ -419,7 +419,7 @@ final class MeelanoHr {
     }
 
     static String hoursText(int minutes) {
-        if (minutes <= 0) return "۰";
+        if (minutes <= 0) return "کمتر از یک دقیقه";
         int h = minutes / 60, mi = minutes % 60;
         String s = h > 0 ? h + " ساعت" + (mi > 0 ? " و " + mi + " دقیقه" : "") : mi + " دقیقه";
         return fa(s);
@@ -430,7 +430,7 @@ final class MeelanoHr {
         int total = (int) Math.round(minutes);
         boolean neg = total < 0; total = Math.abs(total);
         int days = total / DAY_MINUTES, rest = total % DAY_MINUTES;
-        String s = (days > 0 ? days + " روز" : "") + (rest > 0 ? (days > 0 ? " و " : "") + hoursText(rest) : (days == 0 ? "۰" : ""));
+        String s = (days > 0 ? days + " روز" : "") + (rest > 0 ? (days > 0 ? " و " : "") + hoursText(rest) : (days == 0 ? "صفر" : ""));
         return (neg ? "منفی " : "") + fa(s);
     }
 

@@ -23156,7 +23156,8 @@ public class MainActivity extends Activity {
     }
 
     // ---------------------------------------------------------------- shared store UI pieces
-    private int[] storePalette() { return new int[]{GOLD, SUCCESS, INFO, WARNING, DANGER, GOLD_2, mix(INFO, SUCCESS, .5f), mix(GOLD, DANGER, .4f)}; }
+    /** Chart colours; neighbours must look different in every theme (in the green theme GOLD and SUCCESS are both green). */
+    private int[] storePalette() { return new int[]{GOLD, GOLD_2, INFO, DANGER, WARNING, SUCCESS, mix(INFO, SUCCESS, .5f), mix(GOLD, DANGER, .4f)}; }
 
     private void storeLoad(String title, Runnable render) {
         content.removeAllViews();
@@ -23413,7 +23414,8 @@ public class MainActivity extends Activity {
             mission.setOnClickListener(v -> showStoreMissionDialog());
             row2.addView(mission, weightedButtonLp());
         }
-        Button leave = secondaryButton(withIcon("☘", compact ? "مرخصی و ماموریت‌ها" : "درخواست مرخصی"));
+        Button leave = secondaryButton(withIcon("☘", compact ? "مرخصی‌ها" : "درخواست مرخصی"));
+        leave.setSingleLine(true); leave.setEllipsize(TextUtils.TruncateAt.END);
         leave.setOnClickListener(v -> { if (compact) showApp("attendance"); else showLeaveRequestDialog(); });
         row2.addView(leave, weightedButtonLp());
         LinearLayout.LayoutParams rp2 = new LinearLayout.LayoutParams(-1, -2); rp2.setMargins(0, dp(6), 0, 0); c.addView(row2, rp2);
