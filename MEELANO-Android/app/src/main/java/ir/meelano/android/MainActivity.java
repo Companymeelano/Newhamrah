@@ -24313,8 +24313,8 @@ public class MainActivity extends Activity {
         }
         double bal = d.optDouble("balance");
         // Summary: balance, total debit / credit (read-only).
-        LinearLayout sc = storeCard(withIcon("☷", "حساب «" + acct.optString("name") + "»"), "کد طرف حساب " + formatNumber(acct.optLong("shmo")) + " • "
-                + formatNumber(d.optInt("count")) + " گردش • همان مانده‌ای که آتیران نشان می‌دهد", bal > 0.5 ? DANGER : SUCCESS);
+        LinearLayout sc = storeCard(withIcon("☷", "حساب «" + acct.optString("name") + "»"), "کد طرف حساب " + MeelanoCharts.fa(String.valueOf(acct.optLong("shmo"))) + " • تعداد گردش: "
+                + formatNumber(d.optInt("count")) + " • همان مانده‌ای که آتیران نشان می‌دهد", bal > 0.5 ? DANGER : SUCCESS);
         LinearLayout tiles = new LinearLayout(this); tiles.setOrientation(LinearLayout.HORIZONTAL); tiles.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         String[][] tv = {{bal > 0.5 ? "مانده (بدهکار)" : bal < -0.5 ? "مانده (بستانکار)" : "مانده", money(Math.abs(bal))}, {"جمع بدهکار", money(d.optDouble("bedSum"))}, {"جمع بستانکار", money(d.optDouble("besSum"))}};
         int[] ta = {bal > 0.5 ? DANGER : SUCCESS, WARNING, INFO};
@@ -24485,6 +24485,7 @@ public class MainActivity extends Activity {
         LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL);
         body.addView(text("مبلغ (ریال)", 11, MUTED, Typeface.BOLD), new LinearLayout.LayoutParams(-1, -2));
         EditText amount = numberInput("مثلاً ۵۰٬۰۰۰٬۰۰۰", 0, false);
+        amount.setText("");
         body.addView(amount, new LinearLayout.LayoutParams(-1, dp(50)));
         final TextView words = text("", 10f, tc(SUCCESS), Typeface.BOLD);
         body.addView(words, new LinearLayout.LayoutParams(-1, -2));
