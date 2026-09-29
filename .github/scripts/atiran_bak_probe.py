@@ -354,6 +354,53 @@ def stage7(c, cur, q, out):
     q("s7_inventory_groups", "SELECT i.group_rdf, CAST(g.group_name AS nvarchar(200)), COUNT(*) FROM dbo.inventory i LEFT JOIN dbo.kagroup g ON g.group_rdf=i.group_rdf GROUP BY i.group_rdf, CAST(g.group_name AS nvarchar(200)) ORDER BY 1")
 
 
+def stage8(c, cur, q, out):
+    """Stock accuracy (produced goods), product search text and product images. Read-only."""
+    q("s8_objects", "SELECT o.name, o.type_desc FROM sys.objects o WHERE o.is_ms_shipped=0 AND o.type IN ('P','FN','TF','IF','V','U','TR') AND ("
+                    "o.name LIKE '%mojodi%' OR o.name LIKE '%mojoodi%' OR o.name LIKE '%stock%' OR o.name LIKE '%kardex%' OR o.name LIKE '%tolid%' OR o.name LIKE '%product%' "
+                    "OR o.name LIKE '%formul%' OR o.name LIKE '%montage%' OR o.name LIKE '%anbar%' OR o.name LIKE '%ka_act%' OR o.name LIKE '%kaact%' OR o.name LIKE '%gardesh%' "
+                    "OR o.name LIKE '%mande%' OR o.name LIKE '%remain%' OR o.name LIKE '%balance%' OR o.name LIKE '%warehouse%' OR o.name LIKE '%movement%' OR o.name LIKE '%pic%' "
+                    "OR o.name LIKE '%image%' OR o.name LIKE '%aks%' OR o.name LIKE '%photo%' OR o.name LIKE '%sakht%' OR o.name LIKE '%masraf%' OR o.name LIKE '%havale%' OR o.name LIKE '%resid%') ORDER BY o.type_desc, o.name")
+    rows = (out.get("s8_objects") or {}).get("rows", []) or []
+    names = [r[0] for r in rows if r[1] in ("SQL_STORED_PROCEDURE", "SQL_SCALAR_FUNCTION", "SQL_TABLE_VALUED_FUNCTION", "SQL_INLINE_TABLE_VALUED_FUNCTION", "VIEW", "SQL_TRIGGER")]
+    want = [n for n in names if any(k in n.lower() for k in ("mojodi", "mojoodi", "stock", "kardex", "tolid", "production", "formul", "montage", "gardesh"))][:40]
+    for extra in ("UpdateMojodiInventory", "UpdateMojodiInventoryAnbars", "InvoiceTrigger"):
+        if extra not in want: want.append(extra)
+    for n in want:
+        q("s8_def_" + n, "SELECT LEFT(OBJECT_DEFINITION(OBJECT_ID(N'dbo.%s')), 24000)" % n.replace("'", ""))
+    q("s8_triggers", "SELECT t.name, OBJECT_NAME(t.parent_id) FROM sys.triggers t WHERE t.parent_id<>0 ORDER BY 2,1")
+    q("s8_ka_act_cols", "SELECT c.name, ty.name FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.ka_act') ORDER BY c.column_id")
+    q("s8_ka_act_by_act", "SELECT act_id, COUNT(*) FROM dbo.ka_act GROUP BY act_id ORDER BY act_id")
+    q("s8_ka_act_samples", "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY act_id ORDER BY (SELECT 1)) mrn FROM dbo.ka_act) x WHERE mrn<=3")
+    q("s8_act_tables", "SELECT name FROM sys.tables WHERE name LIKE '%act%' OR name LIKE '%kind%' ORDER BY name")
+    q("s8_inventory_cols", "SELECT c.name, ty.name FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.inventory') ORDER BY c.column_id")
+    tabs = [r[0] for r in rows if r[1] == "USER_TABLE"]
+    for t in tabs[:60]:
+        q("s8_cols_" + t, "SELECT c.name, ty.name, (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id=c.object_id AND p.index_id IN (0,1)) FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.%s') ORDER BY c.column_id" % t.replace("'", ""))
+    q("s8_prod_items", "SELECT TOP (60) i.shka, CAST(i.naka AS nvarchar(200)), i.group_rdf, i.mohvah, i.mojkavah, i.mojkajoz FROM dbo.inventory i WHERE i.group_rdf=3 ORDER BY i.shka")
+    kc = [r[0] for r in (out.get("s8_ka_act_cols") or {}).get("rows", []) or []]
+    lk = [x.lower() for x in kc]
+    num = [x for x in kc if x.lower() in ("tedvah", "tedjoz", "ted", "tedad", "vared", "sader", "meghdar", "tedvahmain", "tedjozmain")]
+    if "shka" in lk and "act_id" in lk:
+        sums = ", ".join("SUM(CAST(ISNULL(k.[%s],0) AS decimal(19,3)))" % x for x in num) or "COUNT(*)"
+        q("s8_prod_ledger", "SELECT k.shka, k.act_id, COUNT(*), %s FROM dbo.ka_act k WHERE k.shka IN (SELECT TOP (25) shka FROM dbo.inventory WHERE group_rdf=3 ORDER BY shka) GROUP BY k.shka, k.act_id ORDER BY 1,2" % sums)
+        q("s8_ledger_rows_one", "SELECT TOP (80) k.* FROM dbo.ka_act k WHERE k.shka=(SELECT TOP (1) k2.shka FROM dbo.ka_act k2 JOIN dbo.inventory i ON i.shka=k2.shka WHERE i.group_rdf=3 GROUP BY k2.shka ORDER BY COUNT(*) DESC)")
+        q("s8_top_ledger_items", "SELECT TOP (30) k.shka, CAST(MAX(i.naka) AS nvarchar(200)), COUNT(DISTINCT k.act_id), MAX(i.mojkavah), MAX(i.mojkajoz), MAX(i.mohvah) FROM dbo.ka_act k JOIN dbo.inventory i ON i.shka=k.shka "
+                                  "WHERE k.act_id NOT IN (10,20) GROUP BY k.shka ORDER BY COUNT(*) DESC")
+    q("s8_mojodi_anbars", "SELECT TOP (20) * FROM dbo.MojodiInventoryAnbars")
+    q("s8_anbars", _sel6(cur, "anbars", top=40, order="1"))
+    q("s8_name_chars", "SELECT SUM(CASE WHEN naka LIKE N'%ي%' THEN 1 ELSE 0 END), SUM(CASE WHEN naka LIKE N'%ك%' THEN 1 ELSE 0 END), SUM(CASE WHEN CHARINDEX(NCHAR(8204),naka)>0 THEN 1 ELSE 0 END), "
+                       "SUM(CASE WHEN CHARINDEX(NCHAR(160),naka)>0 THEN 1 ELSE 0 END), SUM(CASE WHEN naka LIKE N'%ـ%' THEN 1 ELSE 0 END), SUM(CASE WHEN naka LIKE N'%  %' THEN 1 ELSE 0 END), "
+                       "SUM(CASE WHEN naka LIKE N'%ة%' OR naka LIKE N'%أ%' OR naka LIKE N'%إ%' OR naka LIKE N'%ؤ%' OR naka LIKE N'%ئ%' THEN 1 ELSE 0 END), SUM(CASE WHEN naka LIKE N'%[0-9]%' THEN 1 ELSE 0 END), "
+                       "COUNT(*) FROM dbo.inventory")
+    q("s8_name_types", "SELECT c.name, ty.name, c.max_length, c.collation_name FROM sys.columns c JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.inventory') AND c.name IN ('naka','pic','StuffCode','barcode','Barcode','code')")
+    q("s8_name_sample", "SELECT TOP (60) shka, CAST(naka AS nvarchar(200)) FROM dbo.inventory ORDER BY NEWID()")
+    q("s8_name_hex", "SELECT TOP (15) shka, CONVERT(varchar(400), CAST(CAST(naka AS nvarchar(100)) AS varbinary(200)), 2) FROM dbo.inventory ORDER BY shka DESC")
+    q("s8_pic_stats", "SELECT COUNT(*), SUM(CASE WHEN DATALENGTH(pic)>20 THEN 1 ELSE 0 END), MAX(DATALENGTH(pic)), AVG(CAST(DATALENGTH(pic) AS bigint)) FROM dbo.inventory")
+    q("s8_pic_magic", "SELECT TOP (20) shka, CAST(naka AS nvarchar(120)), DATALENGTH(pic), CONVERT(varchar(40), CAST(SUBSTRING(pic,1,12) AS varbinary(12)), 2) FROM dbo.inventory WHERE DATALENGTH(pic)>20")
+    q("s8_image_tables", "SELECT t.name, c.name, ty.name, (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id=t.object_id AND p.index_id IN (0,1)) FROM sys.tables t JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON c.user_type_id=ty.user_type_id WHERE ty.name IN ('image','varbinary') ORDER BY 1,2")
+
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -362,6 +409,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "8":
+        stage8(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 8 done; errors:", len(out["errors"]))
+        return
     if os.environ.get("PROBE_STAGE") == "7":
         stage7(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
