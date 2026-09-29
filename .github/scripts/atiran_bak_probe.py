@@ -167,6 +167,91 @@ def stage4(c, cur, q, out):
     q("s4_server_date", "SELECT dbo.ReturnDateServer(), CAST(dbo.UDF_Gregorian_To_Persian(GETDATE()) AS nvarchar(30))")
 
 
+STAFF_WORDS = ["mosa", "mosae", "masa", "msd", "vam", "loan", "hogh", "hoq", "hoghoogh", "salar", "pers", "karmand", "emp", "staff",
+               "pardakht", "pay", "sanad", "asnad", "doc", "tafsil", "moin", "kol", "hesab", "act", "gardesh", "sarfasl", "kasr", "ezafe",
+               "cow", "sandog", "box", "dar", "par", "hazine", "cost", "mand"]
+
+
+def _sel(cur, table, where="", top=300, order="1 DESC"):
+    """SELECT with every char/varchar/text column cast to nvarchar so Persian (CP1256) text survives."""
+    cur.execute("SELECT c.name, t.name FROM sys.columns c JOIN sys.types t ON c.user_type_id=t.user_type_id WHERE c.object_id=OBJECT_ID(N'dbo.[%s]') ORDER BY c.column_id" % table.replace("]", "]]"))
+    cols = []
+    for n, ty in cur.fetchall():
+        if any(k in n.lower() for k in ("pass", "pwd")):
+            continue
+        qn = "[%s]" % n.replace("]", "]]")
+        cols.append("CAST(%s AS nvarchar(max)) AS %s" % (qn, qn) if ty in ("char", "varchar", "text") else ("CAST(%s AS nvarchar(40)) AS %s" % (qn, qn) if ty in ("image", "varbinary", "binary", "timestamp") else qn))
+    if not cols:
+        return None
+    return "SELECT TOP (%d) %s FROM dbo.[%s] %s ORDER BY %s" % (top, ",".join(cols), table.replace("]", "]]"), where, order)
+
+
+def stage5(c, cur, q, out):
+    """Store staff panel (v5.7.0): advances (مساعده), the staff member's own account statement (گردش حساب:
+    invoices, payments, receipts, accounting headings in their name). Read-only."""
+    q("s5_all_counts", "SELECT t.name, SUM(p.rows) FROM sys.tables t JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) GROUP BY t.name ORDER BY t.name")
+    like = " OR ".join("t.name LIKE N'%%%s%%'" % w for w in STAFF_WORDS)
+    cur.execute("SELECT t.name FROM sys.tables t JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) WHERE (" + like + ") GROUP BY t.name HAVING SUM(p.rows) > 0 ORDER BY t.name")
+    tables = [r[0] for r in cur.fetchall()]
+    out["s5_tables"] = tables
+    q("s5_cols", "SELECT OBJECT_NAME(c.object_id), c.name, ty.name, c.max_length, c.is_nullable, c.is_identity FROM sys.columns c "
+                 "JOIN sys.types ty ON c.user_type_id=ty.user_type_id JOIN sys.tables t ON t.object_id=c.object_id WHERE (" + like + ") "
+                 "OR t.name IN (N'CUSTOMERS', N'visitors', N'sys_users', N'custgroup') ORDER BY OBJECT_NAME(c.object_id), c.column_id")
+    for t in tables[:140]:
+        sql = _sel(cur, t, top=6)
+        if sql:
+            q("s5_rows_" + t, sql)
+    # Objects (procedures, views, functions) mentioning advances / salary / statement.
+    q("s5_modules", "SELECT o.name, o.type, LEN(m.definition) FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id "
+                    "WHERE m.definition LIKE N'%مساعد%' OR m.definition LIKE N'%مساعده%' OR o.name LIKE N'%mosa%' OR o.name LIKE N'%masa%' OR o.name LIKE N'%vam%' "
+                    "OR o.name LIKE N'%hogh%' OR o.name LIKE N'%gardesh%' OR o.name LIKE N'%kardex%' OR o.name LIKE N'%cust_act%' OR o.name LIKE N'%daftar%' "
+                    "OR o.name LIKE N'%tafsil%' OR o.name LIKE N'%pardakht%' OR o.name LIKE N'%sanad%' ORDER BY o.name")
+    q("s5_module_defs", "SELECT o.name, LEFT(m.definition, 12000) FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id "
+                        "WHERE (o.name LIKE N'%gardesh%' OR o.name LIKE N'%cust_act%' OR o.name LIKE N'%mosa%' OR o.name LIKE N'%masa%' OR o.name LIKE N'%FixManCustomer%' "
+                        "OR o.name LIKE N'%daftar%' OR m.definition LIKE N'%مساعد%') AND o.type IN ('P','V','FN','IF','TF')")
+    # Which tables hold text «مساعده» (any nvarchar/varchar column), with counts.
+    cur.execute("SELECT t.name, c.name FROM sys.columns c JOIN sys.tables t ON t.object_id=c.object_id JOIN sys.types ty ON ty.user_type_id=c.user_type_id "
+                "JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) WHERE ty.name IN ('varchar','nvarchar','char','nchar','text','ntext') "
+                "AND (c.max_length >= 20 OR c.max_length = -1) GROUP BY t.name, c.name HAVING SUM(p.rows) BETWEEN 1 AND 3000000")
+    hits = []
+    for t, col in cur.fetchall():
+        try:
+            cur.execute("SELECT COUNT(*) FROM dbo.[%s] WHERE CAST([%s] AS nvarchar(max)) LIKE N'%%مساعد%%' OR CAST([%s] AS nvarchar(max)) LIKE N'%%مساعده%%'"
+                        % (t.replace("]", "]]"), col.replace("]", "]]"), col.replace("]", "]]")))
+            n = cur.fetchone()[0]
+            if n:
+                hits.append([t, col, n])
+        except Exception as ex:
+            pass
+    out["s5_mosaede_hits"] = hits
+    for t, col, n in hits[:12]:
+        sql = _sel(cur, t, "WHERE CAST([%s] AS nvarchar(max)) LIKE N'%%مساعد%%'" % col.replace("]", "]]"), top=30)
+        if sql:
+            q("s5_mosaede_rows_%s_%s" % (t, col), sql)
+    # The staff members as customers / accounts (طرف حساب).
+    words = ["محمودي", "محمودی", "نظري", "نظری", "لطيفي", "خدايار"]
+    wl = " OR ".join("CAST(MONAME AS nvarchar(500)) LIKE N'%%%s%%'" % w for w in words)
+    sql = _sel(cur, "CUSTOMERS", "WHERE " + wl, top=60)
+    if sql:
+        q("s5_staff_customers", sql)
+    cur.execute("SELECT SHMO FROM dbo.CUSTOMERS WHERE " + wl)
+    shmos = [int(r[0]) for r in cur.fetchall()][:20]
+    out["s5_staff_shmos"] = shmos
+    if shmos:
+        sql = _sel(cur, "cust_act", "WHERE shmo IN (%s)" % ",".join(map(str, shmos)), top=600, order="shmo, [date], rdf_")
+        if sql:
+            q("s5_staff_cust_act", sql)
+        q("s5_staff_sail", "SELECT shmo, COUNT(*), SUM([all]) FROM dbo.sailfact WHERE active='t' AND shmo IN (%s) GROUP BY shmo" % ",".join(map(str, shmos)))
+    q("s5_sys_users", _sel(cur, "sys_users", top=60) or "SELECT 1")
+    q("s5_visitors", _sel(cur, "visitors", top=60) or "SELECT 1")
+    q("s5_act_ids", "SELECT act_id, COUNT(*), SUM(act_bed), SUM(act_bes), MIN([date]), MAX([date]), MAX(CAST(act_dis AS nvarchar(300))) FROM dbo.cust_act GROUP BY act_id ORDER BY act_id")
+    q("s5_act_samples", "SELECT * FROM (SELECT ROW_NUMBER() OVER (PARTITION BY act_id ORDER BY rdf_ DESC) rn, rdf_, shmo, [date], act_id, act_bed, act_bes, CAST(act_dis AS nvarchar(400)) dis, ghno FROM dbo.cust_act) x WHERE rn <= 5 ORDER BY act_id, rn")
+    # Customer groups (staff may sit in a «پرسنل» group).
+    q("s5_custgroup", _sel(cur, "custgroup", top=80, order="1") or "SELECT 1")
+    q("s5_cust_by_group", "SELECT ISNULL(group_rdf,0), COUNT(*) FROM dbo.CUSTOMERS GROUP BY ISNULL(group_rdf,0)")
+    q("s5_server_date", "SELECT dbo.ReturnDateServer()")
+
+
 def main():
     out = {"errors": []}
     c = connect("Atiran2")
@@ -175,6 +260,11 @@ def main():
     def q(key, sql):
         out[key] = safe_rows(cur, out, sql)
 
+    if os.environ.get("PROBE_STAGE") == "5":
+        stage5(c, cur, q, out)
+        json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
+        print("stage 5 done; errors:", len(out["errors"]), "; tables:", len(out.get("s5_tables", [])), "; hits:", len(out.get("s5_mosaede_hits", [])))
+        return
     if os.environ.get("PROBE_STAGE") == "4":
         stage4(c, cur, q, out)
         json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, default=str)
