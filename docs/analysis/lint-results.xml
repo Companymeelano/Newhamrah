@@ -563,7 +563,7 @@
         errorLine2="                        ~~~~~~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="23814"
+            line="23816"
             column="25"/>
     </issue>
 
@@ -579,7 +579,7 @@
         errorLine2="                        ~~~~~~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="23815"
+            line="23817"
             column="25"/>
     </issue>
 
@@ -595,7 +595,7 @@
         errorLine2="                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="23897"
+            line="23899"
             column="38"/>
     </issue>
 
@@ -611,7 +611,7 @@
         errorLine2="                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="23899"
+            line="23901"
             column="38"/>
     </issue>
 
@@ -627,7 +627,7 @@
         errorLine2="                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="23948"
+            line="23950"
             column="30"/>
     </issue>
 
@@ -1891,7 +1891,7 @@
         errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="23496"
+            line="23498"
             column="13"/>
     </issue>
 
@@ -2675,7 +2675,7 @@
         errorLine2="                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="24015"
+            line="24017"
             column="40"/>
     </issue>
 
@@ -3507,7 +3507,7 @@
         errorLine2="                                                                                                               ~~~~~">
         <location
             file="/home/runner/work/Newhamrah/Newhamrah/MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java"
-            line="23205"
+            line="23206"
             column="112"/>
     </issue>
 

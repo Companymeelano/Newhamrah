@@ -2341,76 +2341,76 @@ MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23105:	Av
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23127:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23153:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23155:	AvoidCatchingThrowable:	A catch statement should never catch throwable since it includes errors.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23166:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23194:	UseVarargs:	Consider using varargs for methods or constructors which take an array the last parameter.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23198:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23167:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23195:	UseVarargs:	Consider using varargs for methods or constructors which take an array the last parameter.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23199:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23202:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23204:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23200:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23203:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23205:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23206:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23208:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23210:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23207:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23209:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23211:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23220:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23222:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23212:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23221:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23223:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23226:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23228:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23233:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23235:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23266:	UseVarargs:	Consider using varargs for methods or constructors which take an array the last parameter.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23271:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23224:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23227:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23229:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23234:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23236:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23267:	UseVarargs:	Consider using varargs for methods or constructors which take an array the last parameter.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23272:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23288:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23291:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23347:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23350:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23444:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23445:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23451:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23273:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23289:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23292:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23348:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23351:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23446:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23447:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23453:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23453:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23500:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23515:	AssignmentInOperand:	Avoid assignments in operands
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23515:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23522:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23539:	UseStringBufferForStringAppends:	Prefer StringBuilder (non-synchronized) or StringBuffer (synchronized) over += for concatenating strings
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23550:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23558:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23583:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23591:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23659:	InsufficientStringBufferDeclaration:	StringBuilder has been initialized with size 16, but has at least 66 characters appended.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23660:	AppendCharacterWithChar:	Avoid appending characters as strings in StringBuffer.append.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23665:	AppendCharacterWithChar:	Avoid appending characters as strings in StringBuffer.append.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23721:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23732:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23733:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23455:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23455:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23502:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23517:	AssignmentInOperand:	Avoid assignments in operands
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23517:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23524:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23541:	UseStringBufferForStringAppends:	Prefer StringBuilder (non-synchronized) or StringBuffer (synchronized) over += for concatenating strings
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23552:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23560:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23585:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23593:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23661:	InsufficientStringBufferDeclaration:	StringBuilder has been initialized with size 16, but has at least 66 characters appended.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23662:	AppendCharacterWithChar:	Avoid appending characters as strings in StringBuffer.append.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23667:	AppendCharacterWithChar:	Avoid appending characters as strings in StringBuffer.append.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23723:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23734:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23740:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23743:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23746:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23756:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23768:	MissingSerialVersionUID:	Classes implementing Serializable should set a serialVersionUID
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23777:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23735:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23736:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23742:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23745:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23748:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23758:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23770:	MissingSerialVersionUID:	Classes implementing Serializable should set a serialVersionUID
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23779:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23799:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23873:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23897:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23781:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23801:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23875:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23899:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23904:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23930:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23948:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23954:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23981:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23986:	LooseCoupling:	Avoid using implementation types like 'ArrayList'; use the interface instead
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23998:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24009:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23901:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23906:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23932:	OneDeclarationPerLine:	Use one line for each declaration, it enhances code readability.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23950:	AvoidInstantiatingObjectsInLoops:	Avoid instantiating new objects inside loops
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23956:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23983:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:23988:	LooseCoupling:	Avoid using implementation types like 'ArrayList'; use the interface instead
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24000:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24011:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24032:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24042:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24061:	DoNotUseThreads:	To be compliant to J2EE, a webapp should not use any thread.
-MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24062:	DoNotUseThreads:	To be compliant to J2EE, a webapp should not use any thread.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24013:	InefficientEmptyStringCheck:	String.trim().length() == 0 / String.trim().isEmpty() is an inefficient way to validate a blank String.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24034:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24044:	NullAssignment:	Assigning an Object to null is a code smell.  Consider refactoring.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24063:	DoNotUseThreads:	To be compliant to J2EE, a webapp should not use any thread.
+MEELANO-Android/app/src/main/java/ir/meelano/android/MainActivity.java:24064:	DoNotUseThreads:	To be compliant to J2EE, a webapp should not use any thread.
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoA11y.java:93:	AvoidReassigningLoopVariables:	Avoid reassigning the loop control variable 'i'
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoCharts.java:45:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements
 MEELANO-Android/app/src/main/java/ir/meelano/android/MeelanoCharts.java:46:	AvoidLiteralsInIfCondition:	Avoid using literals in if statements

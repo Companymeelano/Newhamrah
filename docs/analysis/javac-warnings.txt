@@ -37,7 +37,7 @@ app/src/main/java/ir/meelano/android/MainActivity.java:18928: warning: [deprecat
 app/src/main/java/ir/meelano/android/MainActivity.java:18954: warning: [deprecation] EXTRA_CHECK_VOICE_DATA_FOR in TextToSpeech.Engine has been deprecated
 app/src/main/java/ir/meelano/android/MainActivity.java:20069: warning: [deprecation] speak(String,int,HashMap<String,String>) in TextToSpeech has been deprecated
 app/src/main/java/ir/meelano/android/MainActivity.java:20167: warning: [deprecation] Builder(Context) in Builder has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:23768: warning: [serial] serializable class DbException has no definition of serialVersionUID
-app/src/main/java/ir/meelano/android/MainActivity.java:24048: warning: [deprecation] onBackPressed() in Activity has been deprecated
-app/src/main/java/ir/meelano/android/MainActivity.java:24056: warning: [deprecation] onBackPressed() in Activity has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:23770: warning: [serial] serializable class DbException has no definition of serialVersionUID
+app/src/main/java/ir/meelano/android/MainActivity.java:24050: warning: [deprecation] onBackPressed() in Activity has been deprecated
+app/src/main/java/ir/meelano/android/MainActivity.java:24058: warning: [deprecation] onBackPressed() in Activity has been deprecated
 app/src/main/java/ir/meelano/android/MeelanoFitText.java:20: warning: [deprecation] scaledDensity in DisplayMetrics has been deprecated
